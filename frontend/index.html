@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Controlled Descent Simulator</title>
+    <script type="importmap">
+    {
+        "imports": {
+            "three":          "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js",
+            "three/addons/":  "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/"
+        }
+    }
+    </script>
+    <style>
+        *, *::before, *::after { box-sizing: border-box; }
+
+        body {
+            font-family: monospace;
+            background: #0d0d0d;
+            color: #ccc;
+            margin: 0;
+            padding: 20px;
+            font-size: 15px;
+        }
+
+        /* ── Header ── */
+        header {
+            display: flex;
+            align-items: center;
+            gap: 24px;
+            margin-bottom: 12px;
+            flex-wrap: wrap;
+        }
+        header h1 { color: #fff; font-size: 1.1em; margin: 0; letter-spacing: 0.05em; }
+
+        #simTime { font-size: 1.8em; color: #0cf; letter-spacing: 0.05em; }
+        #simTime span { font-size: 0.6em; color: #666; margin-left: 4px; }
+
+        .controls { display: flex; gap: 8px; margin-left: auto; flex-wrap: wrap; }
+
+        /* ── Buttons / inputs ── */
+        button {
+            background: #1a1a1a;
+            color: #ccc;
+            border: 1px solid #444;
+            padding: 8px 20px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-family: monospace;
+            font-size: 1em;
+            user-select: none;
+        }
+        button:hover:not(:disabled) { background: #2a2a2a; border-color: #666; }
+        button:disabled  { color: #444; cursor: default; border-color: #2a2a2a; }
+        button.active    { border-color: #0cf; color: #0cf; }
+        button.pressing  { background: #1a2a1a; border-color: #0f0; color: #0f0; }
+
+        input[type="number"], input[type="text"] {
+            background: #111;
+            color: #ccc;
+            border: 1px solid #333;
+            padding: 5px 8px;
+            border-radius: 3px;
+            font-family: monospace;
+            font-size: 0.9em;
+            width: 100%;
+        }
+        input[type="number"]:focus, input[type="text"]:focus {
+            outline: none;
+            border-color: #0cf;
+        }
+
+        /* ── View toggle ── */
+        #viewToggle { display: flex; }
+        #viewToggle button { border-radius: 0; border-right-width: 0; }
+        #viewToggle button:first-child { border-radius: 3px 0 0 3px; }
+        #viewToggle button:last-child  { border-radius: 0 3px 3px 0; border-right-width: 1px; }
+        #viewToggle button.active { background: #111f2a; }
+
+        /* ── Force bar ── */
+        #forceBar {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 14px;
+            flex-wrap: wrap;
+        }
+        #forceBar .lbl { color: #555; font-size: 0.85em; }
+        .force-group { display: flex; gap: 4px; }
+        .force-group span { color: #555; font-size: 0.8em; align-self: center; margin: 0 2px; }
+        .btn-force {
+            padding: 6px 14px;
+            font-size: 0.9em;
+            min-width: 52px;
+        }
+        #forceMag {
+            width: 80px;
+            padding: 6px 8px;
+        }
+
+        /* ── Views ── */
+        #view-charts { display: grid; }
+        #view-3d     { display: none; width: 100%; height: calc(100vh - 200px);
+                       background: #0d0d0d; border-radius: 4px; overflow: hidden; }
+        #view-params { display: none; }
+
+        /* ── Numeric grid ── */
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+            gap: 12px;
+            margin-bottom: 12px;
+        }
+        .panel {
+            background: #141414;
+            border: 1px solid #2a2a2a;
+            border-radius: 4px;
+            padding: 12px 14px;
+        }
+        .panel h2 {
+            color: #555; font-size: 0.8em; margin: 0 0 10px 0;
+            text-transform: uppercase; letter-spacing: 0.1em;
+        }
+        .field { display: flex; justify-content: space-between; margin: 4px 0; font-size: 0.95em; }
+        .field .lbl { color: #555; }
+        .field .val { color: #0f0; min-width: 90px; text-align: right; }
+
+        .chart-panel { grid-column: span 2; }
+        canvas { display: block; width: 100%; height: 100px; margin-top: 6px; }
+
+        /* ── Params form ── */
+        .params-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+        .param-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            margin-bottom: 8px;
+        }
+        .param-row label { color: #888; font-size: 0.9em; white-space: nowrap; min-width: 130px; }
+        .param-row .unit { color: #555; font-size: 0.8em; min-width: 40px; }
+        #btnApply {
+            margin-top: 4px;
+            border-color: #0f8;
+            color: #0f8;
+        }
+        #btnApply:hover { background: #0a1a10; }
+
+        /* ── Status ── */
+        #statusBar { font-size: 0.9em; color: #555; margin-top: 10px; }
+        #errorMsg  { color: #f44; margin-top: 4px; font-size: 0.9em; min-height: 1em; }
+    </style>
+</head>
+<body>
+
+<!-- ════ Header ════ -->
+<header>
+    <h1>CDS</h1>
+    <div id="simTime">0.000 <span>s</span></div>
+    <div class="controls">
+        <div id="viewToggle">
+            <button id="btnCharts" class="active">Charts</button>
+            <button id="btn3d"     disabled>3D</button>
+            <button id="btnParams">Params</button>
+        </div>
+        <button id="btnStart" disabled>Start</button>
+        <button id="btnStop"  disabled>Stop</button>
+        <button id="btnReset" disabled>Reset</button>
+    </div>
+</header>
+
+<!-- ════ Force bar (always visible) ════ -->
+<div id="forceBar">
+    <span class="lbl">User force</span>
+    <div class="force-group">
+        <span>X</span>
+        <button class="btn-force" id="fXp" data-axis="fX" data-sign="1">+X</button>
+        <button class="btn-force" id="fXn" data-axis="fX" data-sign="-1">−X</button>
+    </div>
+    <div class="force-group">
+        <span>Y</span>
+        <button class="btn-force" id="fYp" data-axis="fY" data-sign="1">+Y</button>
+        <button class="btn-force" id="fYn" data-axis="fY" data-sign="-1">−Y</button>
+    </div>
+    <div class="force-group">
+        <span>Z</span>
+        <button class="btn-force" id="fZp" data-axis="fZ" data-sign="1">+Z</button>
+        <button class="btn-force" id="fZn" data-axis="fZ" data-sign="-1">−Z</button>
+    </div>
+    <span class="lbl">Mag</span>
+    <input type="number" id="forceMag" value="20" min="0" step="5">
+    <span class="lbl">N</span>
+</div>
+
+<!-- ════ Charts view ════ -->
+<div id="view-charts">
+    <div class="grid">
+        <div class="panel">
+            <h2>Position (m)</h2>
+            <div class="field"><span class="lbl">x</span><span class="val" id="x">—</span></div>
+            <div class="field"><span class="lbl">y</span><span class="val" id="y">—</span></div>
+            <div class="field"><span class="lbl">z</span><span class="val" id="z">—</span></div>
+        </div>
+        <div class="panel">
+            <h2>Velocity (m/s)</h2>
+            <div class="field"><span class="lbl">x_dot</span><span class="val" id="x_dot">—</span></div>
+            <div class="field"><span class="lbl">y_dot</span><span class="val" id="y_dot">—</span></div>
+            <div class="field"><span class="lbl">z_dot</span><span class="val" id="z_dot">—</span></div>
+            <div class="field"><span class="lbl">|v|</span>  <span class="val" id="v_mag">—</span></div>
+        </div>
+        <div class="panel">
+            <h2>Attitude (rad)</h2>
+            <div class="field"><span class="lbl">roll</span> <span class="val" id="roll">—</span></div>
+            <div class="field"><span class="lbl">pitch</span><span class="val" id="pitch">—</span></div>
+            <div class="field"><span class="lbl">yaw</span>  <span class="val" id="yaw">—</span></div>
+        </div>
+        <div class="panel">
+            <h2>Angular rate (rad/s)</h2>
+            <div class="field"><span class="lbl">roll_dot</span> <span class="val" id="roll_dot">—</span></div>
+            <div class="field"><span class="lbl">pitch_dot</span><span class="val" id="pitch_dot">—</span></div>
+            <div class="field"><span class="lbl">yaw_dot</span>  <span class="val" id="yaw_dot">—</span></div>
+        </div>
+        <div class="panel">
+            <h2>Tracking error (m)</h2>
+            <div class="field"><span class="lbl">xErr</span>  <span class="val" id="xErr">—</span></div>
+            <div class="field"><span class="lbl">yErr</span>  <span class="val" id="yErr">—</span></div>
+            <div class="field"><span class="lbl">zErr</span>  <span class="val" id="zErr">—</span></div>
+            <div class="field"><span class="lbl">|err|</span> <span class="val" id="err_mag">—</span></div>
+        </div>
+        <div class="panel">
+            <h2>Steps</h2>
+            <div class="field"><span class="lbl">step</span><span class="val" id="stepCount">—</span></div>
+            <div class="field"><span class="lbl">dt</span>  <span class="val" id="dt">—</span></div>
+            <div class="field"><span class="lbl">fps</span> <span class="val" id="fps">—</span></div>
+        </div>
+    </div>
+    <div class="grid">
+        <div class="panel chart-panel"><h2>x (m)</h2>        <canvas id="chartX"></canvas></div>
+        <div class="panel chart-panel"><h2>y (m)</h2>        <canvas id="chartY"></canvas></div>
+        <div class="panel chart-panel"><h2>z (m)</h2>        <canvas id="chartZ"></canvas></div>
+        <div class="panel chart-panel"><h2>|err| (m)</h2>    <canvas id="chartErr"></canvas></div>
+    </div>
+</div>
+
+<!-- ════ 3D view ════ -->
+<div id="view-3d"></div>
+
+<!-- ════ Params view ════ -->
+<div id="view-params">
+    <div class="params-grid">
+
+        <div class="panel">
+            <h2>Rocket</h2>
+            <div class="param-row">
+                <label>mass_Kg</label>
+                <input type="number" id="p_mass"   step="0.1">
+                <span class="unit">kg</span>
+            </div>
+            <div class="param-row">
+                <label>inertiaX_Kgm2</label>
+                <input type="number" id="p_iX"     step="0.1">
+                <span class="unit">kg·m²</span>
+            </div>
+            <div class="param-row">
+                <label>inertiaY_Kgm2</label>
+                <input type="number" id="p_iY"     step="0.1">
+                <span class="unit">kg·m²</span>
+            </div>
+            <div class="param-row">
+                <label>inertiaZ_Kgm2</label>
+                <input type="number" id="p_iZ"     step="0.1">
+                <span class="unit">kg·m²</span>
+            </div>
+            <div class="param-row">
+                <label>c (drag XY)</label>
+                <input type="number" id="p_c"      step="0.1">
+                <span class="unit">—</span>
+            </div>
+            <div class="param-row">
+                <label>cz (drag Z)</label>
+                <input type="number" id="p_cz"     step="0.001">
+                <span class="unit">—</span>
+            </div>
+        </div>
+
+        <div class="panel">
+            <h2>Actuators</h2>
+            <div class="param-row">
+                <label>fZ_lim</label>
+                <input type="number" id="p_fZlim"  step="10">
+                <span class="unit">N</span>
+            </div>
+            <h2 style="margin-top:16px">Trajectory</h2>
+            <div class="param-row">
+                <label>a0</label>
+                <input type="number" id="p_a0" step="0.1">
+                <span class="unit">—</span>
+            </div>
+            <div class="param-row">
+                <label>a1</label>
+                <input type="number" id="p_a1" step="0.1">
+                <span class="unit">—</span>
+            </div>
+            <div class="param-row">
+                <label>a2</label>
+                <input type="number" id="p_a2" step="0.1">
+                <span class="unit">—</span>
+            </div>
+            <div class="param-row">
+                <label>a3</label>
+                <input type="number" id="p_a3" step="0.1">
+                <span class="unit">—</span>
+            </div>
+        </div>
+
+    </div>
+    <button id="btnApply">Apply & Reset</button>
+</div>
+
+<div id="statusBar">Loading WASM...</div>
+<div id="errorMsg"></div>
+
+<script type="module" src="main.js"></script>
+</body>
+</html>

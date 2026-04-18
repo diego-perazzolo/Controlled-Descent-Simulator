@@ -1,0 +1,17 @@
+# Build artifacts
+build/
+
+# IDE
+.vscode/
+
+# macOS
+.DS_Store
+
+# Node (if ever used)
+node_modules/
+
+# Emscripten cache
+.emscripten_cache/
+
+# CMake
+CMakeUserPresets.json

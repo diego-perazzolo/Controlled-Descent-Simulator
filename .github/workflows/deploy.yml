@@ -1,0 +1,56 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Emscripten
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: 3.1.56
+
+      - name: Build WASM (Release)
+        run: |
+          emcmake cmake -S core -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build
+
+      - name: Prepare site
+        run: |
+          mkdir -p _site/build _site/frontend
+          cp build/simulator.js build/simulator.wasm _site/build/
+          cp frontend/index.html frontend/main.js _site/frontend/
+          # Root redirect to frontend/
+          cat > _site/index.html << 'REDIRECT'
+          <!DOCTYPE html>
+          <html><head><meta http-equiv="refresh" content="0;url=frontend/"></head></html>
+          REDIRECT
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
