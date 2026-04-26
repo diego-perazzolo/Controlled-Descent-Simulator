@@ -7,15 +7,19 @@ add_executable(simulator
     core.cpp
     Models/BaseModel.cpp
     Models/Rocket.cpp
-    Trajectory.cpp
+    Trajectory/Trajectory.cpp
+    Trajectory/Poly4.cpp
     ext/ext_comm.cpp
     ext/bindings.cpp
+    ../modeling/notebooks/exported_cpp/dynamics_ff_lqr_01.cpp
 )
 
 target_include_directories(simulator PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/ext
     ${CMAKE_CURRENT_SOURCE_DIR}/Models
+    ${CMAKE_CURRENT_SOURCE_DIR}/Trajectory
+    ${CMAKE_CURRENT_SOURCE_DIR}/../modeling/notebooks/exported_cpp/
 )
 
 # Emscripten-specific flags

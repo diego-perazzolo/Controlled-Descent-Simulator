@@ -3,6 +3,7 @@ build/
 
 # IDE
 .vscode/
+.idea/
 
 # macOS
 .DS_Store
@@ -15,3 +16,20 @@ node_modules/
 
 # CMake
 CMakeUserPresets.json
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Python virtual environments
+venv/
+.venv/
+env/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Compiled driver binary from notebook codegen
+modeling/notebooks/exported_cpp/_driver

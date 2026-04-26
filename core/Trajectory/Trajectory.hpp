@@ -30,6 +30,10 @@
 // =============================================================================
 #pragma once
 
+#include <array>
+#include <map>
+#include "core_defs.hpp"
+
 namespace CDS
 {
     // Trajectory class
@@ -38,8 +42,41 @@ namespace CDS
 
         public:
 
+        Trajectory() = default;
+        
+        /* Virtual methods */
 
-        private:
+        virtual ~Trajectory() = default;
+
+        /* Gets reference trajectory state at a time instant. Returns true on error */
+        virtual bool GetReference(const core_coord_t&  time, Reference_t& ref) = 0;
+
+        /* Set dictionary of trajectory parameters and their value. Returns true on error */
+        virtual bool SetParameters(const std::map<std::string, core_coord_t>& params) = 0;
+
+        /* Get dictionary of trajectory parameters and their value. Returns true on error */
+        virtual bool GetParameters(std::map<std::string, core_coord_t>& params) = 0;
+
+        /* Set trajectory parameter. Returns true on error */
+        virtual bool SetParameter(const core_coord_t& p, size_t paramIdx) = 0;
+
+        /* Get trajectory parameter. Returns true on error */
+        virtual bool GetParameter(core_coord_t& p, size_t paramIdx) = 0;
+
+
+        /* Inline methods */
+
+        /* Get trajectory start time */
+        inline void GetStartTime(core_coord_t& s){s = m_startTime;};
+
+         /* Get trajectory end time */
+        inline void GetEndTime(core_coord_t& e){e = m_endTime;};
+
+        protected:
+
+        /* Trajectory is well define within a timespan [start; end] */
+        core_coord_t m_startTime;
+        core_coord_t m_endTime;
 
     };
 }

@@ -5,7 +5,9 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 // =============================================================================
 // Config
 // =============================================================================
-const TIMESTEP_S = 0.001;
+const TIMESTEP_S = 0.01;
+const START_TIME = 0;
+const END_TIME = 20;
 
 const INIT_PARAMS = {
     rocketPar: {
@@ -13,7 +15,7 @@ const INIT_PARAMS = {
         inertiaX_Kgm2: 10.0 / 3,
         inertiaY_Kgm2: 10.0 / 3,
         inertiaZ_Kgm2: 1,
-        c:              10,
+        c:              1,
         cz:             0.02,
     },
     actuatorLimits: {
@@ -141,11 +143,13 @@ function setError(msg)  { ui.error.textContent  = msg; }
 // 3D renderer
 // =============================================================================
 function make3DRenderer() {
-    const TRAIL_MAX = 600;
+    const TRAIL_MAX = 6000;
+    const TRAJECTORY_MAX = 6000;
     const trail     = [];
+    const trajectory = [];
 
     let scene, camera, renderer, controls;
-    let rocketGroup, trailLine;
+    let rocketGroup, trailLine, trajectoryLine;
     let initialized = false;
     let animating   = false;
     let visible     = false;
@@ -178,7 +182,7 @@ function make3DRenderer() {
             );
             leg.position.set(Math.cos(angle) * 0.9, 0.8, Math.sin(angle) * 0.9);
             leg.rotation.z = Math.cos(angle) * 0.35;
-            leg.rotation.x = Math.sin(angle) * 0.35;
+            leg.rotation.x = -Math.sin(angle) * 0.35;
             group.add(leg);
         }
 
@@ -234,6 +238,13 @@ function make3DRenderer() {
         );
         scene.add(trailLine);
 
+        // Trajectory preview
+        trajectoryLine = new THREE.Line(
+            new THREE.BufferGeometry(),
+            new THREE.LineBasicMaterial({ color: 0xff9900, transparent: true, opacity: 0.55 })
+        );
+        scene.add(trajectoryLine);
+
         // Resize observer
         new ResizeObserver(() => {
             if (!renderer) return;
@@ -272,18 +283,62 @@ function make3DRenderer() {
         trailLine.geometry.attributes.position.needsUpdate = true;
     }
 
+        function updateTrajectory(x, y, z) {
+        trajectory.push(new THREE.Vector3(x, y, z));
+        if (trajectory.length > TRAJECTORY_MAX) trajectory.shift();
+
+        const pos = new Float32Array(trajectory.length * 3);
+        trajectory.forEach((v, i) => {
+            pos[i * 3]     = v.x;
+            pos[i * 3 + 1] = v.y;
+            pos[i * 3 + 2] = v.z;
+        });
+        trajectoryLine.geometry.setAttribute(
+            'position', new THREE.BufferAttribute(pos, 3)
+        );
+        trajectoryLine.geometry.setDrawRange(0, trajectory.length);
+        trajectoryLine.geometry.attributes.position.needsUpdate = true;
+    }
+
+function generateTrajectoryPreview()
+    {
+        if(sim)
+        {
+            let startTime = START_TIME;
+            let endTime = END_TIME;
+            let trajSample_seconds = 0.2;
+
+            for(let time_seconds = startTime; time_seconds <= endTime; time_seconds += trajSample_seconds)
+            {
+                let p = sim.ext_getTrajectoryPoint(time_seconds);
+                updateTrajectory(p.x, p.z, p.y);
+            }
+
+        }
+    }
+
     return {
         update(state) {
             if (!initialized || !visible) return;
+
+            // Generate trajectory preview
+            if(trajectory.length == 0)
+            {
+                generateTrajectoryPreview();
+            } 
+
             // sim(x, y, z=up) → Three.js(x, z, y)  [Y is up in Three.js]
             rocketGroup.position.set(state.x, state.z, state.y);
             // roll→Z, pitch→X, yaw→Y  (intrinsic, adjust once physics is live)
-            rocketGroup.rotation.set(state.pitch, state.yaw, state.roll);
+            rocketGroup.rotation.set(-state.pitch, -state.yaw, -state.roll);
             updateTrail(state.x, state.z, state.y);
         },
         reset() {
             trail.length = 0;
+            trajectory.length = 0;
             if (trailLine) trailLine.geometry.setDrawRange(0, 0);
+            if (trajectoryLine) trajectoryLine.geometry.setDrawRange(0, 0);
+
             if (rocketGroup) {
                 rocketGroup.position.set(0, 0, 0);
                 rocketGroup.rotation.set(0, 0, 0);
@@ -291,7 +346,12 @@ function make3DRenderer() {
         },
         show() {
             visible = true;
-            if (!initialized) init();
+
+            if (!initialized) 
+            {
+                init();
+            }
+
             if (!animating) { animating = true; renderLoop(); }
         },
         hide() {
@@ -305,7 +365,7 @@ function make3DRenderer() {
 // Canvas renderer
 // =============================================================================
 function makeUplotRenderer() {
-    const MAX_PTS = 300;
+    const MAX_PTS = 3000;
 
     const bufs = { x: [], y: [], z: [], e: [] };
 

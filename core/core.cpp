@@ -30,7 +30,7 @@
 // =============================================================================
 #include "core.hpp"
 #include "Models/Rocket.hpp"
-#include "Trajectory.hpp"
+#include "Trajectory/Poly4.hpp"
 
 using namespace CDS;
 
@@ -61,7 +61,9 @@ bool core_init()
     }
 
     _ctx.pModel = new Rocket();
-    _ctx.pTrajectory = new Trajectory();
+    _ctx.pTrajectory = new Poly4();
+    _ctx.pModel->SetTrajectory(_ctx.pTrajectory);
+
 
     return false;
 }
@@ -97,4 +99,20 @@ bool core_getState(core_state_t *pState)
 bool core_getTrackingError(core_trackingErrors_t *pTrackingErr)
 {
     return _ctx.pModel->GetTrackingErrors(*pTrackingErr);
+}
+
+bool core_getTrajectoryPoint(core_coord_t time, Vec3& point)
+{
+    Reference_t ref;
+    if(_ctx.pTrajectory == nullptr || _ctx.pTrajectory->GetReference(time, ref))
+    {
+        // Error
+        return true;
+    }
+
+    point[0] = ref.pos[0];
+    point[1] = ref.pos[1];
+    point[2] = ref.pos[2];
+
+    return false;
 }

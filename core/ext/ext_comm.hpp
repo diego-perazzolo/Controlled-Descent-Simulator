@@ -62,3 +62,6 @@ bool ext_init(ext_initParams params);
 /* Step function, used to progress one step with the simulation. Returns a struct
 filled with the whole system state, setpoint errors*/
 ext_stepRet ext_step(ext_stepParams);
+
+/* Get a point at time instant t along the trajectory */
+ext_trajectoryPoint ext_getTrajectoryPoint(ext_coord_t t);

@@ -1,0 +1,7 @@
+sympy>=1.12
+numpy>=1.26
+scipy>=1.11
+matplotlib>=3.8
+control>=0.10
+jupyter>=1.0
+ipykernel>=6.29

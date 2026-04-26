@@ -30,9 +30,11 @@
 // Created     : 2026
 // =============================================================================
 #pragma once
+#include <array>
 
 /* Types */
 typedef double core_coord_t; // type for running coordinartes: position, pose, force
+typedef std::array<core_coord_t, 3> Vec3;
 
 // Rocket params
 typedef struct
@@ -50,8 +52,17 @@ typedef struct
 // Trajectory params
 typedef struct
 {
-
+    
 } core_trajectoryParams_t;
+
+
+typedef struct{
+    Vec3 pos;
+    Vec3 vel;
+    Vec3 acc;
+    Vec3 jerk;
+    Vec3 snap;
+} Reference_t;
 
 // Integrations' step parameters
 typedef struct 

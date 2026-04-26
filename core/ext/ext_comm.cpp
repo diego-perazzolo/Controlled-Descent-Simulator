@@ -93,6 +93,13 @@ static ext_stepRet _convertCoreToExt_stepRetParams(core_state_t state, core_trac
     return extParam;
 }
 
+static ext_trajectoryPoint _convertExtToCore_trajectoryPoint(Vec3& point)
+{
+    ext_trajectoryPoint extParam = {.x = (ext_coord_t) point[0], .y = (ext_coord_t) point[1], .z = (ext_coord_t) point[2]};
+
+    return extParam;
+}
+
 /* ext functions */
 
 bool ext_init(ext_initParams params)
@@ -146,4 +153,16 @@ ext_stepRet ext_step(ext_stepParams stepParams)
     ret = _convertCoreToExt_stepRetParams(coreState, coreTrackingErr);
 
     return ret;
+}
+
+ext_trajectoryPoint ext_getTrajectoryPoint(ext_coord_t t)
+{
+    Vec3 p = {};
+    if(core_getTrajectoryPoint(t, p))
+    {
+        // Err
+        return {};
+    }
+
+    return _convertExtToCore_trajectoryPoint(p);
 }

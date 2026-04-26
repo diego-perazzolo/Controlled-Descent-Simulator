@@ -11,7 +11,7 @@ A real-time, interactive simulator of a **powered rocket descent** (SpaceX Falco
 ## Project Scope
 
 Simulate the controlled descent of a single-stage rocket booster in 3D, with:
-
+- A **dynamics modeling notebook** written in iPython
 - A **physics core** written in C++20, compiled to `.wasm` via Emscripten
 - A **plain HTML/JS frontend** for real-time visualization, parameter configuration, and interactive control
 - Full deployment on **GitHub Pages** 
@@ -34,6 +34,7 @@ Simulate the controlled descent of a single-stage rocket booster in 3D, with:
 #### Communication Layer (`ext/`)
 - `ext_init(params)` — initializes rocket parameters, actuator limits, and trajectory
 - `ext_step(stepParams)` — advances one integration step; returns full state and tracking error
+- `ext_getTrajectoryPoint(timeInstant)` - provides a point along the reference trajectory, used for trajectory preview
 - Emscripten `embind` bindings expose all structs and functions to JavaScript
 
 #### Physics Engine
@@ -45,7 +46,7 @@ Simulate the controlled descent of a single-stage rocket booster in 3D, with:
 
 ### Screenshots
 
-| Charts view | 3D view || Params view |
+| Charts view | 3D view | Params view |
 |:-----------:|:-------:|:-------:|
 | ![Charts](docs/screenshot-charts.png) | ![3D](docs/screenshot-3d.png) | ![Params](docs/screenshot-params.png) |
 
@@ -76,11 +77,20 @@ Simulate the controlled descent of a single-stage rocket booster in 3D, with:
 │                         │                               │
 │  ┌──────────────────────▼────────────────────────────┐  │
 │  │              Core Physics (C++)                   │  │
-│  │  ┌──────────┐   ┌────────────┐   ┌────────────┐  │  │
-│  │  │  Model   │   │ Controller │   │ Trajectory │  │  │
-│  │  │  6 DOF   │   │  LQR/PID   │   │    law     │  │  │
-│  │  └──────────┘   └────────────┘   └────────────┘  │  │
-│  └───────────────────────────────────────────────────┘  │
+│  │  ┌──────────┐   ┌────────────┐   ┌────────────┐   │  │
+│  │  │  Model   │   │ Controller │   │ Trajectory │   │  │
+│  │  │  6 DOF   │   │  LQR/PID   │   │    law     │   │  │
+│  │  └──────────┘   └────────────┘   └────────────┘   │  │
+│  └───────────────────────────────────────────────────┘  |
+│                         │                               │
+│  ┌──────────────────────▼────────────────────────────┐  │
+│  │                   Dynamics                        │  │
+│  │  ┌──────────┐   ┌────────────┐   ┌────────────┐   │  │
+│  │  │  Jupyter │   │ Generated  │   │ Controller │   │  │
+│  │  │ notebook │   │    C++     │   │   design   │   │  │
+│  │  └──────────┘   └────────────┘   └────────────┘   │  │
+│  └───────────────────────────────────────────────────┘  |
+│                                                         | 
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -108,10 +118,10 @@ roll_dot, pitch_dot, yaw_dot  — angular rates (rad/s)
 - External perturbations: user-injected force vector `(fX, fY, fZ)`
 
 ### Integration
-Runge-Kutta 4 (RK4), fixed step `dt` (configurable at runtime).
+Runge-Kutta 4 (RK4), fixed step `dt`.
 
 ### Controller
-Switchable between **LQR** and **PID**. Gains tunable from the Params tab.
+Hardcoded LQR on tracking error, and Feed Forward on all actuators
 
 ---
 
@@ -123,7 +133,11 @@ bool ext_init(ext_initParams params);
 
 // Advance one integration step
 ext_stepRet ext_step(ext_stepParams params);
+
+// Get a point at time instant t along the trajectory
+ext_trajectoryPoint ext_getTrajectoryPoint(ext_coord_t t);
 ```
+
 
 ### Key types
 ```cpp
@@ -142,6 +156,8 @@ ext_setpointError   { xErr, yErr, zErr }
 
 | Layer | Technology |
 |---|---|
+| Modeling | Python |
+| Dynamics | C++20 |
 | Physics core | C++20 |
 | WASM compilation | Emscripten (`emcc`) |
 | JS bindings | Emscripten `embind` |
@@ -158,25 +174,35 @@ ext_setpointError   { xErr, yErr, zErr }
 /
 ├── core/
 │   ├── CMakeLists.txt
-│   ├── core.hpp / core.cpp         # C-style public interface (stubs → impl)
-│   ├── core_defs.hpp               # Internal type definitions
-│   ├── Model.hpp / Model.cpp       # CDS::Model — 6 DOF physics
-│   ├── Trajectory.hpp / Trajectory.cpp  # CDS::Trajectory — reference law
+│   ├── core.hpp / core.cpp                     # C-style public interface (stubs → impl)
+│   ├── core_defs.hpp                           # Internal type definitions
 │   ├── Models/
-│   │   ├── BaseModel.hpp / .cpp    # Abstract model base
-│   │   └── Rocket.hpp / .cpp       # Concrete rocket model
+│   │   ├── BaseModel.hpp / BaseModel.cpp       # Abstract model base
+│   │   └── Rocket.hpp / Rocket.cpp             # Concrete 6 DOF rocket model
+│   ├── Trajectory/
+│   │   ├── Trajectory.hpp / Trajectory.cpp     # CDS::Trajectory — reference law
+│   │   └── Poly4.hpp / Poly4.cpp               # 4th order polynomial trajectory
 │   └── ext/
-│       ├── ext_defs.hpp            # External struct definitions
-│       ├── ext_comm.hpp / .cpp     # Adapter layer (ext ↔ core)
-│       └── bindings.cpp            # Emscripten embind bindings
+│       ├── ext_defs.hpp                        # External struct definitions
+│       ├── ext_comm.hpp / ext_comm.cpp         # Adapter layer (ext ↔ core)
+│       └── bindings.cpp                        # Emscripten embind bindings
 │
-├── .github/
-│   └── workflows/
-│       └── deploy.yml              # GitHub Pages CI/CD
+├── modeling/
+│   ├── requirements.txt                        # Python requirements
+│   ├── venv/                                   # Python virtual environment (gitignored)
+│   └── notebooks/
+│       ├── 01_model_derivation.ipynb           # Rocket dynamics with LQR + FF for trajectory tracking
+│       ├── descent_codegen.py                  # Codegen helpers used by the notebook
+│       └── exported_cpp/
+│           └── dynamics_ff_lqr_01.cpp / .hpp   # Generated LQR + FF dynamics
 │
 ├── frontend/
 │   ├── index.html
-│   └── main.js                     # Simulation loop, renderers, UI logic
+│   └── main.js                                 # Simulation loop, renderers, UI logic
+│
+├── .github/
+│   └── workflows/
+│       └── deploy.yml                          # GitHub Pages CI/CD
 │
 └── Readme.md
 ```
@@ -194,6 +220,12 @@ ext_setpointError   { xErr, yErr, zErr }
 ## Build & Run
 
 ### Compile the core (WebAssembly)
+
+If necessary configure the environment with:
+
+```bash
+source pathToEmSDK/emsdk_env.sh
+```
 
 **Debug** (with source maps for local development):
 

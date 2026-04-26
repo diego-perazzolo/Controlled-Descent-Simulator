@@ -61,7 +61,13 @@ EMSCRIPTEN_BINDINGS(simulator) {
         .field("state",   &ext_stepRet::state)
         .field("err",     &ext_stepRet::err);
 
+    value_object<ext_trajectoryPoint>("ext_trajectoryPoint")
+        .field("x", &ext_trajectoryPoint::x)
+        .field("y",   &ext_trajectoryPoint::y)
+        .field("z",     &ext_trajectoryPoint::z);
+
     // --- Funzioni esposte a JS ---
     function("ext_init", &ext_init);
     function("ext_step", &ext_step);
+    function("ext_getTrajectoryPoint", &ext_getTrajectoryPoint);
 }

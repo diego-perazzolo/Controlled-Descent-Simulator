@@ -29,29 +29,33 @@
 // Created     : 2026
 // =============================================================================
 #pragma once
-#include "core_defs.hpp"
+#include "Trajectory.hpp"
 
-/* Public C-like interface */
+namespace CDS
+{
+    class Poly4 : public Trajectory
+    {
 
-// Initializes the simulation core, returns true on error
-bool core_init();
+        public:
 
-// Set rocket parameters, returns true on error
-bool core_rocketInit(core_rocketParams_t rPar);
+        Poly4();
+        virtual ~Poly4() override;
 
-// Set trajectory parameters, returns true on error
-bool core_trajectoryInit(core_trajectoryParams_t tPar);
+        /* Virtual methods */
+         /* Gets reference trajectory state at a time instant. Returns true on error */
+        virtual bool GetReference(const core_coord_t&  time, Reference_t& ref) override;
 
-// Performs one simulation (integration) step
-bool core_performSimulationStep(core_stepParams_t sPar);
+        /* Set dictionary of trajectory parameters and their value. Returns true on error */
+        virtual bool SetParameters(const std::map<std::string, core_coord_t>& params) override;
 
-// Get system's state, returns true on error
-bool core_getState(core_state_t *pState);
+        /* Get dictionary of trajectory parameters and their value. Returns true on error */
+        virtual bool GetParameters(std::map<std::string, core_coord_t>& params) override;
 
-// Get tracking error, returns true on error
-bool core_getTrackingError(core_trackingErrors_t *pTrackingErr);
+        /* Set trajectory parameter. Returns true on error */
+        virtual bool SetParameter(const core_coord_t& p, size_t paramIdx) override;
 
-// Get Trajectory point at a certain time instant, returns true on error
-bool core_getTrajectoryPoint(core_coord_t time, Vec3& point);
-    
-    
+        /* Get trajectory parameter. Returns true on error */
+        virtual bool GetParameter(core_coord_t& p, size_t paramIdx) override;
+
+    };
+};

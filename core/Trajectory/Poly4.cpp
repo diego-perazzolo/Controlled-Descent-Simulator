@@ -28,30 +28,79 @@
 // Author      : Diego Perazzolo
 // Created     : 2026
 // =============================================================================
-#pragma once
-#include "core_defs.hpp"
 
-/* Public C-like interface */
+#include "Poly4.hpp"
 
-// Initializes the simulation core, returns true on error
-bool core_init();
+using namespace CDS;
 
-// Set rocket parameters, returns true on error
-bool core_rocketInit(core_rocketParams_t rPar);
+Poly4::Poly4()
+ {
+    m_startTime = 0;
+    m_endTime = 20; // seconds
+ }
 
-// Set trajectory parameters, returns true on error
-bool core_trajectoryInit(core_trajectoryParams_t tPar);
+Poly4::~Poly4()
+{
 
-// Performs one simulation (integration) step
-bool core_performSimulationStep(core_stepParams_t sPar);
-
-// Get system's state, returns true on error
-bool core_getState(core_state_t *pState);
-
-// Get tracking error, returns true on error
-bool core_getTrackingError(core_trackingErrors_t *pTrackingErr);
-
-// Get Trajectory point at a certain time instant, returns true on error
-bool core_getTrajectoryPoint(core_coord_t time, Vec3& point);
+}
+        
+  bool Poly4::GetReference(const core_coord_t&  time, Reference_t& ref)
+  {
+    core_coord_t t = time;  // local alias
     
+    if(t > m_endTime) t = m_endTime;
+    else if(t < m_startTime) t = m_startTime;
     
+    // pos
+    ref.pos[0] = ((((0.0009375)*t - 0.05)*t + 0.75)*t + 0)*t - 50.0;
+    ref.pos[1] = ((((-0.0015625)*t + 0.0875)*t - 1.5)*t + 5.0)*t + 50.0;
+    ref.pos[2] = ((((0.0034375)*t - 0.225)*t + 5.25)*t - 50.0)*t + 150.0;
+
+    // vel
+    ref.vel[0] = (((0.00375)*t - 0.15)*t + 1.5)*t + 0;
+    ref.vel[1] = (((-0.00625)*t + 0.2625)*t - 3.0)*t + 5.0;
+    ref.vel[2] = (((0.01375)*t - 0.675)*t + 10.5)*t - 50.0;
+
+    // acc
+    ref.acc[0] = ((0.01125)*t - 0.3)*t + 1.5;
+    ref.acc[1] = ((-0.01875)*t + 0.525)*t - 3.0;
+    ref.acc[2] = ((0.04125)*t - 1.35)*t + 10.5;
+
+    // jerk
+    ref.jerk[0] = (0.0225)*t - 0.3;
+    ref.jerk[1] = (-0.0375)*t + 0.525;
+    ref.jerk[2] = (0.0825)*t - 1.35;
+
+    // snap
+    ref.snap[0] = 0.0225;
+    ref.snap[1] = -0.0375;
+    ref.snap[2] = 0.0825;
+
+    // TODO DP: registra anche tempo finale traiettoria
+
+    return false;
+  }
+
+  bool Poly4::SetParameters(const std::map<std::string, core_coord_t>& params)
+  {
+
+    return false;
+  }
+
+  bool Poly4::GetParameters(std::map<std::string, core_coord_t>& params)
+  {
+
+    return false;
+  }
+
+  bool Poly4::SetParameter(const core_coord_t& p, size_t paramIdx)
+  {
+
+    return false;
+  }
+
+  bool Poly4::GetParameter(core_coord_t& p, size_t paramIdx)
+  {
+
+    return false;
+  }

@@ -69,10 +69,11 @@ namespace CDS
         using UserForces = std::array<double, 3>;    // User input forces [Fx, Fy, Fz]
 
         private:
+        void* m_modelPtr;
         StateVec m_state;
+        Trajectory* m_trajectoryPtr;
         TrackingErr m_trackingErr;
         UserForces m_userForces;
-        PhysicsParams_t m_physicsParams;
         double m_time;
 
     };

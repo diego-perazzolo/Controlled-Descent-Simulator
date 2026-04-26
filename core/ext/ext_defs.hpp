@@ -88,6 +88,14 @@ typedef struct
     ext_coord_t a3;
 } ext_traj;
 
+/* struct of the trajectory position point */
+typedef struct 
+{
+    ext_coord_t x;
+    ext_coord_t y;
+    ext_coord_t z;
+} ext_trajectoryPoint;
+
 /* struct of the user input forces */
 typedef struct 
 {
