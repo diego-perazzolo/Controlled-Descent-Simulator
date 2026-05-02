@@ -89,7 +89,7 @@ Simulate the controlled descent of a single-stage rocket booster in 3D, with:
 │  ┌──────────────────────▼────────────────────────────┐  │
 │  │                   Dynamics                        │  │
 │  │  ┌──────────┐   ┌────────────┐   ┌────────────┐   │  │
-│  │  │  Jupyter │   │ Generated  │   │ Controller │   │  │
+│  │  │ Jupyter  │   │ Generated  │   │ Controller │   │  │
 │  │  │ notebook │   │    C++     │   │   design   │   │  │
 │  │  └──────────┘   └────────────┘   └────────────┘   │  │
 │  └───────────────────────────────────────────────────┘  |
@@ -265,13 +265,33 @@ python3 -m http.server 8080
 
 Then open `http://localhost:8080/frontend/` in the browser.
 
+### Run Jupyter notebooks in VS Code
+
+Create and activate a python virtual environment.
+Navigate with the Terminal to a folder you want to store the virtual environment - venv -, then:
+
+```bash
+# Create virtual environment
+python3 -m venv venv
+
+# Activate environment (macOS/zsh)
+source venv/bin/activate
+```
+
+
+Register kernel name:
+
+```bash
+python -m ipykernel install --user --name=rocket-modeling --display-name="Python (rocket-modeling)"
+```
+
+Now it is possible to open the notebook in VS Code, select the before created python kernel and run the notebook
+
+
+
 ### GitHub Pages
 
 The repository includes a GitHub Actions workflow ([`.github/workflows/deploy.yml`](.github/workflows/deploy.yml)) that automatically builds the WASM in Release mode and deploys to GitHub Pages on every push to `main`.
-
-To enable it:
-1. Go to **Settings > Pages** in your GitHub repository
-2. Set **Source** to **GitHub Actions**
 
 ---
 
