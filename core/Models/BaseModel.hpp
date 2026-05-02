@@ -31,7 +31,7 @@
 
 #pragma once
 #include "../core_defs.hpp"
-#include "Trajectory.hpp"
+#include "TrajectoryManager.hpp"
 #include <vector>
 #include <functional>
 
@@ -47,9 +47,9 @@ namespace CDS
         /* Virtual methods */
         
         virtual ~BaseModel();
-        virtual bool SetModelParams(core_rocketParams_t& params) = 0;
-        virtual bool SetTrajectory(Trajectory* pTrajectory) = 0;
-        virtual bool PerformIntegration(core_stepParams_t& params) = 0;
+        virtual bool SetModelParams(const core_rocketParams_t& params) = 0;
+        virtual bool SetTrajectoryManager(TrajectoryManager* pTrajectoryManager) = 0;
+        virtual bool PerformIntegration(const core_stepParams_t& params) = 0;
         virtual bool GetState(core_state_t& state) = 0; 
         virtual bool GetTrackingErrors(core_trackingErrors_t& tErrors) = 0; 
 

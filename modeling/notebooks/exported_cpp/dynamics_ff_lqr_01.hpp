@@ -6,7 +6,11 @@
 #include <array>
 #include <cstddef>
 
+#ifdef JUST_TESTING_DYNAMICS
+#include "test_core_defs.hpp"
+#else
 #include "core_defs.hpp"
+#endif
 
 namespace CDS { namespace Dynamics {
 
@@ -53,7 +57,7 @@ public:
     InputVec ExecuteControl(const StateVec& s, const Reference_t& r) const;
 
     // ----- Dynamics -----
-    // dxdt = f(s, u, ref_pos, userF). Augmented integrators use ref_pos only.
+    // dxdt = f(s, u, ref, userF). Augmented integrators use only ref.pos.
     StateVec Dynamics(const StateVec& s,
                       const InputVec& u,
                       const Reference_t& ref,

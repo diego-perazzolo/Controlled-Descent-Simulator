@@ -165,9 +165,14 @@ Rocket::Rocket()
 
 Rocket::~Rocket()
 {
+    if(m_modelPtr)
+    {
+        delete (CDS::Dynamics::FF_LQR_01*) m_modelPtr;
+        m_modelPtr = nullptr;
+    }
 }
 
-bool Rocket::SetModelParams(core_rocketParams_t& params)
+bool Rocket::SetModelParams(const core_rocketParams_t& params)
 {
     auto dynamics = (Dynamics::FF_LQR_01*)m_modelPtr;
 
@@ -190,28 +195,28 @@ bool Rocket::SetModelParams(core_rocketParams_t& params)
 
     return false;
 }
-bool Rocket::SetTrajectory(Trajectory* pTrajectory)
+bool Rocket::SetTrajectoryManager(TrajectoryManager* pTrajectoryManager)
 {
     Reference_t ref;
 
-    if(pTrajectory == nullptr || pTrajectory->GetReference(m_time, ref))
+    if(pTrajectoryManager == nullptr || pTrajectoryManager->GetReference(m_time, ref))
     {
         // Error
         return true;
     }
 
-    m_trajectoryPtr = pTrajectory;
+    m_trajectoryManagerPtr = pTrajectoryManager;
     _init_dynamicsState(ref, m_state);
 
     return false;
 }
 
 
-bool Rocket::PerformIntegration(core_stepParams_t& params)
+bool Rocket::PerformIntegration(const core_stepParams_t& params)
 {
     // Getting reference setpoints from Trajectory
     Reference_t ref;
-    if(m_trajectoryPtr == nullptr || m_trajectoryPtr->GetReference(m_time, ref))
+    if(m_trajectoryManagerPtr == nullptr || m_trajectoryManagerPtr->GetReference(m_time, ref))
     {
         // ERR
         return true;
@@ -229,7 +234,7 @@ bool Rocket::PerformIntegration(core_stepParams_t& params)
 
     auto u = ((Dynamics::FF_LQR_01*)m_modelPtr)->ExecuteControl(m_state, ref);
     
-    if (m_time < 3 * params.timestep) {
+    if (m_time < 30 * params.timestep) {
         using SN = CDS::Dynamics::FF_LQR_01::StateName;
         std::printf("=== t=%.6f  dt=%.6f ===\n", m_time, params.timestep);
         std::printf("  STATE BEFORE:  pos=(%.4f, %.4f, %.4f)  ang(rad)=(%.6f, %.6f, %.6f)  "
@@ -276,7 +281,7 @@ bool Rocket::GetState(core_state_t& state)
     state.yaw_dot = m_state[IDX_PSIDOT];
     state.roll = m_state[IDX_ALPHA];
     state.pitch = m_state[IDX_BETA];
-    state.yaw = m_state[IDX_PSIDOT];
+    state.yaw = m_state[IDX_PSI];
 
     // IDX_INTX    
     // IDX_INTY    

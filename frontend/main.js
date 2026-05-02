@@ -5,9 +5,33 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 // =============================================================================
 // Config
 // =============================================================================
-const TIMESTEP_S = 0.01;
-const START_TIME = 0;
-const END_TIME = 20;
+const DEFAULT_TIMESTEP_S = 0.01;
+const TIMESTEP_MIN_S     = 0.0001;
+const TIMESTEP_MAX_S     = 0.5;
+
+// Hardcoded fallback for the very first Poly4 when the trajectory list is
+// empty and the user has no rocket state to seed from. Matches the reference
+// descent in the design notebook (section 6).
+const SEED_INITIAL_POS = { x: -50, y:  50, z: 150 };
+const SEED_INITIAL_VEL = { x:   0, y:   5, z: -50 };
+
+// Default trajectory loaded at boot so a user can press Start immediately
+// without having to compose a sequence first. Loaded once, on the first boot;
+// not re-injected on Reset / Apply, so a user who explicitly clears the
+// sequence stays cleared.
+const DEFAULT_TRAJECTORY = [
+    {
+        kind: 'poly4',
+        params: {
+            initialPos: { x: -50, y: 50, z:  80 },
+            initialVel: { x:   0, y:  5, z: -50 },
+            finalPos:   { x:   0, y:  0, z:   0 },
+            finalVel:   { x:   0, y:  0, z:   0 },
+            finalAcc:   { x:   0, y:  0, z:   0 },
+            time_s: 20,
+        },
+    },
+];
 
 const INIT_PARAMS = {
     rocketPar: {
@@ -20,12 +44,6 @@ const INIT_PARAMS = {
     },
     actuatorLimits: {
         fZ_lim: 700.0,
-    },
-    trajParams: {
-        a0: 0.0,
-        a1: 0.0,
-        a2: 0.0,
-        a3: 0.0,
     },
 };
 
@@ -41,6 +59,7 @@ let stepCount  = 0;
 let lastFpsTs  = performance.now();
 let fpsCounter = 0;
 let fpsDisplay = 0;
+let timestep_s = DEFAULT_TIMESTEP_S;
 
 // =============================================================================
 // Renderers registry — add a renderer here to hook into the sim loop
@@ -69,7 +88,7 @@ const ui = {
     p_mass: $('p_mass'), p_iX: $('p_iX'), p_iY: $('p_iY'), p_iZ: $('p_iZ'),
     p_c:    $('p_c'),    p_cz: $('p_cz'),
     p_fZlim: $('p_fZlim'),
-    p_a0: $('p_a0'), p_a1: $('p_a1'), p_a2: $('p_a2'), p_a3: $('p_a3'),
+    p_dt:    $('p_dt'),
 };
 
 // =============================================================================
@@ -111,10 +130,7 @@ function fillParamsForm(p) {
     ui.p_c.value     = p.rocketPar.c;
     ui.p_cz.value    = p.rocketPar.cz;
     ui.p_fZlim.value = p.actuatorLimits.fZ_lim;
-    ui.p_a0.value    = p.trajParams.a0;
-    ui.p_a1.value    = p.trajParams.a1;
-    ui.p_a2.value    = p.trajParams.a2;
-    ui.p_a3.value    = p.trajParams.a3;
+    ui.p_dt.value    = timestep_s;
 }
 
 function readParamsForm() {
@@ -129,8 +145,16 @@ function readParamsForm() {
             cz:             n('p_cz'),
         },
         actuatorLimits: { fZ_lim: n('p_fZlim') },
-        trajParams:     { a0: n('p_a0'), a1: n('p_a1'), a2: n('p_a2'), a3: n('p_a3') },
     };
+}
+
+function readTimestep() {
+    let v = parseFloat(ui.p_dt.value);
+    if (!isFinite(v) || v <= 0) v = DEFAULT_TIMESTEP_S;
+    if (v < TIMESTEP_MIN_S) v = TIMESTEP_MIN_S;
+    if (v > TIMESTEP_MAX_S) v = TIMESTEP_MAX_S;
+    ui.p_dt.value = v;
+    return v;
 }
 
 const fmt  = (v, d = 4) => v.toFixed(d);
@@ -283,7 +307,7 @@ function make3DRenderer() {
         trailLine.geometry.attributes.position.needsUpdate = true;
     }
 
-        function updateTrajectory(x, y, z) {
+    function pushTrajectoryPoint(x, y, z) {
         trajectory.push(new THREE.Vector3(x, y, z));
         if (trajectory.length > TRAJECTORY_MAX) trajectory.shift();
 
@@ -300,32 +324,36 @@ function make3DRenderer() {
         trajectoryLine.geometry.attributes.position.needsUpdate = true;
     }
 
-function generateTrajectoryPreview()
-    {
-        if(sim)
-        {
-            let startTime = START_TIME;
-            let endTime = END_TIME;
-            let trajSample_seconds = 0.2;
+    function generateTrajectoryPreview() {
+        if (!sim) return;
 
-            for(let time_seconds = startTime; time_seconds <= endTime; time_seconds += trajSample_seconds)
-            {
-                let p = sim.ext_getTrajectoryPoint(time_seconds);
-                updateTrajectory(p.x, p.z, p.y);
-            }
+        // Sample the live backend trajectory over [0, totalDuration]. The
+        // total duration is owned by the trajectory builder so the preview
+        // automatically follows append/remove operations.
+        const totalDuration = trajectoryBuilder.getTotalDuration();
+        if (totalDuration <= 0) return;
 
+        const sampleDt = 0.2;
+        for (let t = 0; t <= totalDuration; t += sampleDt) {
+            const p = sim.ext_trajectory_get_point(t);
+            // sim(x, y, z=up) -> Three.js(x, z, y)
+            pushTrajectoryPoint(p.x, p.z, p.y);
         }
+    }
+
+    function clearTrajectoryPreview() {
+        trajectory.length = 0;
+        if (trajectoryLine) trajectoryLine.geometry.setDrawRange(0, 0);
     }
 
     return {
         update(state) {
             if (!initialized || !visible) return;
 
-            // Generate trajectory preview
-            if(trajectory.length == 0)
-            {
+            // Generate preview lazily on first display, or after invalidation.
+            if (trajectory.length === 0) {
                 generateTrajectoryPreview();
-            } 
+            }
 
             // sim(x, y, z=up) → Three.js(x, z, y)  [Y is up in Three.js]
             rocketGroup.position.set(state.x, state.z, state.y);
@@ -335,20 +363,23 @@ function generateTrajectoryPreview()
         },
         reset() {
             trail.length = 0;
-            trajectory.length = 0;
             if (trailLine) trailLine.geometry.setDrawRange(0, 0);
-            if (trajectoryLine) trajectoryLine.geometry.setDrawRange(0, 0);
 
             if (rocketGroup) {
                 rocketGroup.position.set(0, 0, 0);
                 rocketGroup.rotation.set(0, 0, 0);
             }
         },
+        // Drop the cached trajectory line so the next frame regenerates it
+        // from the current backend state. Called by the trajectory builder
+        // whenever the sequence changes.
+        invalidateTrajectory() {
+            clearTrajectoryPreview();
+        },
         show() {
             visible = true;
 
-            if (!initialized) 
-            {
+            if (!initialized) {
                 init();
             }
 
@@ -434,6 +465,269 @@ function makeUplotRenderer() {
 }
 
 // =============================================================================
+// Trajectory builder
+// =============================================================================
+//
+// Responsibilities:
+//   - Owns the JS-side spec list of trajectory items (the "sequence").
+//   - Forwards every append/remove to the backend immediately, keeping the
+//     UI list and the WASM-side trajectory in lockstep. If the backend
+//     rejects an append, the UI list is not modified, so the two views never
+//     drift.
+//   - Emits change notifications so the rest of the app can: (a) invalidate
+//     the 3D trajectory preview, (b) enable/disable the Start button.
+//
+// Item shape on the JS side:
+//   { kind: 'poly4',
+//     params: { initialPos:{x,y,z}, initialVel:{x,y,z},
+//               finalPos:{x,y,z},   finalVel:{x,y,z}, finalAcc:{x,y,z},
+//               time_s } }
+//   { kind: 'point',
+//     params: { finalPos:{x,y,z}, time_s } }
+//
+const trajectoryBuilder = (() => {
+    const items = [];
+    const onChangeListeners = [];
+
+    // ---- DOM ----
+    const dom = {
+        list:        $('trajList'),
+        count:       $('trajCount'),
+        total:       $('trajTotal'),
+        btnRemove:   $('btnTrajRemoveLast'),
+        btnClear:    $('btnTrajClear'),
+        btnAppend:   $('btnTrajAppend'),
+        type:        $('traj_type'),
+        time:        $('traj_time'),
+        // Poly4 inputs
+        poly4Box: $('traj_poly4_fields'),
+        p0: ['traj_p0_x', 'traj_p0_y', 'traj_p0_z'].map($),
+        v0: ['traj_v0_x', 'traj_v0_y', 'traj_v0_z'].map($),
+        pF: ['traj_pF_x', 'traj_pF_y', 'traj_pF_z'].map($),
+        vF: ['traj_vF_x', 'traj_vF_y', 'traj_vF_z'].map($),
+        aF: ['traj_aF_x', 'traj_aF_y', 'traj_aF_z'].map($),
+        // Point inputs
+        pointBox: $('traj_point_fields'),
+        pt: ['traj_pt_x', 'traj_pt_y', 'traj_pt_z'].map($),
+    };
+
+    // ---- Helpers ----
+    function num(el) {
+        const v = parseFloat(el.value);
+        return isFinite(v) ? v : 0;
+    }
+    function readVec3(els)    { return { x: num(els[0]), y: num(els[1]), z: num(els[2]) }; }
+    function setVec3(els, v)  { els[0].value = v.x; els[1].value = v.y; els[2].value = v.z; }
+    function emitChange()     { onChangeListeners.forEach(fn => fn()); }
+    function getTotalDuration() {
+        return items.reduce((acc, it) => acc + it.params.time_s, 0);
+    }
+
+    function endStateOfLastItem() {
+        // What the rocket position/velocity will be at the end of the last
+        // item in the sequence. Used to seed initialPos/initialVel of the
+        // next Poly4 so successive segments line up by default.
+        if (items.length === 0) {
+            return { pos: SEED_INITIAL_POS, vel: SEED_INITIAL_VEL };
+        }
+        const last = items[items.length - 1];
+        if (last.kind === 'poly4') {
+            return { pos: last.params.finalPos, vel: last.params.finalVel };
+        }
+        // 'point' has no finalVel; assume zero velocity at the waypoint.
+        return { pos: last.params.finalPos, vel: { x: 0, y: 0, z: 0 } };
+    }
+
+    // ---- Rendering ----
+    function renderList() {
+        if (items.length === 0) {
+            dom.list.innerHTML =
+                '<div class="empty">No items. Append a Poly4 or Point below to build the sequence.</div>';
+        } else {
+            const rows = items.map((it, i) => {
+                const fp = (it.kind === 'poly4') ? it.params.finalPos : it.params.finalPos;
+                return `
+                    <tr>
+                        <td class="row-idx">${i}</td>
+                        <td class="row-type">${it.kind}</td>
+                        <td class="row-time">${it.params.time_s.toFixed(2)} s</td>
+                        <td class="row-pos">to (${fmt(fp.x,2)}, ${fmt(fp.y,2)}, ${fmt(fp.z,2)})</td>
+                    </tr>`;
+            }).join('');
+            dom.list.innerHTML = `
+                <table>
+                    <thead><tr>
+                        <th>#</th><th>type</th><th style="text-align:right">duration</th><th>final pos</th>
+                    </tr></thead>
+                    <tbody>${rows}</tbody>
+                </table>`;
+        }
+        dom.count.textContent = items.length.toString();
+        dom.total.textContent = getTotalDuration().toFixed(3);
+
+        const empty = items.length === 0;
+        dom.btnRemove.disabled = empty;
+        dom.btnClear.disabled  = empty;
+    }
+
+    function refreshAutofill() {
+        // Update the Poly4 form's initialPos/initialVel to match the end of
+        // the current sequence. Fields stay editable; this is just a default.
+        const end = endStateOfLastItem();
+        setVec3(dom.p0, end.pos);
+        setVec3(dom.v0, end.vel);
+    }
+
+    function setTypeVisibility() {
+        const t = dom.type.value;
+        dom.poly4Box.style.display = (t === 'poly4') ? '' : 'none';
+        dom.pointBox.style.display = (t === 'point') ? '' : 'none';
+    }
+
+    // ---- Append / remove ----
+    function appendCurrent() {
+        const kind = dom.type.value;
+        const time_s = parseFloat(dom.time.value);
+        if (!isFinite(time_s) || time_s <= 0) {
+            setError('Trajectory: time_s must be > 0');
+            return false;
+        }
+
+        let item, ok;
+        if (kind === 'poly4') {
+            item = {
+                kind: 'poly4',
+                params: {
+                    initialPos: readVec3(dom.p0),
+                    initialVel: readVec3(dom.v0),
+                    finalPos:   readVec3(dom.pF),
+                    finalVel:   readVec3(dom.vF),
+                    finalAcc:   readVec3(dom.aF),
+                    time_s,
+                },
+            };
+            ok = !sim.ext_trajectory_append_poly4(item.params);
+        } else {
+            item = {
+                kind: 'point',
+                params: {
+                    finalPos: readVec3(dom.pt),
+                    time_s,
+                },
+            };
+            ok = !sim.ext_trajectory_append_point(item.params);
+        }
+
+        if (!ok) {
+            setError(`Trajectory: backend rejected append (${kind})`);
+            return false;
+        }
+
+        items.push(item);
+        setError('');
+        renderList();
+        refreshAutofill();
+        emitChange();
+        return true;
+    }
+
+    function removeLast() {
+        if (items.length === 0) return;
+        const ok = !sim.ext_trajectory_remove_last_item();
+        if (!ok) {
+            setError('Trajectory: backend rejected remove_last_item');
+            return;
+        }
+        items.pop();
+        renderList();
+        refreshAutofill();
+        emitChange();
+    }
+
+    function clearAll() {
+        // Pop until empty. Keep the JS list in sync only after each backend
+        // call succeeds, so a mid-loop failure leaves a consistent state.
+        while (items.length > 0) {
+            const ok = !sim.ext_trajectory_remove_last_item();
+            if (!ok) {
+                setError('Trajectory: backend rejected remove_last_item during clear');
+                renderList();
+                refreshAutofill();
+                emitChange();
+                return;
+            }
+            items.pop();
+        }
+        renderList();
+        refreshAutofill();
+        emitChange();
+    }
+
+    // ---- Replay (after ext_init wipes backend state) ----
+    function replayToBackend() {
+        // After ext_init the backend trajectory is assumed to be empty. Push
+        // every JS-side item back into it. If any push fails, reset the UI
+        // list to whatever the backend actually accepted.
+        const surviving = [];
+        for (const it of items) {
+            const ok = (it.kind === 'poly4')
+                ? !sim.ext_trajectory_append_poly4(it.params)
+                : !sim.ext_trajectory_append_point(it.params);
+            if (!ok) {
+                setError(`Trajectory: replay failed at item ${surviving.length}`);
+                break;
+            }
+            surviving.push(it);
+        }
+        items.length = 0;
+        items.push(...surviving);
+        renderList();
+        refreshAutofill();
+        emitChange();
+    }
+
+    // ---- Load preset (boot only) ----
+    function loadPreset(preset) {
+        // Append a list of items both to the backend and to the JS spec list,
+        // stopping at the first backend rejection. Used to inject a default
+        // trajectory at boot so the user can hit Start without composing a
+        // sequence by hand. Not used on Reset/Apply: those preserve whatever
+        // the user has chosen, including an explicit clear.
+        for (const it of preset) {
+            const ok = (it.kind === 'poly4')
+                ? !sim.ext_trajectory_append_poly4(it.params)
+                : !sim.ext_trajectory_append_point(it.params);
+            if (!ok) {
+                setError(`Trajectory: preset load failed at item ${items.length}`);
+                break;
+            }
+            items.push(it);
+        }
+        renderList();
+        refreshAutofill();
+        emitChange();
+    }
+
+    // ---- Wiring ----
+    dom.type.addEventListener('change', setTypeVisibility);
+    dom.btnAppend.addEventListener('click', appendCurrent);
+    dom.btnRemove.addEventListener('click', removeLast);
+    dom.btnClear.addEventListener('click',  clearAll);
+
+    setTypeVisibility();
+    renderList();
+
+    return {
+        onChange(fn) { onChangeListeners.push(fn); },
+        isEmpty:        () => items.length === 0,
+        getTotalDuration,
+        replayToBackend,
+        loadPreset,
+        refreshAutofill,
+    };
+})();
+
+// =============================================================================
 // Main panels update
 // =============================================================================
 function updatePanels(state, err, t, step) {
@@ -463,7 +757,7 @@ function updatePanels(state, err, t, step) {
     ui.err_mag.textContent = fmt(eMag);
 
     ui.stepCount.textContent = fmtI(step);
-    ui.dt.textContent        = `${(TIMESTEP_S * 1000).toFixed(1)} ms`;
+    ui.dt.textContent        = `${(timestep_s * 1000).toFixed(2)} ms`;
 
     // FPS
     fpsCounter++;
@@ -483,7 +777,7 @@ function loop() {
     if (!running) return;
 
     const stepParams = {
-        timeStep_s: TIMESTEP_S,
+        timeStep_s: timestep_s,
         userForce: { fX: userForce.fX, fY: userForce.fY, fZ: userForce.fZ },
     };
 
@@ -495,7 +789,7 @@ function loop() {
         return;
     }
 
-    simTime += TIMESTEP_S;
+    simTime += timestep_s;
     stepCount++;
 
     updatePanels(result.state, result.err, simTime, stepCount);
@@ -507,7 +801,23 @@ function loop() {
 // =============================================================================
 // Controls
 // =============================================================================
+function refreshStartEnabled() {
+    // Start is allowed only when:
+    //   - sim is not currently running, AND
+    //   - the trajectory has at least one item (otherwise the backend has
+    //     nothing to track and the run is meaningless).
+    if (running) {
+        ui.btnStart.disabled = true;
+        return;
+    }
+    ui.btnStart.disabled = trajectoryBuilder.isEmpty();
+}
+
 function start() {
+    if (trajectoryBuilder.isEmpty()) {
+        setError('Cannot start: trajectory sequence is empty.');
+        return;
+    }
     running = true;
     ui.btnStart.disabled = true;
     ui.btnStop.disabled  = false;
@@ -520,13 +830,15 @@ function start() {
 function stop() {
     running = false;
     if (frameId) cancelAnimationFrame(frameId);
-    ui.btnStart.disabled = false;
     ui.btnStop.disabled  = true;
     ui.btnReset.disabled = false;
     setStatus('Stopped.');
+    refreshStartEnabled();
 }
 
 function reset() {
+    stop();
+    timestep_s = readTimestep();
     simTime   = 0;
     stepCount = 0;
     ui.simTime.innerHTML = `0.000 <span>s</span>`;
@@ -535,9 +847,16 @@ function reset() {
     setError('');
     ui.btnReset.disabled = true;
 
-    // Re-init core
-    const err = sim.ext_init(INIT_PARAMS);
-    if (err) setError('ext_init failed on reset');
+    // Re-init core. ext_init wipes the backend trajectory, so the JS-side
+    // sequence has to be replayed for the next run to be valid.
+    const err = sim.ext_init(readParamsForm());
+    if (err) { setError('ext_init failed on reset'); return; }
+    trajectoryBuilder.replayToBackend();
+
+    // 3D preview must be recomputed from the freshly-replayed backend state.
+    renderer3d?.invalidateTrajectory?.();
+
+    refreshStartEnabled();
 }
 
 ui.btnStart.addEventListener('click', start);
@@ -560,19 +879,31 @@ ui.btnCharts.addEventListener('click', () => showView('charts'));
 ui.btn3d.addEventListener('click',     () => showView('3d'));
 ui.btnParams.addEventListener('click', () => showView('params'));
 
-// Apply params
+// Apply rocket / actuator params + timestep (also re-inits the core).
 ui.btnApply.addEventListener('click', () => {
     const params = readParamsForm();
+    timestep_s = readTimestep();
     stop();
     const err = sim.ext_init(params);
     if (err) { setError('ext_init failed'); return; }
+
+    // ext_init wipes the backend trajectory; replay the JS-side sequence.
+    trajectoryBuilder.replayToBackend();
+    renderer3d?.invalidateTrajectory?.();
+
     renderers.forEach(r => r.reset());
     simTime = 0; stepCount = 0;
     ui.simTime.innerHTML = `0.000 <span>s</span>`;
     setStatus('Ready — params applied.');
     setError('');
-    ui.btnStart.disabled = false;
     ui.btnReset.disabled = true;
+    refreshStartEnabled();
+});
+
+// Trajectory changes invalidate the preview and may flip the Start button.
+trajectoryBuilder.onChange(() => {
+    renderer3d?.invalidateTrajectory?.();
+    refreshStartEnabled();
 });
 
 // =============================================================================
@@ -596,9 +927,14 @@ ui.btnApply.addEventListener('click', () => {
         }
 
         fillParamsForm(INIT_PARAMS);
+        // Inject a default sequence so a fresh user can press Start straight
+        // away. Done after ext_init so the backend trajectory is empty.
+        // loadPreset triggers refreshAutofill internally, so initialPos /
+        // initialVel of the form will reflect the end of the default item.
+        trajectoryBuilder.loadPreset(DEFAULT_TRAJECTORY);
         setupForceButtons();
         setStatus('Ready.');
-        ui.btnStart.disabled = false;
+        refreshStartEnabled();
     } catch (e) {
         setError(`Failed to load WASM: ${e.message}`);
     }

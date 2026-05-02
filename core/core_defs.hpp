@@ -49,11 +49,25 @@ typedef struct
     core_coord_t F1_max; // maximum thrust (N)
 } core_rocketParams_t;
 
-// Trajectory params
+// Trajectory Polynomial 4th order params
 typedef struct
 {
-    
-} core_trajectoryParams_t;
+    Vec3 initialPos;
+    Vec3 initialVel;
+    // not enough degrees of freedom to set also initial acceleration
+    Vec3 finalPos;
+    Vec3 finalVel;
+    Vec3 finalAcc;
+    core_coord_t time_s;
+} core_trajectoryPoly4Params_t;
+
+// Trajectory Point params
+typedef struct
+{
+    Vec3 finalPos;
+    core_coord_t time_s;
+} core_trajectoryPointParams_t;
+
 
 
 typedef struct{

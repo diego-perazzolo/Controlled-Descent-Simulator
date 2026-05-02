@@ -33,6 +33,13 @@
 #pragma once
 /* Types */
 typedef float ext_coord_t; // type for running coordinartes: position, pose, force
+typedef struct
+{
+    ext_coord_t x;
+    ext_coord_t y;
+    ext_coord_t z;
+} ext_vec3_t;
+
 
 // ----------------------------- external communication -------------------------
 
@@ -79,14 +86,25 @@ typedef struct
     ext_coord_t cz;
 } ext_rocketParams;
 
-/* struct of the trajectory's parameters*/
-typedef struct 
+// struct of polynomial 4th order trajectory parameters
+typedef struct
 {
-    ext_coord_t a0;
-    ext_coord_t a1;
-    ext_coord_t a2;
-    ext_coord_t a3;
-} ext_traj;
+    ext_vec3_t initialPos;
+    ext_vec3_t initialVel;
+    // not enough degrees of freedom to set also initial acceleration
+    ext_vec3_t finalPos;
+    ext_vec3_t finalVel;
+    ext_vec3_t finalAcc;
+    ext_coord_t time_s; // total duration of the manouver towards the final state
+} ext_trajectoryPoly4Params_t;
+
+// struct of the Point trajectory parameters
+typedef struct
+{
+    ext_vec3_t finalPos;
+    ext_coord_t time_s; // total duration of the manouver towards the finalPos
+} ext_trajectoryPointParams_t;
+
 
 /* struct of the trajectory position point */
 typedef struct 

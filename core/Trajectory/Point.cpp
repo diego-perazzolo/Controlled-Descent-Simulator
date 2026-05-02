@@ -28,37 +28,68 @@
 // Author      : Diego Perazzolo
 // Created     : 2026
 // =============================================================================
+#include "Point.hpp"
+using namespace CDS;
 
-#include "BaseModel.hpp"
-
-namespace CDS
+Point::Point(const core_trajectoryPointParams_t params) : m_params(params)
 {
-    class Rocket : public BaseModel
-    {
-        public:
+    m_startTime = 0;
+    m_endTime = m_params.time_s;
+}
 
-        Rocket();
+Point::~Point()
+{
 
-        virtual ~Rocket();
-        virtual bool SetModelParams(const core_rocketParams_t& params) override;
-        virtual bool SetTrajectoryManager(TrajectoryManager* pTrajectoryManager) override;
-        virtual bool PerformIntegration(const core_stepParams_t& params) override;
-        virtual bool GetState(core_state_t& state) override;
-        virtual bool GetTrackingErrors(core_trackingErrors_t& tErrors) override; 
+}
 
-        using StateVec = std::array<double, 15>;   // augmented state (12 + 3 integrals)
-        using InputVec = std::array<double, 4>;    // [F1, T1, T2, T3]
-        using RefVec   = std::array<double, 3>;    // position reference [x_ref, y_ref, z_ref]
-        using TrackingErr = std::array<double, 3>;    // Tracking err w.r.t. [x_ref, y_ref, z_ref]
-        using UserForces = std::array<double, 3>;    // User input forces [Fx, Fy, Fz]
+bool Point::GetReference(const core_coord_t&  time, Reference_t& ref)
+{
+    // Reference is constant, TODO DP
 
-        private:
-        void* m_modelPtr;
-        StateVec m_state;
-        TrajectoryManager* m_trajectoryManagerPtr;
-        TrackingErr m_trackingErr;
-        UserForces m_userForces;
-        double m_time;
+    ref.pos[0] = m_params.finalPos[0];
+    ref.pos[1] = m_params.finalPos[1];
+    ref.pos[2] = m_params.finalPos[2];
+    
+    ref.vel[0] = 0;
+    ref.vel[1] = 0;
+    ref.vel[2] = 0;
 
-    };
+    ref.acc[0] = 0;
+    ref.acc[1] = 0;
+    ref.acc[2] = 0;
+
+    ref.jerk[0] =0;
+    ref.jerk[1] =0;
+    ref.jerk[2] =0;
+
+    ref.snap[0] =0;
+    ref.snap[1] =0;
+    ref.snap[2] =0;
+
+    return false;
+}
+
+bool Point::SetParameters(const std::map<std::string, core_coord_t>& params)
+{
+    return true; // TODO DP
+    return false;
+}
+
+bool Point::GetParameters(std::map<std::string, core_coord_t>& params)
+{
+    return true; // TODO DP
+    return false;
+}
+
+bool Point::SetParameter(const core_coord_t& p, size_t paramIdx)
+{
+    return true; // TODO DP
+    return false;
+}
+
+bool Point::GetParameter(core_coord_t& p, size_t paramIdx)
+{
+    return true; // TODO DP
+    
+    return false;
 }

@@ -56,7 +56,7 @@
         button.active    { border-color: #0cf; color: #0cf; }
         button.pressing  { background: #1a2a1a; border-color: #0f0; color: #0f0; }
 
-        input[type="number"], input[type="text"] {
+        input[type="number"], input[type="text"], select {
             background: #111;
             color: #ccc;
             border: 1px solid #333;
@@ -66,7 +66,7 @@
             font-size: 0.9em;
             width: 100%;
         }
-        input[type="number"]:focus, input[type="text"]:focus {
+        input[type="number"]:focus, input[type="text"]:focus, select:focus {
             outline: none;
             border-color: #0cf;
         }
@@ -151,6 +151,67 @@
             color: #0f8;
         }
         #btnApply:hover { background: #0a1a10; }
+
+        /* ── Trajectory builder ── */
+        .panel-wide { grid-column: 1 / -1; }
+
+        #trajList {
+            border: 1px solid #2a2a2a;
+            border-radius: 3px;
+            margin-bottom: 12px;
+            overflow: hidden;
+        }
+        #trajList table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.9em;
+        }
+        #trajList th, #trajList td {
+            padding: 6px 10px;
+            text-align: left;
+            border-bottom: 1px solid #1f1f1f;
+        }
+        #trajList th {
+            color: #555;
+            font-weight: normal;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            font-size: 0.75em;
+            background: #111;
+        }
+        #trajList tr:last-child td { border-bottom: none; }
+        #trajList .row-idx  { color: #666; width: 30px; }
+        #trajList .row-type { color: #0cf; width: 70px; }
+        #trajList .row-time { color: #ccc; width: 80px; text-align: right; }
+        #trajList .row-pos  { color: #ccc; }
+        #trajList .empty    { color: #555; padding: 14px; text-align: center; }
+
+        #trajTotalLine { color: #888; font-size: 0.85em; margin: 6px 2px 12px 2px; }
+        #trajTotalLine strong { color: #0cf; }
+
+        .traj-axis-row {
+            display: grid;
+            grid-template-columns: 90px repeat(3, 1fr);
+            gap: 6px;
+            align-items: center;
+            margin-bottom: 6px;
+        }
+        .traj-axis-row label { color: #888; font-size: 0.85em; }
+
+        .traj-controls {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 12px;
+        }
+        .traj-controls button { flex: 0 0 auto; }
+        #btnTrajRemoveLast { border-color: #844; color: #fa6; }
+        #btnTrajClear      { border-color: #844; color: #f66; }
+
+        #btnTrajAppend {
+            border-color: #0f8;
+            color: #0f8;
+            margin-top: 6px;
+        }
 
         /* ── Status ── */
         #statusBar { font-size: 0.9em; color: #555; margin-top: 10px; }
@@ -296,31 +357,102 @@
                 <input type="number" id="p_fZlim"  step="10">
                 <span class="unit">N</span>
             </div>
-            <h2 style="margin-top:16px">Trajectory</h2>
+
+            <h2 style="margin-top:16px">Simulation</h2>
             <div class="param-row">
-                <label>a0</label>
-                <input type="number" id="p_a0" step="0.1">
-                <span class="unit">—</span>
-            </div>
-            <div class="param-row">
-                <label>a1</label>
-                <input type="number" id="p_a1" step="0.1">
-                <span class="unit">—</span>
-            </div>
-            <div class="param-row">
-                <label>a2</label>
-                <input type="number" id="p_a2" step="0.1">
-                <span class="unit">—</span>
-            </div>
-            <div class="param-row">
-                <label>a3</label>
-                <input type="number" id="p_a3" step="0.1">
-                <span class="unit">—</span>
+                <label>timestep</label>
+                <input type="number" id="p_dt" step="0.0001" min="0.0001" max="0.5" value="0.01">
+                <span class="unit">s</span>
             </div>
         </div>
 
     </div>
-    <button id="btnApply">Apply & Reset</button>
+
+    <button id="btnApply">Apply &amp; Reset</button>
+
+    <!-- ── Trajectory builder ── -->
+    <div class="params-grid" style="margin-top: 18px;">
+        <div class="panel panel-wide">
+            <h2>Trajectory sequence</h2>
+
+            <div id="trajList">
+                <div class="empty">No items. Append a Poly4 or Point below to build the sequence.</div>
+            </div>
+
+            <div id="trajTotalLine">
+                Items: <strong id="trajCount">0</strong>
+                &nbsp;|&nbsp; Total duration: <strong id="trajTotal">0.000</strong> s
+            </div>
+
+            <div class="traj-controls">
+                <button id="btnTrajRemoveLast" disabled>Remove last</button>
+                <button id="btnTrajClear" disabled>Clear all</button>
+            </div>
+
+            <h2 style="margin-top:18px">Append item</h2>
+
+            <div class="param-row">
+                <label>type</label>
+                <select id="traj_type">
+                    <option value="poly4">poly4</option>
+                    <option value="point">point</option>
+                </select>
+                <span class="unit"></span>
+            </div>
+
+            <div class="param-row">
+                <label>time_s</label>
+                <input type="number" id="traj_time" step="0.1" min="0" value="10">
+                <span class="unit">s</span>
+            </div>
+
+            <!-- Poly4-only fields -->
+            <div id="traj_poly4_fields">
+                <div class="traj-axis-row">
+                    <label>initialPos</label>
+                    <input type="number" id="traj_p0_x" step="0.1" placeholder="x">
+                    <input type="number" id="traj_p0_y" step="0.1" placeholder="y">
+                    <input type="number" id="traj_p0_z" step="0.1" placeholder="z">
+                </div>
+                <div class="traj-axis-row">
+                    <label>initialVel</label>
+                    <input type="number" id="traj_v0_x" step="0.1" placeholder="x">
+                    <input type="number" id="traj_v0_y" step="0.1" placeholder="y">
+                    <input type="number" id="traj_v0_z" step="0.1" placeholder="z">
+                </div>
+                <div class="traj-axis-row">
+                    <label>finalPos</label>
+                    <input type="number" id="traj_pF_x" step="0.1" placeholder="x">
+                    <input type="number" id="traj_pF_y" step="0.1" placeholder="y">
+                    <input type="number" id="traj_pF_z" step="0.1" placeholder="z">
+                </div>
+                <div class="traj-axis-row">
+                    <label>finalVel</label>
+                    <input type="number" id="traj_vF_x" step="0.1" placeholder="x">
+                    <input type="number" id="traj_vF_y" step="0.1" placeholder="y">
+                    <input type="number" id="traj_vF_z" step="0.1" placeholder="z">
+                </div>
+                <div class="traj-axis-row">
+                    <label>finalAcc</label>
+                    <input type="number" id="traj_aF_x" step="0.1" placeholder="x">
+                    <input type="number" id="traj_aF_y" step="0.1" placeholder="y">
+                    <input type="number" id="traj_aF_z" step="0.1" placeholder="z">
+                </div>
+            </div>
+
+            <!-- Point-only fields -->
+            <div id="traj_point_fields" style="display:none">
+                <div class="traj-axis-row">
+                    <label>finalPos</label>
+                    <input type="number" id="traj_pt_x" step="0.1" placeholder="x">
+                    <input type="number" id="traj_pt_y" step="0.1" placeholder="y">
+                    <input type="number" id="traj_pt_z" step="0.1" placeholder="z">
+                </div>
+            </div>
+
+            <button id="btnTrajAppend">Append item</button>
+        </div>
+    </div>
 </div>
 
 <div id="statusBar">Loading WASM...</div>

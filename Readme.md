@@ -34,7 +34,10 @@ Simulate the controlled descent of a single-stage rocket booster in 3D, with:
 #### Communication Layer (`ext/`)
 - `ext_init(params)` — initializes rocket parameters, actuator limits, and trajectory
 - `ext_step(stepParams)` — advances one integration step; returns full state and tracking error
-- `ext_getTrajectoryPoint(timeInstant)` - provides a point along the reference trajectory, used for trajectory preview
+- `ext_trajectory_get_point(timeInstant)` - provides a point along the reference trajectory, used for trajectory preview
+- `ext_trajectory_append_poly4(params)` - appends a trajectory of type polynomial 4th order, configured with total time for the manouver, initial position, initial velocity, final position, final velocity and final acceleration
+- `ext_trajectory_append_point(params)` - appends a trajectory of type point, configured with a final position and the total time needed for the manouver
+- `ext_trajectory_remove_last_item(void)` - removes the last trajectory item from the trajectory list
 - Emscripten `embind` bindings expose all structs and functions to JavaScript
 
 #### Physics Engine
@@ -42,7 +45,7 @@ Simulate the controlled descent of a single-stage rocket booster in 3D, with:
 - State: position `(x, y, z)`, linear velocity `(ẋ, ẏ, ż)`, Euler angles `(roll, pitch, yaw)`, angular rates
 - Forces: main thrust, gravity, aerodynamic drag (parametric coefficients `c`, `cz`), user-injected perturbations
 - ODE integration: **Runge-Kutta 4 (RK4)**
-- Parametric controller (LQR / PID — switchable)
+- Parametric controller (LQR with FF on all actuators, saturation on main thruster actuator)
 
 ### Screenshots
 
@@ -65,7 +68,7 @@ Simulate the controlled descent of a single-stage rocket booster in 3D, with:
 │         └────────────────┼─────────────────┘           │
 │               renderers[].update(state, err)           │
 └───────────────────────────┬─────────────────────────────┘
-                            │  ext_init() / ext_step()
+                            │  ext_init(),  ext_...
                             ▼
 ┌─────────────────────────────────────────────────────────┐
 │                   SIMULATOR (.wasm)                     │
@@ -79,7 +82,7 @@ Simulate the controlled descent of a single-stage rocket booster in 3D, with:
 │  │              Core Physics (C++)                   │  │
 │  │  ┌──────────┐   ┌────────────┐   ┌────────────┐   │  │
 │  │  │  Model   │   │ Controller │   │ Trajectory │   │  │
-│  │  │  6 DOF   │   │  LQR/PID   │   │    law     │   │  │
+│  │  │  6 DOF   │   │  LQR/PID   │   │  Manager   │   │  │
 │  │  └──────────┘   └────────────┘   └────────────┘   │  │
 │  └───────────────────────────────────────────────────┘  |
 │                         │                               │
@@ -121,33 +124,43 @@ roll_dot, pitch_dot, yaw_dot  — angular rates (rad/s)
 Runge-Kutta 4 (RK4), fixed step `dt`.
 
 ### Controller
-Hardcoded LQR on tracking error, and Feed Forward on all actuators
+LQR on tracking error, Feed Forward on all actuators, saturation of the actuator in the z-axis; all developed in Jupyter notebook
 
 ---
 
 ## Core API
 
 ```cpp
-// Initialize simulation
+// Initialize simulation, returns true on error
 bool ext_init(ext_initParams params);
 
 // Advance one integration step
 ext_stepRet ext_step(ext_stepParams params);
 
 // Get a point at time instant t along the trajectory
-ext_trajectoryPoint ext_getTrajectoryPoint(ext_coord_t t);
+ext_trajectoryPoint ext_trajectory_get_point(ext_coord_t t);
+
+/* Add a trajectory Polynomial 4th order, returns true on error */
+bool ext_trajectory_append_poly4(ext_trajectoryPoly4Params_t params);
+
+/* Add a trajectory Point, returns true on error */
+bool ext_trajectory_append_point(ext_trajectoryPointParams_t params);
+
+/* Remove last trajectory item, returns true on error */
+bool ext_trajectory_remove_last_item(void);
 ```
 
 
 ### Key types
 ```cpp
-ext_rocketParams    { mass_Kg, inertiaX/Y/Z_Kgm2, c, cz }
-ext_actuatorLimits  { fZ_lim }
-ext_traj            { a0, a1, a2, a3 }
-ext_userForce       { fX, fY, fZ }
-ext_fullState       { x, y, z, x_dot, y_dot, z_dot,
-                      roll, pitch, yaw, roll_dot, pitch_dot, yaw_dot }
-ext_setpointError   { xErr, yErr, zErr }
+ext_rocketParams               { mass_Kg, inertiaX/Y/Z_Kgm2, c, cz }
+ext_actuatorLimits             { fZ_lim }
+ext_trajectoryPoly4Params_t    { initialPos, initialVel, finalPos, finalVel, finalAcc, time_s }
+ext_trajectoryPointParams_t    { finalPos, time_s }
+ext_userForce                  { fX, fY, fZ }
+ext_fullState                  { x, y, z, x_dot, y_dot, z_dot,
+                                roll, pitch, yaw, roll_dot, pitch_dot, yaw_dot }
+ext_setpointError              { xErr, yErr, zErr }
 ```
 
 ---
@@ -180,7 +193,9 @@ ext_setpointError   { xErr, yErr, zErr }
 │   │   ├── BaseModel.hpp / BaseModel.cpp       # Abstract model base
 │   │   └── Rocket.hpp / Rocket.cpp             # Concrete 6 DOF rocket model
 │   ├── Trajectory/
-│   │   ├── Trajectory.hpp / Trajectory.cpp     # CDS::Trajectory — reference law
+│   │   ├── TrajectoryManager.hpp / .cpp        # trajectory composition
+│   │   ├── Trajectory.hpp / Trajectory.cpp     # base trajectory class
+│   │   ├── Point.hpp / Point.cpp               # waypoint-like
 │   │   └── Poly4.hpp / Poly4.cpp               # 4th order polynomial trajectory
 │   └── ext/
 │       ├── ext_defs.hpp                        # External struct definitions
@@ -189,7 +204,6 @@ ext_setpointError   { xErr, yErr, zErr }
 │
 ├── modeling/
 │   ├── requirements.txt                        # Python requirements
-│   ├── venv/                                   # Python virtual environment (gitignored)
 │   └── notebooks/
 │       ├── 01_model_derivation.ipynb           # Rocket dynamics with LQR + FF for trajectory tracking
 │       ├── descent_codegen.py                  # Codegen helpers used by the notebook
@@ -269,7 +283,7 @@ To enable it:
 - [x] Three.js 3D scene — rocket mesh + trajectory trail + OrbitControls
 - [x] C++ core: 6 DOF model + RK4 integrator
 - [x] C++ core: LQR controller
-- [ ] Customizable trajectory
+- [x] Customizable trajectory
 - [ ] C++ core: PID controller
 - [x] GitHub Pages deployment (CI/CD workflow)
 - [ ] Quaternion rotation support (future)

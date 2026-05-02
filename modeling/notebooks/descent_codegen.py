@@ -139,10 +139,12 @@ class CodegenConfig:
     )
 
     # Lingua-franca types from the project header (declared elsewhere).
-    reference_type: str = "Reference"
-    refvec_type: str = "RefVec"
-    user_forces_type: str = "UserForces"
-    shared_header: str = "core_defs.hpp"
+    # Defaults match Diego's convention: Reference_t for the rich struct,
+    # Vec3 for raw 3-component vectors.
+    reference_type: str = "Reference_t"
+    user_forces_type: str = "Vec3"
+    test_core_defs_header: str = "test_core_defs.hpp"
+    core_defs_header: str = "core_defs.hpp"
 
     @property
     def module_name(self) -> str:
@@ -179,6 +181,7 @@ class DescentCodegen:
         self._dynamics_rhs: sp.Matrix | None = None
         self._ff_kin: dict | None = None
         self._ff_torque: dict | None = None
+        self._ff_att_rate: dict | None = None
         self._K_e = None
 
     # ---------------- symbol bindings ----------------
@@ -238,6 +241,22 @@ class DescentCodegen:
             "acc_syms": ref_acc_syms,
             "jerk_syms": ref_jerk_syms,
             "snap_syms": ref_snap_syms,
+        }
+
+    def set_feedforward_attitude_rate(
+        self,
+        alpha_ff_dot: sp.Expr, beta_ff_dot: sp.Expr,
+        ref_acc_syms: tuple[sp.Symbol, sp.Symbol, sp.Symbol],
+        ref_jerk_syms: tuple[sp.Symbol, sp.Symbol, sp.Symbol],
+    ) -> None:
+        """Time derivatives of alpha_ff and beta_ff as functions of (acc, jerk).
+        These feed the angular-velocity entries of the LQR reference state s_ref.
+        Without them the LQR would treat the FF angular velocity as tracking
+        error and produce spurious torques at startup."""
+        self._ff_att_rate = {
+            "alpha_dot": alpha_ff_dot, "beta_dot": beta_ff_dot,
+            "acc_syms": ref_acc_syms,
+            "jerk_syms": ref_jerk_syms,
         }
 
     def set_lqr_gain(self, K_e) -> None:
@@ -319,6 +338,8 @@ class DescentCodegen:
         L: list[str] = []
         L.append(f"{ind}using SN = StateName;")
         L.append(f"{ind}StateVec dxdt{{}};")
+        L.append(f"{ind}// Local alias: only ref.pos is used by the dynamics (integrators).")
+        L.append(f"{ind}const Vec3& ref_pos = ref.pos;")
         L.append("")
 
         # Trig prefetch — emit only the ones that appear in the equations.
@@ -377,6 +398,10 @@ class DescentCodegen:
     # ---------------- ExecuteControl body ----------------
     def _emit_execute_control_body(self) -> str:
         assert self._ff_kin is not None and self._ff_torque is not None
+        assert self._ff_att_rate is not None, (
+            "set_feedforward_attitude_rate() must be called: alpha_ff_dot and "
+            "beta_ff_dot are required to build the LQR reference state correctly."
+        )
         ind = self.cfg.indent
 
         ax_sym, ay_sym, az_sym = self._ff_kin["acc_syms"]
@@ -402,12 +427,16 @@ class DescentCodegen:
 
         # Render FF expressions first, then decide which reference derivatives
         # are actually used and only declare those.
-        F1_str    = render_ff(self._ff_kin["F1"])
-        alpha_str = render_ff(self._ff_kin["alpha"])
-        beta_str  = render_ff(self._ff_kin["beta"])
-        T1_str    = render_ff(self._ff_torque["T1"])
-        T2_str    = render_ff(self._ff_torque["T2"])
-        all_str = " ".join([F1_str, alpha_str, beta_str, T1_str, T2_str])
+        F1_str           = render_ff(self._ff_kin["F1"])
+        alpha_str        = render_ff(self._ff_kin["alpha"])
+        beta_str         = render_ff(self._ff_kin["beta"])
+        alpha_dot_str    = render_ff(self._ff_att_rate["alpha_dot"])
+        beta_dot_str     = render_ff(self._ff_att_rate["beta_dot"])
+        T1_str           = render_ff(self._ff_torque["T1"])
+        T2_str           = render_ff(self._ff_torque["T2"])
+        all_str = " ".join([F1_str, alpha_str, beta_str,
+                            alpha_dot_str, beta_dot_str,
+                            T1_str, T2_str])
 
         def _used(name: str) -> bool:
             return re.search(rf"\b{name}\b", all_str) is not None
@@ -416,7 +445,7 @@ class DescentCodegen:
         L.append(f"{ind}// Pull reference derivatives into named locals for clarity.")
         # Always-on: acc is the kinematic FF input.
         L.append(f"{ind}const double ax = r.acc[0], ay = r.acc[1], az = r.acc[2];")
-        # Jerk and snap only if the torque FF expressions actually need them.
+        # Jerk and snap only if the FF expressions actually need them.
         jerk_used = any(_used(n) for n in ("jx", "jy", "jz"))
         snap_used = any(_used(n) for n in ("sx", "sy", "sz"))
         if jerk_used:
@@ -434,27 +463,48 @@ class DescentCodegen:
         L.append("")
 
         L.append(f"{ind}// Feedforward thrust magnitude and tilt angles from desired acceleration.")
-        L.append(f"{ind}const double F1_ff    = {F1_str};")
-        L.append(f"{ind}const double alpha_ff = {alpha_str};")
-        L.append(f"{ind}const double beta_ff  = {beta_str};")
-        L.append(f"{ind}// alpha_ff/beta_ff are exposed for diagnostic/attitude-FF use; "
-                 f"they are not consumed below.")
-        L.append(f"{ind}(void)alpha_ff; (void)beta_ff;")
-        L.append("")
-        L.append(f"{ind}// Torque feedforward: from second derivatives of FF angles "
-                 f"(needs jerk and snap of the reference).")
-        L.append(f"{ind}const double T1_ff    = {T1_str};")
-        L.append(f"{ind}const double T2_ff    = {T2_str};")
+        L.append(f"{ind}const double F1_ff        = {F1_str};")
+        L.append(f"{ind}const double alpha_ff     = {alpha_str};")
+        L.append(f"{ind}const double beta_ff      = {beta_str};")
+        L.append(f"{ind}// Time derivatives of the FF angles. Needed to fill the angular-velocity")
+        L.append(f"{ind}// entries of the LQR reference state s_ref. Without them the LQR would")
+        L.append(f"{ind}// see the FF angular velocity as tracking error and emit spurious torques.")
+        L.append(f"{ind}const double alpha_ff_dot = {alpha_dot_str};")
+        L.append(f"{ind}const double beta_ff_dot  = {beta_dot_str};")
+        L.append(f"{ind}// Torque feedforward: second time derivatives of the FF angles "
+                 f"(needs jerk and snap).")
+        L.append(f"{ind}const double T1_ff        = {T1_str};")
+        L.append(f"{ind}const double T2_ff        = {T2_str};")
         L.append(f"{ind}// Roll FF is zero by design (psi held at zero).")
-        L.append(f"{ind}const double T3_ff    = 0.0;")
+        L.append(f"{ind}const double T3_ff        = 0.0;")
         L.append("")
 
-        L.append(f"{ind}// LQR correction: u_lqr = -K_e * s.")
+        L.append(f"{ind}// Build the LQR reference state s_ref. The LQR sees u_lqr = -K_e * (s - s_ref):")
+        L.append(f"{ind}// position, attitude, linear velocity, and angular velocity from the FF.")
+        L.append(f"{ind}// Yaw and yaw-rate references are zero (roll-axis held at zero).")
+        L.append(f"{ind}// Integrators have no FF reference: their states are themselves the integral")
+        L.append(f"{ind}// of position error, so s_ref entries 12..14 stay zero.")
+        L.append(f"{ind}StateVec s_ref{{}};")
+        L.append(f"{ind}s_ref[StateToIdx(StateName::X)]        = r.pos[0];")
+        L.append(f"{ind}s_ref[StateToIdx(StateName::Y)]        = r.pos[1];")
+        L.append(f"{ind}s_ref[StateToIdx(StateName::Z)]        = r.pos[2];")
+        L.append(f"{ind}s_ref[StateToIdx(StateName::Alpha)]    = alpha_ff;")
+        L.append(f"{ind}s_ref[StateToIdx(StateName::Beta)]     = beta_ff;")
+        L.append(f"{ind}s_ref[StateToIdx(StateName::Psi)]      = 0.0;")
+        L.append(f"{ind}s_ref[StateToIdx(StateName::XDot)]     = r.vel[0];")
+        L.append(f"{ind}s_ref[StateToIdx(StateName::YDot)]     = r.vel[1];")
+        L.append(f"{ind}s_ref[StateToIdx(StateName::ZDot)]     = r.vel[2];")
+        L.append(f"{ind}s_ref[StateToIdx(StateName::AlphaDot)] = alpha_ff_dot;")
+        L.append(f"{ind}s_ref[StateToIdx(StateName::BetaDot)]  = beta_ff_dot;")
+        L.append(f"{ind}s_ref[StateToIdx(StateName::PsiDot)]   = 0.0;")
+        L.append("")
+
+        L.append(f"{ind}// LQR correction on the tracking error: u_lqr = -K_e * (s - s_ref).")
         L.append(f"{ind}InputVec u_lqr{{}};")
         L.append(f"{ind}for (size_t i = 0; i < {self.cfg.input_dim}; ++i) {{")
         L.append(f"{ind}{ind}double v = 0.0;")
         L.append(f"{ind}{ind}for (size_t j = 0; j < {self.cfg.aug_dim}; ++j) {{")
-        L.append(f"{ind}{ind}{ind}v += K_e[i][j] * s[j];")
+        L.append(f"{ind}{ind}{ind}v += K_e[i][j] * (s[j] - s_ref[j]);")
         L.append(f"{ind}{ind}}}")
         L.append(f"{ind}{ind}u_lqr[i] = -v;")
         L.append(f"{ind}}}")
@@ -523,7 +573,11 @@ class DescentCodegen:
 #include <array>
 #include <cstddef>
 
-#include "{cfg.shared_header}"
+#ifdef JUST_TESTING_DYNAMICS
+#include "{cfg.test_core_defs_header}"
+#else
+#include "{cfg.core_defs_header}"
+#endif
 
 {ns_open}
 
@@ -549,10 +603,10 @@ public:
 {ind}InputVec ExecuteControl(const StateVec& s, const {cfg.reference_type}& r) const;
 
 {ind}// ----- Dynamics -----
-{ind}// dxdt = f(s, u, ref_pos, userF). Augmented integrators use ref_pos only.
+{ind}// dxdt = f(s, u, ref, userF). Augmented integrators use only ref.pos.
 {ind}StateVec Dynamics(const StateVec& s,
 {ind}                  const InputVec& u,
-{ind}                  const {cfg.refvec_type}& ref_pos,
+{ind}                  const {cfg.reference_type}& ref,
 {ind}                  const {cfg.user_forces_type}& userF) const;
 
 {ind}// ----- Accessors -----
@@ -663,11 +717,11 @@ void {cls}::SetParam(ParamName n, double v) {{
 }}
 
 // =============================================================================
-// Dynamics: dxdt = f(s, u, ref_pos, userF).
+// Dynamics: dxdt = f(s, u, ref, userF). Only ref.pos is used (for the integrators).
 // =============================================================================
 {cls}::StateVec {cls}::Dynamics(const StateVec& s,
 {dyn_indent}const InputVec& u,
-{dyn_indent}const {cfg.refvec_type}& ref_pos,
+{dyn_indent}const {cfg.reference_type}& ref,
 {dyn_indent}const {cfg.user_forces_type}& userF) const
 {{
 {dyn_body}
@@ -697,6 +751,8 @@ void {cls}::SetParam(ParamName n, double v) {{
             raise RuntimeError("set_feedforward_kinematic() not called")
         if self._ff_torque is None:
             raise RuntimeError("set_feedforward_torque() not called")
+        if self._ff_att_rate is None:
+            raise RuntimeError("set_feedforward_attitude_rate() not called")
         if self._K_e is None:
             raise RuntimeError("set_lqr_gain() not called")
 

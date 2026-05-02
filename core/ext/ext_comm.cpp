@@ -51,12 +51,6 @@ static core_rocketParams_t _convertExtToCore_rocketParams(ext_rocketParams rPar,
     return coreParam;
 }
 
-static core_trajectoryParams_t _convertExtToCore_trajectoryParams(ext_traj tPar)
-{
-    core_trajectoryParams_t coreParam = {};
-
-    return coreParam;
-}
 
 static core_stepParams_t _convertExtToCore_stepParams(ext_stepParams sPar)
 {
@@ -93,6 +87,30 @@ static ext_stepRet _convertCoreToExt_stepRetParams(core_state_t state, core_trac
     return extParam;
 }
 
+static core_trajectoryPoly4Params_t _convertExtToCore_trajectoryPoly4Params(ext_trajectoryPoly4Params_t ext)
+{
+    core_trajectoryPoly4Params_t coreParam = {
+        .initialPos = {ext.initialPos.x, ext.initialPos.y, ext.initialPos.z},
+        .initialVel = {ext.initialVel.x, ext.initialVel.y, ext.initialVel.z},
+        .finalPos = {ext.finalPos.x, ext.finalPos.y, ext.finalPos.z},
+        .finalVel = {ext.finalVel.x, ext.finalVel.y, ext.finalVel.z},
+        .finalAcc = {ext.finalAcc.x, ext.finalAcc.y, ext.finalAcc.z},
+        .time_s = ext.time_s
+    };
+
+    return coreParam;
+}
+
+static core_trajectoryPointParams_t _convertExtToCore_trajectoryPointParams(ext_trajectoryPointParams_t ext)
+{
+    core_trajectoryPointParams_t coreParam = {
+        .finalPos = {ext.finalPos.x, ext.finalPos.y, ext.finalPos.z},
+        .time_s = ext.time_s
+    };
+
+    return coreParam;
+}
+
 static ext_trajectoryPoint _convertExtToCore_trajectoryPoint(Vec3& point)
 {
     ext_trajectoryPoint extParam = {.x = (ext_coord_t) point[0], .y = (ext_coord_t) point[1], .z = (ext_coord_t) point[2]};
@@ -109,7 +127,6 @@ bool ext_init(ext_initParams params)
 
     // Struct conversion
     core_rocketParams_t rPar = _convertExtToCore_rocketParams(params.rocketPar, params.actuatorLimits);
-    core_trajectoryParams_t tPar = _convertExtToCore_trajectoryParams(params.trajParams);
 
     // Core initialization
     bool ret = core_init();
@@ -120,7 +137,7 @@ bool ext_init(ext_initParams params)
     ASSERT_FALSE(ret);
 
     // Trajectory initialization
-    ret = core_trajectoryInit(tPar);
+    ret = core_trajectoryInit();
     ASSERT_FALSE(ret);
 
     return ret;
@@ -155,7 +172,53 @@ ext_stepRet ext_step(ext_stepParams stepParams)
     return ret;
 }
 
-ext_trajectoryPoint ext_getTrajectoryPoint(ext_coord_t t)
+bool ext_trajectory_append_poly4(ext_trajectoryPoly4Params_t params)
+{
+    bool ret = false;
+
+    core_trajectoryPoly4Params_t core_params = _convertExtToCore_trajectoryPoly4Params(params);
+
+    if(core_trajectoryAppendPoly4(core_params))
+    {
+        // Err
+
+        ret = true;
+    }
+    
+    return ret;
+}
+
+bool ext_trajectory_append_point(ext_trajectoryPointParams_t params)
+{
+     bool ret = false;
+
+    core_trajectoryPointParams_t core_params = _convertExtToCore_trajectoryPointParams(params);
+
+    if(core_trajectoryAppendPoint(core_params))
+    {
+        // Err
+        
+        ret = true;
+    }
+    
+    return ret;
+}
+
+bool ext_trajectory_remove_last_item(void)
+{
+    bool ret = false;
+
+    if(core_trajectoryRemoveLastItem())
+    {
+        // Err
+        
+        ret = true;
+    }
+    
+    return ret;
+}
+
+ext_trajectoryPoint ext_trajectory_get_point(ext_coord_t t)
 {
     Vec3 p = {};
     if(core_getTrajectoryPoint(t, p))

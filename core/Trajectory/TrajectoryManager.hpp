@@ -28,37 +28,44 @@
 // Author      : Diego Perazzolo
 // Created     : 2026
 // =============================================================================
-
-#include "BaseModel.hpp"
+#pragma once
+#include <memory>
+#include "core_defs.hpp"
+#include "Trajectory.hpp"
 
 namespace CDS
 {
-    class Rocket : public BaseModel
+    class TrajectoryManager
     {
         public:
+        TrajectoryManager();
+        ~TrajectoryManager() = default;
+        
+        /*Append to trajectory vector one 4th polybnomial trajectory, returns true on error */
+        bool AppendPoly4(const core_trajectoryPoly4Params_t& params);
 
-        Rocket();
+        /*Append to trajectory vector one constant Point trajectory, returns true on error */
+        bool AppendPoint(const core_trajectoryPointParams_t& params);
 
-        virtual ~Rocket();
-        virtual bool SetModelParams(const core_rocketParams_t& params) override;
-        virtual bool SetTrajectoryManager(TrajectoryManager* pTrajectoryManager) override;
-        virtual bool PerformIntegration(const core_stepParams_t& params) override;
-        virtual bool GetState(core_state_t& state) override;
-        virtual bool GetTrackingErrors(core_trackingErrors_t& tErrors) override; 
+        /* Remove last trajectory item */
+        bool RemoveLastItem(void);
 
-        using StateVec = std::array<double, 15>;   // augmented state (12 + 3 integrals)
-        using InputVec = std::array<double, 4>;    // [F1, T1, T2, T3]
-        using RefVec   = std::array<double, 3>;    // position reference [x_ref, y_ref, z_ref]
-        using TrackingErr = std::array<double, 3>;    // Tracking err w.r.t. [x_ref, y_ref, z_ref]
-        using UserForces = std::array<double, 3>;    // User input forces [Fx, Fy, Fz]
-
+        bool GetReference(const core_coord_t& time, Reference_t& ref);
+        
         private:
-        void* m_modelPtr;
-        StateVec m_state;
-        TrajectoryManager* m_trajectoryManagerPtr;
-        TrackingErr m_trackingErr;
-        UserForces m_userForces;
-        double m_time;
+        
+        /* Append a trajectory item to the stack */
+        bool AppendItem(std::unique_ptr<Trajectory> itemPtr);
+        
+        /* Switch to the next trajectory item */
+        bool GoNextItem(void);
 
+        /*Switch to the previews trajectory item*/
+        bool GoPrevItem(void);
+
+        std::vector<std::unique_ptr<Trajectory>> m_trajectoryItems;
+        int m_currentItemIndex;
+        core_coord_t m_absoluteStartTime;
+        
     };
 }

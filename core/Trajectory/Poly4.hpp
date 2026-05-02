@@ -23,12 +23,16 @@
 // THE SOFTWARE.
 //
 // =============================================================================
-// File        : <filename.cpp>
-// Description : <brief description of this file>
+// File        : Poly4.hpp
+// Description : Degree-4 polynomial sub-trajectory with parametric boundary
+//               conditions (p0, v0, pF, vF, aF, T). Coefficients are computed
+//               in closed form at construction time; GetReference is a pure
+//               Horner evaluation on the cached per-axis coefficient arrays.
 // Author      : Diego Perazzolo
 // Created     : 2026
 // =============================================================================
 #pragma once
+#include <array>
 #include "Trajectory.hpp"
 
 namespace CDS
@@ -38,7 +42,7 @@ namespace CDS
 
         public:
 
-        Poly4();
+        Poly4(const core_trajectoryPoly4Params_t params);
         virtual ~Poly4() override;
 
         /* Virtual methods */
@@ -57,5 +61,24 @@ namespace CDS
         /* Get trajectory parameter. Returns true on error */
         virtual bool GetParameter(core_coord_t& p, size_t paramIdx) override;
 
+        private:
+
+        /*
+         * Compute the 5 polynomial coefficients [a0, a1, a2, a3, a4] for a single
+         * axis from the boundary conditions (p0, v0, pF, vF, aF) and the maneuver
+         * duration T. Closed-form solution; see notebook section 6.b for the
+         * derivation and the numerical validation against the reference descent.
+         */
+        static std::array<double, 5> ComputeAxisCoeffs(double p0, double v0,
+                                                       double pF, double vF,
+                                                       double aF, double T);
+
+        core_trajectoryPoly4Params_t m_params;
+
+        // Per-axis polynomial coefficients in ascending order of powers of t,
+        // i.e. p_axis(t) = m_a_axis[0] + m_a_axis[1]*t + ... + m_a_axis[4]*t^4.
+        std::array<double, 5> m_a_x;
+        std::array<double, 5> m_a_y;
+        std::array<double, 5> m_a_z;
     };
 };

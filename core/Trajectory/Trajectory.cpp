@@ -33,3 +33,13 @@
 
 using namespace CDS;
 
+ /* Get trajectory start time */
+void Trajectory::GetStartTime(core_coord_t& s)
+{
+    s = m_startTime;
+}
+
+void Trajectory::GetEndTime(core_coord_t& e)
+{
+    e = m_endTime;
+}

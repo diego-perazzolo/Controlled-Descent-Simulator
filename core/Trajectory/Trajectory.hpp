@@ -32,6 +32,7 @@
 
 #include <array>
 #include <map>
+#include <vector>
 #include "core_defs.hpp"
 
 namespace CDS
@@ -43,7 +44,7 @@ namespace CDS
         public:
 
         Trajectory() = default;
-        
+
         /* Virtual methods */
 
         virtual ~Trajectory() = default;
@@ -64,19 +65,20 @@ namespace CDS
         virtual bool GetParameter(core_coord_t& p, size_t paramIdx) = 0;
 
 
-        /* Inline methods */
+        /* Trajectory methods */
 
         /* Get trajectory start time */
-        inline void GetStartTime(core_coord_t& s){s = m_startTime;};
+        void GetStartTime(core_coord_t& s);
 
          /* Get trajectory end time */
-        inline void GetEndTime(core_coord_t& e){e = m_endTime;};
+        void GetEndTime(core_coord_t& e);
 
         protected:
 
-        /* Trajectory is well define within a timespan [start; end] */
-        core_coord_t m_startTime;
-        core_coord_t m_endTime;
+        /* Trajectory item is well defined within a timespan [start; end] */
+        core_coord_t m_startTime; // start time of the trajectory item
+        core_coord_t m_endTime; // end time of the trajectory item
+
 
     };
 }

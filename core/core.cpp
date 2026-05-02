@@ -30,14 +30,14 @@
 // =============================================================================
 #include "core.hpp"
 #include "Models/Rocket.hpp"
-#include "Trajectory/Poly4.hpp"
+#include "Trajectory/TrajectoryManager.hpp"
 
 using namespace CDS;
 
 struct 
 {
     BaseModel* pModel;
-    Trajectory* pTrajectory;
+    TrajectoryManager* pTrajectoryManager;
 } _ctx = {};
 
 
@@ -49,38 +49,117 @@ struct
 
 bool core_init()
 {
-    // Context initialization
-    if(_ctx.pModel)
-    {
-        delete _ctx.pModel;
-    }
-
-    if(_ctx.pTrajectory)
-    {
-        delete _ctx.pTrajectory;
-    }
-
-    _ctx.pModel = new Rocket();
-    _ctx.pTrajectory = new Poly4();
-    _ctx.pModel->SetTrajectory(_ctx.pTrajectory);
-
 
     return false;
 }
 
-bool core_rocketInit(core_rocketParams_t rPar)
+bool core_rocketInit(const core_rocketParams_t rPar)
 {
+    if(_ctx.pModel)
+    {
+        delete _ctx.pModel;
+        _ctx.pModel = nullptr;
+    }
+    
+
+    _ctx.pModel = new Rocket();
+    
     // Initializing rocket's parameters
     return _ctx.pModel->SetModelParams(rPar);
 }
 
-bool core_trajectoryInit(core_trajectoryParams_t tPar)
+bool core_trajectoryInit()
 {
+    if(_ctx.pTrajectoryManager)
+    {
+        delete _ctx.pTrajectoryManager;
+        _ctx.pTrajectoryManager = nullptr;
+    }
+
+    _ctx.pTrajectoryManager = new TrajectoryManager();
+
+    // Default trajectory
+ #if 0
+    const core_trajectoryPoly4Params_t poly4Params = {
+        .initialPos = {-50, 50, 80},
+        .initialVel = {0, 5, -50},
+        .finalPos = {0, 0, 0},
+        .finalVel = {0, 0, 0},
+        .finalAcc = {0, 0, 0},
+        .time_s = 20
+    };
+
+    const core_trajectoryPoly4Params_t poly4Params2 = {
+        .initialPos = {0, 0, 0},
+        .initialVel = {10, 0, 0},
+        .finalPos = {-50, 50, 80},
+        .finalVel = {0, 0, 0},
+        .finalAcc = {0, 0, 0},
+        .time_s = 10
+    };
+
+    bool ret = true;
+
+    ret &= core_trajectoryAppendPoly4(poly4Params);
+    ret &= core_trajectoryAppendPoly4(poly4Params2);
+   
+    for(int i = 0; i < 1000; i++)
+    {
+        core_trajectoryPointParams_t pointParams1;
+        const core_coord_t totalTime_s = 10;
+        const core_coord_t timeStep = totalTime_s / 1000;
+        pointParams1.finalPos[0] = 1 * i * timeStep;
+        pointParams1.finalPos[1] = 2 * i * timeStep;
+        pointParams1.finalPos[2] = 3 * i * timeStep;
+        pointParams1.time_s = timeStep;
+
+        ret &= core_trajectoryAppendPoint(pointParams1);
+    }
+#endif
 
     return false;
 }
 
-bool core_performSimulationStep(core_stepParams_t sPar)
+bool core_trajectoryAppendPoly4(const core_trajectoryPoly4Params_t tPar)
+{
+    if(_ctx.pTrajectoryManager == nullptr)
+    {
+        // ERR
+        return true;
+    }
+
+    _ctx.pTrajectoryManager->AppendPoly4(tPar);
+    _ctx.pModel->SetTrajectoryManager(_ctx.pTrajectoryManager);
+
+    return false;
+}
+
+bool core_trajectoryAppendPoint(const core_trajectoryPointParams_t tPar)
+{
+        if(_ctx.pTrajectoryManager == nullptr)
+    {
+        // ERR
+        return true;
+    }
+
+    _ctx.pTrajectoryManager->AppendPoint(tPar);
+    _ctx.pModel->SetTrajectoryManager(_ctx.pTrajectoryManager);
+
+    return false;
+}
+
+bool core_trajectoryRemoveLastItem(void)
+{
+    if(_ctx.pTrajectoryManager == nullptr)
+    {
+        // ERR
+        return true;
+    }
+
+    return _ctx.pTrajectoryManager->RemoveLastItem();
+}
+
+bool core_performSimulationStep(const core_stepParams_t sPar)
 {
     return _ctx.pModel->PerformIntegration(sPar);
 }
@@ -104,7 +183,7 @@ bool core_getTrackingError(core_trackingErrors_t *pTrackingErr)
 bool core_getTrajectoryPoint(core_coord_t time, Vec3& point)
 {
     Reference_t ref;
-    if(_ctx.pTrajectory == nullptr || _ctx.pTrajectory->GetReference(time, ref))
+    if(_ctx.pTrajectoryManager == nullptr || _ctx.pTrajectoryManager->GetReference(time, ref))
     {
         // Error
         return true;

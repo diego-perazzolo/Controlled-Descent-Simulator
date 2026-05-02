@@ -34,16 +34,25 @@
 /* Public C-like interface */
 
 // Initializes the simulation core, returns true on error
-bool core_init();
+bool core_init(void);
 
 // Set rocket parameters, returns true on error
-bool core_rocketInit(core_rocketParams_t rPar);
+bool core_rocketInit(const core_rocketParams_t rPar);
 
-// Set trajectory parameters, returns true on error
-bool core_trajectoryInit(core_trajectoryParams_t tPar);
+// Set trajectory initial parameters, returns true on error
+bool core_trajectoryInit(void);
+
+// Append to the trajectory list an item of type: 4th order Polynomial trajectory, returns true on error
+bool core_trajectoryAppendPoly4(const core_trajectoryPoly4Params_t tPar);
+
+// Append to the trajectory list an item of type: Point, returns true on error
+bool core_trajectoryAppendPoint(const core_trajectoryPointParams_t tPar);
+
+// Remove last trajectory item, returns true on error
+bool core_trajectoryRemoveLastItem(void);
 
 // Performs one simulation (integration) step
-bool core_performSimulationStep(core_stepParams_t sPar);
+bool core_performSimulationStep(const core_stepParams_t sPar);
 
 // Get system's state, returns true on error
 bool core_getState(core_state_t *pState);

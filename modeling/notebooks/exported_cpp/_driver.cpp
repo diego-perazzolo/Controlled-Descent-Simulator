@@ -20,13 +20,17 @@ int main() {
                              0.5, -0.1, -10.0,  0.01, -0.02, 0.0,
                              0.1, 0.2, -0.05};
     FF_LQR_01::InputVec u = {100.0, 0.5, -0.3, 0.0};
-    RefVec ref_pos = {0.0, 0.0, 0.0};
-    UserForces userF = {2.5, -1.5, 0.7};
+    Vec3 userF = {2.5, -1.5, 0.7};
 
-    auto dxdt = model.Dynamics(s, u, ref_pos, userF);
+    // Test Dynamics with a Reference_t (only ref.pos is used inside, but we
+    // pass the full struct as the new signature requires).
+    Reference_t ref_for_dynamics;
+    ref_for_dynamics.pos = {0.0, 0.0, 0.0};
+    auto dxdt = model.Dynamics(s, u, ref_for_dynamics, userF);
     for (double v : dxdt) std::printf("%.15e\n", v);
 
-    Reference r;
+    // Test ExecuteControl with a richer Reference_t.
+    Reference_t r;
     r.pos  = {10.0, -5.0, 100.0};
     r.vel  = {2.0, -1.0, -8.0};
     r.acc  = {0.5, -0.2, -3.0};

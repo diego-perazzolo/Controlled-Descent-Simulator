@@ -38,7 +38,6 @@ typedef struct
 {
     ext_rocketParams rocketPar;
     ext_actuatorLimits actuatorLimits;
-    ext_traj trajParams;
 } ext_initParams;
 
 /* struct of the arguments of step function */
@@ -56,12 +55,23 @@ typedef struct
     ext_setpointError err;
 } ext_stepRet;
 
-/* Init function: initializes the core */
+// Initialize simulation, returns true on error
 bool ext_init(ext_initParams params);
 
-/* Step function, used to progress one step with the simulation. Returns a struct
-filled with the whole system state, setpoint errors*/
-ext_stepRet ext_step(ext_stepParams);
+// Advance one integration step
+ext_stepRet ext_step(ext_stepParams params);
+
+// Get a point at time instant t along the trajectory
+ext_trajectoryPoint ext_trajectory_get_point(ext_coord_t t);
+
+/* Add a trajectory Polynomial 4th order, returns true on error */
+bool ext_trajectory_append_poly4(ext_trajectoryPoly4Params_t params);
+
+/* Add a trajectory Point, returns true on error */
+bool ext_trajectory_append_point(ext_trajectoryPointParams_t params);
+
+/* Remove last trajectory item, returns true on error */
+bool ext_trajectory_remove_last_item(void);
 
 /* Get a point at time instant t along the trajectory */
-ext_trajectoryPoint ext_getTrajectoryPoint(ext_coord_t t);
+ext_trajectoryPoint ext_trajectory_get_point(ext_coord_t t);

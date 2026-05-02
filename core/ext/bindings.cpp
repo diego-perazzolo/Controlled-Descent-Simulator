@@ -33,12 +33,6 @@ EMSCRIPTEN_BINDINGS(simulator) {
         .field("c",              &ext_rocketParams::c)
         .field("cz",             &ext_rocketParams::cz);
 
-    value_object<ext_traj>("ext_traj")
-        .field("a0", &ext_traj::a0)
-        .field("a1", &ext_traj::a1)
-        .field("a2", &ext_traj::a2)
-        .field("a3", &ext_traj::a3);
-
     value_object<ext_userForce>("ext_userForce")
         .field("fX", &ext_userForce::fX)
         .field("fY", &ext_userForce::fY)
@@ -49,8 +43,7 @@ EMSCRIPTEN_BINDINGS(simulator) {
 
     value_object<ext_initParams>("ext_initParams")
         .field("rocketPar",      &ext_initParams::rocketPar)
-        .field("actuatorLimits", &ext_initParams::actuatorLimits)
-        .field("trajParams",     &ext_initParams::trajParams);
+        .field("actuatorLimits", &ext_initParams::actuatorLimits);
 
     value_object<ext_stepParams>("ext_stepParams")
         .field("timeStep_s", &ext_stepParams::timeStep_s)
@@ -64,10 +57,30 @@ EMSCRIPTEN_BINDINGS(simulator) {
     value_object<ext_trajectoryPoint>("ext_trajectoryPoint")
         .field("x", &ext_trajectoryPoint::x)
         .field("y",   &ext_trajectoryPoint::y)
-        .field("z",     &ext_trajectoryPoint::z);
+        .field("z",     &ext_trajectoryPoint::z);  
+
+    value_object<ext_vec3_t>("ext_vec3_t")
+        .field("x", &ext_vec3_t::x)
+        .field("y",   &ext_vec3_t::y)
+        .field("z",     &ext_vec3_t::z);
+
+    value_object<ext_trajectoryPoly4Params_t>("ext_trajectoryPoly4Params_t")
+        .field("initialPos", &ext_trajectoryPoly4Params_t::initialPos)
+        .field("initialVel",   &ext_trajectoryPoly4Params_t::initialVel)
+        .field("finalPos",     &ext_trajectoryPoly4Params_t::finalPos)
+        .field("finalVel", &ext_trajectoryPoly4Params_t::finalVel)
+        .field("finalAcc",   &ext_trajectoryPoly4Params_t::finalAcc)
+        .field("time_s",     &ext_trajectoryPoly4Params_t::time_s);
+    
+    value_object<ext_trajectoryPointParams_t>("ext_trajectoryPointParams_t")
+        .field("finalPos",     &ext_trajectoryPointParams_t::finalPos)
+        .field("time_s",     &ext_trajectoryPointParams_t::time_s);
 
     // --- Funzioni esposte a JS ---
     function("ext_init", &ext_init);
     function("ext_step", &ext_step);
-    function("ext_getTrajectoryPoint", &ext_getTrajectoryPoint);
+    function("ext_trajectory_get_point", &ext_trajectory_get_point);
+    function("ext_trajectory_append_poly4", &ext_trajectory_append_poly4);
+    function("ext_trajectory_append_point", &ext_trajectory_append_point);
+    function("ext_trajectory_remove_last_item", &ext_trajectory_remove_last_item);
 }

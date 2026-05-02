@@ -28,37 +28,35 @@
 // Author      : Diego Perazzolo
 // Created     : 2026
 // =============================================================================
-
-#include "BaseModel.hpp"
+#pragma once
+#include "Trajectory.hpp"
 
 namespace CDS
 {
-    class Rocket : public BaseModel
+    class Point : public Trajectory
     {
-        public:
+         public:
 
-        Rocket();
+        Point(const core_trajectoryPointParams_t params);
+        virtual ~Point() override;
 
-        virtual ~Rocket();
-        virtual bool SetModelParams(const core_rocketParams_t& params) override;
-        virtual bool SetTrajectoryManager(TrajectoryManager* pTrajectoryManager) override;
-        virtual bool PerformIntegration(const core_stepParams_t& params) override;
-        virtual bool GetState(core_state_t& state) override;
-        virtual bool GetTrackingErrors(core_trackingErrors_t& tErrors) override; 
+        /* Virtual methods */
+         /* Gets reference trajectory state at a time instant. Returns true on error */
+        virtual bool GetReference(const core_coord_t&  time, Reference_t& ref) override;
 
-        using StateVec = std::array<double, 15>;   // augmented state (12 + 3 integrals)
-        using InputVec = std::array<double, 4>;    // [F1, T1, T2, T3]
-        using RefVec   = std::array<double, 3>;    // position reference [x_ref, y_ref, z_ref]
-        using TrackingErr = std::array<double, 3>;    // Tracking err w.r.t. [x_ref, y_ref, z_ref]
-        using UserForces = std::array<double, 3>;    // User input forces [Fx, Fy, Fz]
+        /* Set dictionary of trajectory parameters and their value. Returns true on error */
+        virtual bool SetParameters(const std::map<std::string, core_coord_t>& params) override;
+
+        /* Get dictionary of trajectory parameters and their value. Returns true on error */
+        virtual bool GetParameters(std::map<std::string, core_coord_t>& params) override;
+
+        /* Set trajectory parameter. Returns true on error */
+        virtual bool SetParameter(const core_coord_t& p, size_t paramIdx) override;
+
+        /* Get trajectory parameter. Returns true on error */
+        virtual bool GetParameter(core_coord_t& p, size_t paramIdx) override;
 
         private:
-        void* m_modelPtr;
-        StateVec m_state;
-        TrajectoryManager* m_trajectoryManagerPtr;
-        TrackingErr m_trackingErr;
-        UserForces m_userForces;
-        double m_time;
-
+        core_trajectoryPointParams_t m_params;
     };
 }

@@ -91,7 +91,7 @@ void FF_LQR_01::SetParam(ParamName n, double v) {
 }
 
 // =============================================================================
-// Dynamics: dxdt = f(s, u, ref_pos, userF).
+// Dynamics: dxdt = f(s, u, ref, userF). Only ref.pos is used (for the integrators).
 // =============================================================================
 FF_LQR_01::StateVec FF_LQR_01::Dynamics(const StateVec& s,
                              const InputVec& u,
@@ -100,7 +100,8 @@ FF_LQR_01::StateVec FF_LQR_01::Dynamics(const StateVec& s,
 {
     using SN = StateName;
     StateVec dxdt{};
-    const Vec3 ref_pos = {ref.pos};
+    // Local alias: only ref.pos is used by the dynamics (integrators).
+    const Vec3& ref_pos = ref.pos;
 
     // Precompute attitude trig (used multiple times below).
     const double sa  = std::sin(s[StateToIdx(SN::Alpha)]);
@@ -160,31 +161,40 @@ FF_LQR_01::InputVec FF_LQR_01::ExecuteControl(const StateVec& s,
     const double sx = r.snap[0], sy = r.snap[1], sz = r.snap[2];
 
     // Feedforward thrust magnitude and tilt angles from desired acceleration.
-    const double F1_ff    = m_p.m*std::sqrt(ax*ax + ay*ay + std::pow(az + m_p.g, 2));
-    const double alpha_ff = std::atan2(ax, az + m_p.g);
-    const double beta_ff  = std::atan2(-ay, std::sqrt(ax*ax + std::pow(az + m_p.g, 2)));
-    // alpha_ff/beta_ff are exposed for diagnostic/attitude-FF use; they are not consumed below.
-    (void)alpha_ff; (void)beta_ff;
-
-    // Torque feedforward: from second derivatives of FF angles (needs jerk and snap of the reference).
-    const double T1_ff    = m_p.Ix*(2.0*ax*jz*(ax*jx + jz*(az + m_p.g)) - 2.0*jx*(az + m_p.g)*(ax*jx + jz*(az + m_p.g)) + (ax*ax + std::pow(az + m_p.g, 2))*(-ax*sz + sx*(az + m_p.g)))/std::pow(ax*ax + std::pow(az + m_p.g, 2), 2);
-    const double T2_ff    = -m_p.Iy*std::pow(ax*ax + std::pow(az + m_p.g, 2), -1.5)*(2.0*ay*(ax*ax + std::pow(az + m_p.g, 2))*(ax*jx + jz*(az + m_p.g))*(ax*jx + ay*jy + jz*(az + m_p.g)) - ay*(ax*ax + std::pow(az + m_p.g, 2))*(ax*ax + ay*ay + std::pow(az + m_p.g, 2))*(ax*sx + jx*jx + jz*jz + sz*(az + m_p.g)) + ay*std::pow(ax*jx + jz*(az + m_p.g), 2)*(ax*ax + ay*ay + std::pow(az + m_p.g, 2)) - 2.0*jy*std::pow(ax*ax + std::pow(az + m_p.g, 2), 2)*(ax*jx + ay*jy + jz*(az + m_p.g)) + sy*std::pow(ax*ax + std::pow(az + m_p.g, 2), 2)*(ax*ax + ay*ay + std::pow(az + m_p.g, 2)))/std::pow(ax*ax + ay*ay + std::pow(az + m_p.g, 2), 2);
+    const double F1_ff        = m_p.m*std::sqrt(ax*ax + ay*ay + std::pow(az + m_p.g, 2));
+    const double alpha_ff     = std::atan2(ax, az + m_p.g);
+    const double beta_ff      = std::atan2(-ay, std::sqrt(ax*ax + std::pow(az + m_p.g, 2)));
+    // Time derivatives of the FF angles. Needed to fill the angular-velocity
+    // entries of the LQR reference state s_ref. Without them the LQR would
+    // see the FF angular velocity as tracking error and emit spurious torques.
+    const double alpha_ff_dot = (-ax*jz + jx*(az + m_p.g))/(ax*ax + std::pow(az + m_p.g, 2));
+    const double beta_ff_dot  = std::pow(ax*ax + std::pow(az + m_p.g, 2), -0.5)*(ay*(ax*jx + jz*(az + m_p.g)) - jy*(ax*ax + std::pow(az + m_p.g, 2)))/(ax*ax + ay*ay + std::pow(az + m_p.g, 2));
+    // Torque feedforward: second time derivatives of the FF angles (needs jerk and snap).
+    const double T1_ff        = m_p.Ix*(2.0*ax*jz*(ax*jx + jz*(az + m_p.g)) - 2.0*jx*(az + m_p.g)*(ax*jx + jz*(az + m_p.g)) + (ax*ax + std::pow(az + m_p.g, 2))*(-ax*sz + sx*(az + m_p.g)))/std::pow(ax*ax + std::pow(az + m_p.g, 2), 2);
+    const double T2_ff        = -m_p.Iy*std::pow(ax*ax + std::pow(az + m_p.g, 2), -1.5)*(2.0*ay*(ax*ax + std::pow(az + m_p.g, 2))*(ax*jx + jz*(az + m_p.g))*(ax*jx + ay*jy + jz*(az + m_p.g)) - ay*(ax*ax + std::pow(az + m_p.g, 2))*(ax*ax + ay*ay + std::pow(az + m_p.g, 2))*(ax*sx + jx*jx + jz*jz + sz*(az + m_p.g)) + ay*std::pow(ax*jx + jz*(az + m_p.g), 2)*(ax*ax + ay*ay + std::pow(az + m_p.g, 2)) - 2.0*jy*std::pow(ax*ax + std::pow(az + m_p.g, 2), 2)*(ax*jx + ay*jy + jz*(az + m_p.g)) + sy*std::pow(ax*ax + std::pow(az + m_p.g, 2), 2)*(ax*ax + ay*ay + std::pow(az + m_p.g, 2)))/std::pow(ax*ax + ay*ay + std::pow(az + m_p.g, 2), 2);
     // Roll FF is zero by design (psi held at zero).
-    const double T3_ff    = 0.0;
+    const double T3_ff        = 0.0;
 
-    // Costruisci s_ref minimale dal Reference (versione "good enough")
-    StateVec s_ref = {};
-    s_ref[0] = r.pos[0];   // X
-    s_ref[1] = r.pos[1];   // Y
-    s_ref[2] = r.pos[2];   // Z
-    s_ref[3] = alpha_ff;   // Alpha (già calcolato sopra in ExecuteControl)
-    s_ref[4] = beta_ff;    // Beta
-    s_ref[5] = 0.0;        // Psi
-    s_ref[6] = r.vel[0];   // XDot
-    s_ref[7] = r.vel[1];   // YDot
-    s_ref[8] = r.vel[2];   // ZDot
-    // s_ref[9..14] restano 0 (angular velocity FF e integrators)
+    // Build the LQR reference state s_ref. The LQR sees u_lqr = -K_e * (s - s_ref):
+    // position, attitude, linear velocity, and angular velocity from the FF.
+    // Yaw and yaw-rate references are zero (roll-axis held at zero).
+    // Integrators have no FF reference: their states are themselves the integral
+    // of position error, so s_ref entries 12..14 stay zero.
+    StateVec s_ref{};
+    s_ref[StateToIdx(StateName::X)]        = r.pos[0];
+    s_ref[StateToIdx(StateName::Y)]        = r.pos[1];
+    s_ref[StateToIdx(StateName::Z)]        = r.pos[2];
+    s_ref[StateToIdx(StateName::Alpha)]    = alpha_ff;
+    s_ref[StateToIdx(StateName::Beta)]     = beta_ff;
+    s_ref[StateToIdx(StateName::Psi)]      = 0.0;
+    s_ref[StateToIdx(StateName::XDot)]     = r.vel[0];
+    s_ref[StateToIdx(StateName::YDot)]     = r.vel[1];
+    s_ref[StateToIdx(StateName::ZDot)]     = r.vel[2];
+    s_ref[StateToIdx(StateName::AlphaDot)] = alpha_ff_dot;
+    s_ref[StateToIdx(StateName::BetaDot)]  = beta_ff_dot;
+    s_ref[StateToIdx(StateName::PsiDot)]   = 0.0;
 
+    // LQR correction on the tracking error: u_lqr = -K_e * (s - s_ref).
     InputVec u_lqr{};
     for (size_t i = 0; i < 4; ++i) {
         double v = 0.0;
