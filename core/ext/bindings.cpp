@@ -39,7 +39,12 @@ EMSCRIPTEN_BINDINGS(simulator) {
         .field("fZ", &ext_userForce::fZ);
 
     value_object<ext_actuatorLimits>("ext_actuatorLimits")
-        .field("fZ_lim", &ext_actuatorLimits::fZ_lim);
+        .field("fZ_max", &ext_actuatorLimits::fZ_max)
+        .field("fZ_min", &ext_actuatorLimits::fZ_min)
+        .field("Tx_max", &ext_actuatorLimits::Tx_max)
+        .field("Tx_min", &ext_actuatorLimits::Tx_min)
+        .field("Ty_max", &ext_actuatorLimits::Ty_max)
+        .field("Ty_min", &ext_actuatorLimits::Ty_min);
 
     value_object<ext_initParams>("ext_initParams")
         .field("rocketPar",      &ext_initParams::rocketPar)

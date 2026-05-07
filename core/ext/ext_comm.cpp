@@ -46,7 +46,12 @@ static core_rocketParams_t _convertExtToCore_rocketParams(ext_rocketParams rPar,
     coreParam.g = 9.81;
     coreParam.c = rPar.c;
     coreParam.cz = rPar.cz;
-    coreParam.F1_max = aPar.fZ_lim;
+    coreParam.F1_max = aPar.fZ_max;
+    coreParam.F1_min = aPar.fZ_min;
+    coreParam.T1_max = aPar.Tx_max;
+    coreParam.T1_min = aPar.Tx_min;
+    coreParam.T2_max = aPar.Ty_max;
+    coreParam.T2_min = aPar.Ty_min;
 
     return coreParam;
 }

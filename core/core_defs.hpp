@@ -47,6 +47,11 @@ typedef struct
     core_coord_t c;   // lateral aerodynamic drag coefficient
     core_coord_t cz;   // axial aerodynamic drag coefficient
     core_coord_t F1_max; // maximum thrust (N)
+    core_coord_t F1_min; // minimum thrust (N)
+    core_coord_t T1_max; // maximum torque around x axis (Nm)
+    core_coord_t T1_min; // minimum torque around x axis (Nm)
+    core_coord_t T2_max; // maximum torque around y axis (Nm)
+    core_coord_t T2_min; // minimum torque around y axis (Nm)
 } core_rocketParams_t;
 
 // Trajectory Polynomial 4th order params

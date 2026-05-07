@@ -192,6 +192,11 @@ bool Rocket::SetModelParams(const core_rocketParams_t& params)
     dynamics->SetParam(PN::DragLateral, params.c);
     dynamics->SetParam(PN::DragAxial, params.cz);
     dynamics->SetParam(PN::ThrustMax, params.F1_max);
+    dynamics->SetParam(PN::ThrustMin, params.F1_min);
+    dynamics->SetParam(PN::TorqueXMax, params.T1_max);
+    dynamics->SetParam(PN::TorqueXMin, params.T1_min);
+    dynamics->SetParam(PN::TorqueYMax, params.T2_max);
+    dynamics->SetParam(PN::TorqueYMin, params.T2_min);
 
     return false;
 }

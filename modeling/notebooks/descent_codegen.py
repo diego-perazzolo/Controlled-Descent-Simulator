@@ -14,7 +14,7 @@ Emits a single hand-written-style C++ class, in the form:
 
         <model_name>();
 
-        InputVec ExecuteControl(const StateVec& s, const Reference& r) const;
+        InputVec ExecuteControl(const StateVec& s, const Reference& r);
         StateVec Dynamics(const StateVec& s, const InputVec& u,
                           const RefVec& ref_pos, const UserForces& userF) const;
 
@@ -120,9 +120,10 @@ class CodegenConfig:
     # Order must match `physics_param_symbols` passed to set_physics_symbols.
     param_enum_names: tuple[str, ...] = (
         "Mass", "Ix", "Iy", "Iz", "Gravity", "DragLateral", "DragAxial", "ThrustMax",
+        "ThrustMin", "TorqueXMax", "TorqueXMin", "TorqueYMax", "TorqueYMin",
     )
     param_field_names: tuple[str, ...] = (
-        "m", "Ix", "Iy", "Iz", "g", "c", "cz", "F1_max",
+        "m", "Ix", "Iy", "Iz", "g", "c", "cz", "F1_max", "F1_min", "T1_max", "T1_min", "T2_max", "T2_min",
     )
     param_field_comments: tuple[str, ...] = (
         "vehicle mass [kg]",
@@ -133,9 +134,14 @@ class CodegenConfig:
         "lateral drag coeff (body x, y) [N s/m]",
         "axial drag coeff (body z) [N s/m]",
         "thrust upper saturation [N]",
+        "thrust lower saturation [N]",
+        "Torque around x axis upper saturation [Nm]",
+        "Torque around x axis lower saturation [Nm]",
+        "Torque around y axis upper saturation [Nm]",
+        "Torque around y axis lower saturation [Nm]",
     )
     param_default_values: tuple[float, ...] = (
-        10.0, 10.0/3.0, 10.0/3.0, 1.0, 9.81, 1.0, 0.02, 700.0,
+        10.0, 10.0/3.0, 10.0/3.0, 1.0, 9.81, 1.0, 0.02, 500.0, 0.0, 10, -10, 10, -10
     )
 
     # Lingua-franca types from the project header (declared elsewhere).
@@ -387,10 +393,13 @@ class DescentCodegen:
         L.append(f"{ind}dxdt[StateToIdx(SN::BetaDot)]  = T2 / m_p.Iy;")
         L.append(f"{ind}dxdt[StateToIdx(SN::PsiDot)]   = T3 / m_p.Iz;")
         L.append("")
-        L.append(f"{ind}// Augmented states: integral of position tracking error.")
-        L.append(f"{ind}dxdt[StateToIdx(SN::IntX)] = ref_pos[0] - s[StateToIdx(SN::X)];")
-        L.append(f"{ind}dxdt[StateToIdx(SN::IntY)] = ref_pos[1] - s[StateToIdx(SN::Y)];")
-        L.append(f"{ind}dxdt[StateToIdx(SN::IntZ)] = ref_pos[2] - s[StateToIdx(SN::Z)];")
+        L.append(f"{ind}// Anti-windup on integral of position error, to be developed TODO")
+        L.append(f"{ind}if(true || !m_isSaturating){"{"}")
+        L.append(f"{ind}{ind}// Augmented states: integral of position tracking error.")
+        L.append(f"{ind}{ind}dxdt[StateToIdx(SN::IntX)] = ref_pos[0] - s[StateToIdx(SN::X)];")
+        L.append(f"{ind}{ind}dxdt[StateToIdx(SN::IntY)] = ref_pos[1] - s[StateToIdx(SN::Y)];")
+        L.append(f"{ind}{ind}dxdt[StateToIdx(SN::IntZ)] = ref_pos[2] - s[StateToIdx(SN::Z)];")
+        L.append(f"{ind}{"}"}")
         L.append("")
         L.append(f"{ind}return dxdt;")
         return "\n".join(L)
@@ -509,15 +518,21 @@ class DescentCodegen:
         L.append(f"{ind}{ind}u_lqr[i] = -v;")
         L.append(f"{ind}}}")
         L.append("")
-        L.append(f"{ind}// Total control: u = u_ff + u_lqr, then saturate F1.")
+        L.append(f"{ind}// Total control: u = u_ff + u_lqr, then saturate actuators.")
         L.append(f"{ind}InputVec u{{}};")
         L.append(f"{ind}u[0] = F1_ff + u_lqr[0];")
         L.append(f"{ind}u[1] = T1_ff + u_lqr[1];")
         L.append(f"{ind}u[2] = T2_ff + u_lqr[2];")
         L.append(f"{ind}u[3] = T3_ff + u_lqr[3];")
         L.append("")
-        L.append(f"{ind}if      (u[0] > m_p.F1_max) u[0] = m_p.F1_max;")
-        L.append(f"{ind}else if (u[0] < 0.0)        u[0] = 0.0;")
+        L.append(f"{ind}m_isSaturating = false;")
+        L.append("")
+        L.append(f"{ind}if      (u[0] > m_p.F1_max) {"{"} u[0] = m_p.F1_max; m_isSaturating = true; {"}"}")
+        L.append(f"{ind}else if (u[0] < m_p.F1_min) {"{"} u[0] = m_p.F1_min; m_isSaturating = true; {"}"}")
+        L.append(f"{ind}if      (u[1] > m_p.T1_max) {"{"} u[1] = m_p.T1_max; m_isSaturating = true; {"}"}")
+        L.append(f"{ind}else if (u[1] < m_p.T1_min) {"{"} u[1] = m_p.T1_min; m_isSaturating = true; {"}"}")
+        L.append(f"{ind}if      (u[2] > m_p.T2_max) {"{"} u[2] = m_p.T2_max; m_isSaturating = true; {"}"}")
+        L.append(f"{ind}else if (u[2] < m_p.T2_min) {"{"} u[2] = m_p.T2_min; m_isSaturating = true; {"}"}")
         L.append("")
         L.append(f"{ind}return u;")
         return "\n".join(L)
@@ -600,7 +615,7 @@ public:
 
 {ind}// ----- Control -----
 {ind}// u = u_ff(reference) + u_lqr(state), with F1 saturated to [0, F1_max].
-{ind}InputVec ExecuteControl(const StateVec& s, const {cfg.reference_type}& r) const;
+{ind}InputVec ExecuteControl(const StateVec& s, const {cfg.reference_type}& r);
 
 {ind}// ----- Dynamics -----
 {ind}// dxdt = f(s, u, ref, userF). Augmented integrators use only ref.pos.
@@ -622,6 +637,7 @@ public:
 {ind}}}
 
 private:
+{ind}bool m_isSaturating;
 {ind}struct PhysicsParams {{
 {param_struct}
 {ind}}};
@@ -728,10 +744,10 @@ void {cls}::SetParam(ParamName n, double v) {{
 }}
 
 // =============================================================================
-// ExecuteControl: u = u_ff(r) + u_lqr(s), F1 saturated to [0, F1_max].
+// ExecuteControl: u = u_ff(r) + u_lqr(s), actuators saturated
 // =============================================================================
 {cls}::InputVec {cls}::ExecuteControl(const StateVec& s,
-{ctrl_indent}const {cfg.reference_type}& r) const
+{ctrl_indent}const {cfg.reference_type}& r)
 {{
 {ctrl_body}
 }}

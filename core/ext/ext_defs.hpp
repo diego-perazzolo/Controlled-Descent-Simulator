@@ -126,11 +126,11 @@ typedef struct
 typedef struct 
 {
     /* forces */
-    //ext_coord_t fX_lim;
-    //ext_coord_t fY_lim;
-    ext_coord_t fZ_lim;
+    ext_coord_t fZ_max;
+    ext_coord_t fZ_min;
     /* torques */
-    //ext_coord_t tX_lim;
-    //ext_coord_t tY_lim;
-    //ext_coord_t tZ_lim;
+    ext_coord_t Tx_max; // around x axis
+    ext_coord_t Tx_min; // around x axis
+    ext_coord_t Ty_max; // around y axis
+    ext_coord_t Ty_min; // around y axis
 } ext_actuatorLimits;

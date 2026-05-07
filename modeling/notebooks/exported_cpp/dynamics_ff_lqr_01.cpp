@@ -73,6 +73,11 @@ double FF_LQR_01::GetParam(ParamName n) const {
         case ParamName::DragLateral: return m_p.c;
         case ParamName::DragAxial: return m_p.cz;
         case ParamName::ThrustMax: return m_p.F1_max;
+        case ParamName::ThrustMin: return m_p.F1_min;
+        case ParamName::TorqueXMax: return m_p.T1_max;
+        case ParamName::TorqueXMin: return m_p.T1_min;
+        case ParamName::TorqueYMax: return m_p.T2_max;
+        case ParamName::TorqueYMin: return m_p.T2_min;
     }
     return 0.0;
 }
@@ -87,6 +92,11 @@ void FF_LQR_01::SetParam(ParamName n, double v) {
         case ParamName::DragLateral: m_p.c = v; return;
         case ParamName::DragAxial: m_p.cz = v; return;
         case ParamName::ThrustMax: m_p.F1_max = v; return;
+        case ParamName::ThrustMin: m_p.F1_min = v; return;
+        case ParamName::TorqueXMax: m_p.T1_max = v; return;
+        case ParamName::TorqueXMin: m_p.T1_min = v; return;
+        case ParamName::TorqueYMax: m_p.T2_max = v; return;
+        case ParamName::TorqueYMin: m_p.T2_min = v; return;
     }
 }
 
@@ -141,19 +151,22 @@ FF_LQR_01::StateVec FF_LQR_01::Dynamics(const StateVec& s,
     dxdt[StateToIdx(SN::BetaDot)]  = T2 / m_p.Iy;
     dxdt[StateToIdx(SN::PsiDot)]   = T3 / m_p.Iz;
 
-    // Augmented states: integral of position tracking error.
-    dxdt[StateToIdx(SN::IntX)] = ref_pos[0] - s[StateToIdx(SN::X)];
-    dxdt[StateToIdx(SN::IntY)] = ref_pos[1] - s[StateToIdx(SN::Y)];
-    dxdt[StateToIdx(SN::IntZ)] = ref_pos[2] - s[StateToIdx(SN::Z)];
+    // Anti-windup on integral of position error, to be developed TODO
+    if(true || !m_isSaturating){
+        // Augmented states: integral of position tracking error.
+        dxdt[StateToIdx(SN::IntX)] = ref_pos[0] - s[StateToIdx(SN::X)];
+        dxdt[StateToIdx(SN::IntY)] = ref_pos[1] - s[StateToIdx(SN::Y)];
+        dxdt[StateToIdx(SN::IntZ)] = ref_pos[2] - s[StateToIdx(SN::Z)];
+    }
 
     return dxdt;
 }
 
 // =============================================================================
-// ExecuteControl: u = u_ff(r) + u_lqr(s), F1 saturated to [0, F1_max].
+// ExecuteControl: u = u_ff(r) + u_lqr(s), actuators saturated
 // =============================================================================
 FF_LQR_01::InputVec FF_LQR_01::ExecuteControl(const StateVec& s,
-                                   const Reference_t& r) const
+                                   const Reference_t& r)
 {
     // Pull reference derivatives into named locals for clarity.
     const double ax = r.acc[0], ay = r.acc[1], az = r.acc[2];
@@ -204,15 +217,21 @@ FF_LQR_01::InputVec FF_LQR_01::ExecuteControl(const StateVec& s,
         u_lqr[i] = -v;
     }
 
-    // Total control: u = u_ff + u_lqr, then saturate F1.
+    // Total control: u = u_ff + u_lqr, then saturate actuators.
     InputVec u{};
     u[0] = F1_ff + u_lqr[0];
     u[1] = T1_ff + u_lqr[1];
     u[2] = T2_ff + u_lqr[2];
     u[3] = T3_ff + u_lqr[3];
 
-    if      (u[0] > m_p.F1_max) u[0] = m_p.F1_max;
-    else if (u[0] < 0.0)        u[0] = 0.0;
+    m_isSaturating = false;
+
+    if      (u[0] > m_p.F1_max) { u[0] = m_p.F1_max; m_isSaturating = true; }
+    else if (u[0] < m_p.F1_min) { u[0] = m_p.F1_min; m_isSaturating = true; }
+    if      (u[1] > m_p.T1_max) { u[1] = m_p.T1_max; m_isSaturating = true; }
+    else if (u[1] < m_p.T1_min) { u[1] = m_p.T1_min; m_isSaturating = true; }
+    if      (u[2] > m_p.T2_max) { u[2] = m_p.T2_max; m_isSaturating = true; }
+    else if (u[2] < m_p.T2_min) { u[2] = m_p.T2_min; m_isSaturating = true; }
 
     return u;
 }

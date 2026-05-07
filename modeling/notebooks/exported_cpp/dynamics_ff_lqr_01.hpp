@@ -48,13 +48,18 @@ public:
         DragLateral = 5,
         DragAxial = 6,
         ThrustMax = 7,
+        ThrustMin = 8,
+        TorqueXMax = 9,
+        TorqueXMin = 10,
+        TorqueYMax = 11,
+        TorqueYMin = 12,
     };
 
     FF_LQR_01();
 
     // ----- Control -----
     // u = u_ff(reference) + u_lqr(state), with F1 saturated to [0, F1_max].
-    InputVec ExecuteControl(const StateVec& s, const Reference_t& r) const;
+    InputVec ExecuteControl(const StateVec& s, const Reference_t& r);
 
     // ----- Dynamics -----
     // dxdt = f(s, u, ref, userF). Augmented integrators use only ref.pos.
@@ -76,6 +81,7 @@ public:
     }
 
 private:
+    bool m_isSaturating;
     struct PhysicsParams {
             double m = 10.0;  // vehicle mass [kg]
             double Ix = 3.3333333333333335;  // inertia around body x [kg m^2]
@@ -84,7 +90,12 @@ private:
             double g = 9.81;  // gravity [m/s^2]
             double c = 1.0;  // lateral drag coeff (body x, y) [N s/m]
             double cz = 0.02;  // axial drag coeff (body z) [N s/m]
-            double F1_max = 700.0;  // thrust upper saturation [N]
+            double F1_max = 500.0;  // thrust upper saturation [N]
+            double F1_min = 0.0;  // thrust lower saturation [N]
+            double T1_max = 10;  // Torque around x axis upper saturation [Nm]
+            double T1_min = -10;  // Torque around x axis lower saturation [Nm]
+            double T2_max = 10;  // Torque around y axis upper saturation [Nm]
+            double T2_min = -10;  // Torque around y axis lower saturation [Nm]
     };
 
     PhysicsParams m_p;

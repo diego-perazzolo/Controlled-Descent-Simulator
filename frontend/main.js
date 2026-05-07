@@ -43,7 +43,12 @@ const INIT_PARAMS = {
         cz:             0.02,
     },
     actuatorLimits: {
-        fZ_lim: 700.0,
+        fZ_max: 500.0,
+        fZ_min: 0.0,
+        Tx_max: 10.0,
+        Tx_min: -10.0,
+        Ty_max: 10.0,
+        Ty_min: -10.0,
     },
 };
 
@@ -87,7 +92,7 @@ const ui = {
     btnApply:   $('btnApply'),
     p_mass: $('p_mass'), p_iX: $('p_iX'), p_iY: $('p_iY'), p_iZ: $('p_iZ'),
     p_c:    $('p_c'),    p_cz: $('p_cz'),
-    p_fZlim: $('p_fZlim'),
+    p_fZmax: $('p_fZmax'), p_fZmin: $('p_fZmin'), p_tXmax: $('p_tXmax'), p_tXmin: $('p_tXmin'), p_tYmax: $('p_tYmax'), p_tYmin: $('p_tYmin'),
     p_dt:    $('p_dt'),
 };
 
@@ -129,7 +134,12 @@ function fillParamsForm(p) {
     ui.p_iZ.value    = p.rocketPar.inertiaZ_Kgm2;
     ui.p_c.value     = p.rocketPar.c;
     ui.p_cz.value    = p.rocketPar.cz;
-    ui.p_fZlim.value = p.actuatorLimits.fZ_lim;
+    ui.p_fZmax.value = p.actuatorLimits.fZ_max;
+    ui.p_fZmin.value = p.actuatorLimits.fZ_min;
+    ui.p_tXmax.value = p.actuatorLimits.Tx_max;
+    ui.p_tXmin.value = p.actuatorLimits.Tx_min;
+    ui.p_tYmax.value = p.actuatorLimits.Ty_max;
+    ui.p_tYmin.value = p.actuatorLimits.Ty_min;
     ui.p_dt.value    = timestep_s;
 }
 
@@ -144,7 +154,14 @@ function readParamsForm() {
             c:              n('p_c'),
             cz:             n('p_cz'),
         },
-        actuatorLimits: { fZ_lim: n('p_fZlim') },
+        actuatorLimits: { 
+            fZ_max: n('p_fZmax'), 
+            fZ_min: n('p_fZmin'), 
+            Tx_max: n('p_tXmax'), 
+            Tx_min: n('p_tXmin'), 
+            Ty_max: n('p_tYmax'), 
+            Ty_min: n('p_tYmin'), 
+        },
     };
 }
 

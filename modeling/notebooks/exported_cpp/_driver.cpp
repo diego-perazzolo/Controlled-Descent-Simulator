@@ -14,7 +14,12 @@ int main() {
     model.SetParam(FF_LQR_01::ParamName::Gravity,     9.81);
     model.SetParam(FF_LQR_01::ParamName::DragLateral, 1.0);
     model.SetParam(FF_LQR_01::ParamName::DragAxial,   0.02);
-    model.SetParam(FF_LQR_01::ParamName::ThrustMax,   700.0);
+    model.SetParam(FF_LQR_01::ParamName::ThrustMax,   500.0);
+    model.SetParam(FF_LQR_01::ParamName::ThrustMin,   0.0);
+    model.SetParam(FF_LQR_01::ParamName::TorqueXMax,   10.0);
+    model.SetParam(FF_LQR_01::ParamName::TorqueXMin,   -10.0);
+    model.SetParam(FF_LQR_01::ParamName::TorqueYMax,   10.0);
+    model.SetParam(FF_LQR_01::ParamName::TorqueYMin,   -10.0);
 
     FF_LQR_01::StateVec s = {1.0, -2.0, 50.0,  0.05, -0.03, 0.0,
                              0.5, -0.1, -10.0,  0.01, -0.02, 0.0,
