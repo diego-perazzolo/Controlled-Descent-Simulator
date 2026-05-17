@@ -14,7 +14,7 @@ Emits a single hand-written-style C++ class, in the form:
 
         <model_name>();
 
-        InputVec ExecuteControl(const StateVec& s, const Reference& r);
+        InputVec ExecuteControl(const StateVec& s, const Reference& r) const;
         StateVec Dynamics(const StateVec& s, const InputVec& u,
                           const RefVec& ref_pos, const UserForces& userF) const;
 
@@ -393,13 +393,10 @@ class DescentCodegen:
         L.append(f"{ind}dxdt[StateToIdx(SN::BetaDot)]  = T2 / m_p.Iy;")
         L.append(f"{ind}dxdt[StateToIdx(SN::PsiDot)]   = T3 / m_p.Iz;")
         L.append("")
-        #L.append(f"{ind}// Anti-windup on integral of position error, to be developed TODO")
-        #L.append(f"{ind}if(true || !m_isSaturating){"{"}")
         L.append(f"{ind}// Augmented states: integral of position tracking error.")
         L.append(f"{ind}dxdt[StateToIdx(SN::IntX)] = ref_pos[0] - s[StateToIdx(SN::X)];")
         L.append(f"{ind}dxdt[StateToIdx(SN::IntY)] = ref_pos[1] - s[StateToIdx(SN::Y)];")
         L.append(f"{ind}dxdt[StateToIdx(SN::IntZ)] = ref_pos[2] - s[StateToIdx(SN::Z)];")
-       # L.append(f"{ind}{"}"}")
         L.append("")
         L.append(f"{ind}return dxdt;")
         return "\n".join(L)
@@ -525,8 +522,6 @@ class DescentCodegen:
         L.append(f"{ind}u[2] = T2_ff + u_lqr[2];")
         L.append(f"{ind}u[3] = T3_ff + u_lqr[3];")
         L.append("")
-        #L.append(f"{ind}m_isSaturating = false;")
-        L.append("")
         L.append(f"{ind}if      (u[0] > m_p.F1_max) {"{"} u[0] = m_p.F1_max; {"}"}")
         L.append(f"{ind}else if (u[0] < m_p.F1_min) {"{"} u[0] = m_p.F1_min; {"}"}")
         L.append(f"{ind}if      (u[1] > m_p.T1_max) {"{"} u[1] = m_p.T1_max; {"}"}")
@@ -614,8 +609,8 @@ public:
 {ind}{cfg.model_name}();
 
 {ind}// ----- Control -----
-{ind}// u = u_ff(reference) + u_lqr(state), with F1 saturated to [0, F1_max].
-{ind}InputVec ExecuteControl(const StateVec& s, const {cfg.reference_type}& r);
+{ind}// u = u_ff(reference) + u_lqr(state).
+{ind}InputVec ExecuteControl(const StateVec& s, const {cfg.reference_type}& r) const;
 
 {ind}// ----- Dynamics -----
 {ind}// dxdt = f(s, u, ref, userF). Augmented integrators use only ref.pos.
@@ -637,7 +632,6 @@ public:
 {ind}}}
 
 private:
-{ind}// bool m_isSaturating; Anti-windup to be properly taken care of
 {ind}struct PhysicsParams {{
 {param_struct}
 {ind}}};
@@ -747,7 +741,7 @@ void {cls}::SetParam(ParamName n, double v) {{
 // ExecuteControl: u = u_ff(r) + u_lqr(s), actuators saturated
 // =============================================================================
 {cls}::InputVec {cls}::ExecuteControl(const StateVec& s,
-{ctrl_indent}const {cfg.reference_type}& r)
+{ctrl_indent}const {cfg.reference_type}& r) const
 {{
 {ctrl_body}
 }}

@@ -58,8 +58,8 @@ public:
     FF_LQR_01();
 
     // ----- Control -----
-    // u = u_ff(reference) + u_lqr(state), with F1 saturated to [0, F1_max].
-    InputVec ExecuteControl(const StateVec& s, const Reference_t& r);
+    // u = u_ff(reference) + u_lqr(state).
+    InputVec ExecuteControl(const StateVec& s, const Reference_t& r) const;
 
     // ----- Dynamics -----
     // dxdt = f(s, u, ref, userF). Augmented integrators use only ref.pos.
@@ -81,7 +81,6 @@ public:
     }
 
 private:
-    // bool m_isSaturating; Anti-windup to be properly taken care of
     struct PhysicsParams {
             double m = 10.0;  // vehicle mass [kg]
             double Ix = 3.3333333333333335;  // inertia around body x [kg m^2]

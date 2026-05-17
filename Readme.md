@@ -268,7 +268,7 @@ Then open `http://localhost:8080/frontend/` in the browser.
 ### Run Jupyter notebooks in VS Code
 
 Create and activate a python virtual environment.
-Navigate with the Terminal to a folder you want to store the virtual environment - venv -, then:
+Navigate with the Terminal to a folder where you want to store the virtual environment - venv -, then:
 
 ```bash
 # Create virtual environment
@@ -285,9 +285,7 @@ Register kernel name:
 python -m ipykernel install --user --name=rocket-modeling --display-name="Python (rocket-modeling)"
 ```
 
-Now it is possible to open the notebook in VS Code, select the before created python kernel and run the notebook
-
-
+Now it is possible to open the notebook in VS Code, select the previously created python kernel and run the notebook
 
 ### GitHub Pages
 

@@ -163,7 +163,7 @@ FF_LQR_01::StateVec FF_LQR_01::Dynamics(const StateVec& s,
 // ExecuteControl: u = u_ff(r) + u_lqr(s), actuators saturated
 // =============================================================================
 FF_LQR_01::InputVec FF_LQR_01::ExecuteControl(const StateVec& s,
-                                   const Reference_t& r)
+                                   const Reference_t& r) const
 {
     // Pull reference derivatives into named locals for clarity.
     const double ax = r.acc[0], ay = r.acc[1], az = r.acc[2];
@@ -220,7 +220,6 @@ FF_LQR_01::InputVec FF_LQR_01::ExecuteControl(const StateVec& s,
     u[1] = T1_ff + u_lqr[1];
     u[2] = T2_ff + u_lqr[2];
     u[3] = T3_ff + u_lqr[3];
-
 
     if      (u[0] > m_p.F1_max) { u[0] = m_p.F1_max; }
     else if (u[0] < m_p.F1_min) { u[0] = m_p.F1_min; }
