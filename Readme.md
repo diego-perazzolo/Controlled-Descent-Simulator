@@ -49,9 +49,9 @@ Simulate the controlled descent of a single-stage rocket booster in 3D, with:
 
 ### Screenshots
 
-| Charts view | 3D view | Params view |
-|:-----------:|:-------:|:-------:|
-| ![Charts](docs/screenshot-charts.png) | ![3D](docs/screenshot-3d.png) | ![Params](docs/screenshot-params.png) |
+| Charts view | 3D view | Physics params view | Trajectory params view |
+|:-----------:|:-------:|:-------:|:-------:|
+| ![Charts](docs/screenshot-charts.png) | ![3D](docs/screenshot-3d.png) | ![Params](docs/screenshot-params-physics.png) | ![Params](docs/screenshot-params-trajectory.png) |
 
 ---
 

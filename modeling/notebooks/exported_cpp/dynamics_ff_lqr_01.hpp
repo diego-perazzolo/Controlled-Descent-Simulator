@@ -81,7 +81,7 @@ public:
     }
 
 private:
-    bool m_isSaturating;
+    // bool m_isSaturating; Anti-windup to be properly taken care of
     struct PhysicsParams {
             double m = 10.0;  // vehicle mass [kg]
             double Ix = 3.3333333333333335;  // inertia around body x [kg m^2]

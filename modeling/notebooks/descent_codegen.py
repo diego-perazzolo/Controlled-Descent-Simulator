@@ -393,13 +393,13 @@ class DescentCodegen:
         L.append(f"{ind}dxdt[StateToIdx(SN::BetaDot)]  = T2 / m_p.Iy;")
         L.append(f"{ind}dxdt[StateToIdx(SN::PsiDot)]   = T3 / m_p.Iz;")
         L.append("")
-        L.append(f"{ind}// Anti-windup on integral of position error, to be developed TODO")
-        L.append(f"{ind}if(true || !m_isSaturating){"{"}")
-        L.append(f"{ind}{ind}// Augmented states: integral of position tracking error.")
-        L.append(f"{ind}{ind}dxdt[StateToIdx(SN::IntX)] = ref_pos[0] - s[StateToIdx(SN::X)];")
-        L.append(f"{ind}{ind}dxdt[StateToIdx(SN::IntY)] = ref_pos[1] - s[StateToIdx(SN::Y)];")
-        L.append(f"{ind}{ind}dxdt[StateToIdx(SN::IntZ)] = ref_pos[2] - s[StateToIdx(SN::Z)];")
-        L.append(f"{ind}{"}"}")
+        #L.append(f"{ind}// Anti-windup on integral of position error, to be developed TODO")
+        #L.append(f"{ind}if(true || !m_isSaturating){"{"}")
+        L.append(f"{ind}// Augmented states: integral of position tracking error.")
+        L.append(f"{ind}dxdt[StateToIdx(SN::IntX)] = ref_pos[0] - s[StateToIdx(SN::X)];")
+        L.append(f"{ind}dxdt[StateToIdx(SN::IntY)] = ref_pos[1] - s[StateToIdx(SN::Y)];")
+        L.append(f"{ind}dxdt[StateToIdx(SN::IntZ)] = ref_pos[2] - s[StateToIdx(SN::Z)];")
+       # L.append(f"{ind}{"}"}")
         L.append("")
         L.append(f"{ind}return dxdt;")
         return "\n".join(L)
@@ -525,14 +525,14 @@ class DescentCodegen:
         L.append(f"{ind}u[2] = T2_ff + u_lqr[2];")
         L.append(f"{ind}u[3] = T3_ff + u_lqr[3];")
         L.append("")
-        L.append(f"{ind}m_isSaturating = false;")
+        #L.append(f"{ind}m_isSaturating = false;")
         L.append("")
-        L.append(f"{ind}if      (u[0] > m_p.F1_max) {"{"} u[0] = m_p.F1_max; m_isSaturating = true; {"}"}")
-        L.append(f"{ind}else if (u[0] < m_p.F1_min) {"{"} u[0] = m_p.F1_min; m_isSaturating = true; {"}"}")
-        L.append(f"{ind}if      (u[1] > m_p.T1_max) {"{"} u[1] = m_p.T1_max; m_isSaturating = true; {"}"}")
-        L.append(f"{ind}else if (u[1] < m_p.T1_min) {"{"} u[1] = m_p.T1_min; m_isSaturating = true; {"}"}")
-        L.append(f"{ind}if      (u[2] > m_p.T2_max) {"{"} u[2] = m_p.T2_max; m_isSaturating = true; {"}"}")
-        L.append(f"{ind}else if (u[2] < m_p.T2_min) {"{"} u[2] = m_p.T2_min; m_isSaturating = true; {"}"}")
+        L.append(f"{ind}if      (u[0] > m_p.F1_max) {"{"} u[0] = m_p.F1_max; {"}"}")
+        L.append(f"{ind}else if (u[0] < m_p.F1_min) {"{"} u[0] = m_p.F1_min; {"}"}")
+        L.append(f"{ind}if      (u[1] > m_p.T1_max) {"{"} u[1] = m_p.T1_max; {"}"}")
+        L.append(f"{ind}else if (u[1] < m_p.T1_min) {"{"} u[1] = m_p.T1_min; {"}"}")
+        L.append(f"{ind}if      (u[2] > m_p.T2_max) {"{"} u[2] = m_p.T2_max; {"}"}")
+        L.append(f"{ind}else if (u[2] < m_p.T2_min) {"{"} u[2] = m_p.T2_min; {"}"}")
         L.append("")
         L.append(f"{ind}return u;")
         return "\n".join(L)
@@ -637,7 +637,7 @@ public:
 {ind}}}
 
 private:
-{ind}bool m_isSaturating;
+{ind}// bool m_isSaturating; Anti-windup to be properly taken care of
 {ind}struct PhysicsParams {{
 {param_struct}
 {ind}}};

@@ -151,13 +151,10 @@ FF_LQR_01::StateVec FF_LQR_01::Dynamics(const StateVec& s,
     dxdt[StateToIdx(SN::BetaDot)]  = T2 / m_p.Iy;
     dxdt[StateToIdx(SN::PsiDot)]   = T3 / m_p.Iz;
 
-    // Anti-windup on integral of position error, to be developed TODO
-    if(true || !m_isSaturating){
-        // Augmented states: integral of position tracking error.
-        dxdt[StateToIdx(SN::IntX)] = ref_pos[0] - s[StateToIdx(SN::X)];
-        dxdt[StateToIdx(SN::IntY)] = ref_pos[1] - s[StateToIdx(SN::Y)];
-        dxdt[StateToIdx(SN::IntZ)] = ref_pos[2] - s[StateToIdx(SN::Z)];
-    }
+    // Augmented states: integral of position tracking error.
+    dxdt[StateToIdx(SN::IntX)] = ref_pos[0] - s[StateToIdx(SN::X)];
+    dxdt[StateToIdx(SN::IntY)] = ref_pos[1] - s[StateToIdx(SN::Y)];
+    dxdt[StateToIdx(SN::IntZ)] = ref_pos[2] - s[StateToIdx(SN::Z)];
 
     return dxdt;
 }
@@ -224,14 +221,13 @@ FF_LQR_01::InputVec FF_LQR_01::ExecuteControl(const StateVec& s,
     u[2] = T2_ff + u_lqr[2];
     u[3] = T3_ff + u_lqr[3];
 
-    m_isSaturating = false;
 
-    if      (u[0] > m_p.F1_max) { u[0] = m_p.F1_max; m_isSaturating = true; }
-    else if (u[0] < m_p.F1_min) { u[0] = m_p.F1_min; m_isSaturating = true; }
-    if      (u[1] > m_p.T1_max) { u[1] = m_p.T1_max; m_isSaturating = true; }
-    else if (u[1] < m_p.T1_min) { u[1] = m_p.T1_min; m_isSaturating = true; }
-    if      (u[2] > m_p.T2_max) { u[2] = m_p.T2_max; m_isSaturating = true; }
-    else if (u[2] < m_p.T2_min) { u[2] = m_p.T2_min; m_isSaturating = true; }
+    if      (u[0] > m_p.F1_max) { u[0] = m_p.F1_max; }
+    else if (u[0] < m_p.F1_min) { u[0] = m_p.F1_min; }
+    if      (u[1] > m_p.T1_max) { u[1] = m_p.T1_max; }
+    else if (u[1] < m_p.T1_min) { u[1] = m_p.T1_min; }
+    if      (u[2] > m_p.T2_max) { u[2] = m_p.T2_max; }
+    else if (u[2] < m_p.T2_min) { u[2] = m_p.T2_min; }
 
     return u;
 }
