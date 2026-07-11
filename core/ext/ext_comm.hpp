@@ -55,8 +55,8 @@ typedef struct
     ext_setpointError err;
 } ext_stepRet;
 
-// Initialize simulation, returns true on error
-bool ext_init(ext_initParams params);
+// Initialize Rocket model: FF_LQR_01, returns true on error
+bool ext_initRocket_FFLQR01(ext_initParams params);
 
 // Advance one integration step
 ext_stepRet ext_step(ext_stepParams params);

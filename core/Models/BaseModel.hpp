@@ -34,6 +34,7 @@
 #include "TrajectoryManager.hpp"
 #include <vector>
 #include <functional>
+#include <any>
 
 namespace CDS
 {
@@ -47,7 +48,7 @@ namespace CDS
         /* Virtual methods */
         
         virtual ~BaseModel();
-        virtual bool SetModelParams(const core_rocketParams_t& params) = 0;
+        virtual bool SetModelParams(const std::any& params) = 0;
         virtual bool SetTrajectoryManager(TrajectoryManager* pTrajectoryManager) = 0;
         virtual bool PerformIntegration(const core_stepParams_t& params) = 0;
         virtual bool GetState(core_state_t& state) = 0; 

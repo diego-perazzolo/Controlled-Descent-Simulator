@@ -30,16 +30,16 @@
 // =============================================================================
 #include "core.hpp"
 #include "Models/Rocket.hpp"
+#include "Models/QuadRotor.hpp"
 #include "Trajectory/TrajectoryManager.hpp"
 
 using namespace CDS;
 
-struct 
+struct
 {
-    BaseModel* pModel;
-    TrajectoryManager* pTrajectoryManager;
+    BaseModel *pModel;
+    TrajectoryManager *pTrajectoryManager;
 } _ctx = {};
-
 
 /* private types */
 
@@ -53,24 +53,37 @@ bool core_init()
     return false;
 }
 
-bool core_rocketInit(const core_rocketParams_t rPar)
+bool core_rocketFfLqr01_init(const core_rocketParams_t rPar)
 {
-    if(_ctx.pModel)
+    if (_ctx.pModel)
     {
         delete _ctx.pModel;
         _ctx.pModel = nullptr;
     }
-    
 
     _ctx.pModel = new Rocket();
-    
+
+    // Initializing rocket's parameters
+    return _ctx.pModel->SetModelParams(rPar);
+}
+
+bool core_quadRotorFfLqr01_init(const core_quadRotorParams_t rPar)
+{
+    if (_ctx.pModel)
+    {
+        delete _ctx.pModel;
+        _ctx.pModel = nullptr;
+    }
+
+    _ctx.pModel = new QuadRotor();
+
     // Initializing rocket's parameters
     return _ctx.pModel->SetModelParams(rPar);
 }
 
 bool core_trajectoryInit()
 {
-    if(_ctx.pTrajectoryManager)
+    if (_ctx.pTrajectoryManager)
     {
         delete _ctx.pTrajectoryManager;
         _ctx.pTrajectoryManager = nullptr;
@@ -79,7 +92,7 @@ bool core_trajectoryInit()
     _ctx.pTrajectoryManager = new TrajectoryManager();
 
     // Default trajectory
- #if 0
+#if 0
     const core_trajectoryPoly4Params_t poly4Params = {
         .initialPos = {-50, 50, 80},
         .initialVel = {0, 5, -50},
@@ -122,7 +135,7 @@ bool core_trajectoryInit()
 
 bool core_trajectoryAppendPoly4(const core_trajectoryPoly4Params_t tPar)
 {
-    if(_ctx.pTrajectoryManager == nullptr)
+    if (_ctx.pTrajectoryManager == nullptr)
     {
         // ERR
         return true;
@@ -136,7 +149,7 @@ bool core_trajectoryAppendPoly4(const core_trajectoryPoly4Params_t tPar)
 
 bool core_trajectoryAppendPoint(const core_trajectoryPointParams_t tPar)
 {
-        if(_ctx.pTrajectoryManager == nullptr)
+    if (_ctx.pTrajectoryManager == nullptr)
     {
         // ERR
         return true;
@@ -150,7 +163,7 @@ bool core_trajectoryAppendPoint(const core_trajectoryPointParams_t tPar)
 
 bool core_trajectoryRemoveLastItem(void)
 {
-    if(_ctx.pTrajectoryManager == nullptr)
+    if (_ctx.pTrajectoryManager == nullptr)
     {
         // ERR
         return true;
@@ -166,13 +179,13 @@ bool core_performSimulationStep(const core_stepParams_t sPar)
 
 bool core_getState(core_state_t *pState)
 {
-    if(pState == nullptr)
+    if (pState == nullptr)
     {
         // nullptr
         return true;
     }
-    
-   return _ctx.pModel->GetState(*pState);
+
+    return _ctx.pModel->GetState(*pState);
 }
 
 bool core_getTrackingError(core_trackingErrors_t *pTrackingErr)
@@ -180,10 +193,10 @@ bool core_getTrackingError(core_trackingErrors_t *pTrackingErr)
     return _ctx.pModel->GetTrackingErrors(*pTrackingErr);
 }
 
-bool core_getTrajectoryPoint(core_coord_t time, Vec3& point)
+bool core_getTrajectoryPoint(core_coord_t time, Vec3 &point)
 {
     Reference_t ref;
-    if(_ctx.pTrajectoryManager == nullptr || _ctx.pTrajectoryManager->GetReference(time, ref))
+    if (_ctx.pTrajectoryManager == nullptr || _ctx.pTrajectoryManager->GetReference(time, ref))
     {
         // Error
         return true;

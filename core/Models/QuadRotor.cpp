@@ -23,14 +23,14 @@
 // THE SOFTWARE.
 //
 // =============================================================================
-// File        : Rocket.cpp
-// Description : 6 DOF rocket dynamics — equations of motion
+// File        : QuadRotor.cpp
+// Description : 6 DOF QuadRotor dynamics — equations of motion
 //               + RK4 integrator + LQR controller
 // Author      : Diego Perazzolo
 // Created     : 2026
 // =============================================================================
 
-#include "Rocket.hpp"
+#include "QuadRotor.hpp"
 #include <cmath>
 #include <array>
 
@@ -86,9 +86,9 @@ namespace CDS {
 // Advances the state by one timestep dt using classic RK4.
 // Reference position is held constant over the step (ZOH).
 // =============================================================================
-static bool rk4_step(void* pDynamics, Rocket::StateVec&     x,
+static bool rk4_step(void* pDynamics, QuadRotor::StateVec&     x,
                          Reference_t& ref,
-                         const Rocket::UserForces& userF,
+                         const QuadRotor::UserForces& userF,
                          const double               dt)
 {
 
@@ -101,22 +101,22 @@ static bool rk4_step(void* pDynamics, Rocket::StateVec&     x,
     Dynamics::ROCKET_FF_LQR_01* pDyn = static_cast<Dynamics::ROCKET_FF_LQR_01*>(pDynamics);
      
     // Compute control at current state (held constant over the step)
-    const Rocket::InputVec u = pDyn->ExecuteControl(x, ref);
+    const QuadRotor::InputVec u = pDyn->ExecuteControl(x, ref);
 
     // Four RK4 slope evaluations
-    const Rocket::StateVec k1 = pDyn->Dynamics(x, u, ref, userF);
+    const QuadRotor::StateVec k1 = pDyn->Dynamics(x, u, ref, userF);
 
-    Rocket::StateVec x2{};
+    QuadRotor::StateVec x2{};
     for (size_t i = 0; i < 15; ++i) x2[i] = x[i] + k1[i] * dt * 0.5;
-    const Rocket::StateVec k2 = pDyn->Dynamics(x2, u, ref, userF);
+    const QuadRotor::StateVec k2 = pDyn->Dynamics(x2, u, ref, userF);
 
-    Rocket::StateVec x3{};
+    QuadRotor::StateVec x3{};
     for (size_t i = 0; i < 15; ++i) x3[i] = x[i] + k2[i] * dt * 0.5;
-    const Rocket::StateVec k3 = pDyn->Dynamics(x3, u, ref, userF);
+    const QuadRotor::StateVec k3 = pDyn->Dynamics(x3, u, ref, userF);
 
-    Rocket::StateVec x4{};
+    QuadRotor::StateVec x4{};
     for (size_t i = 0; i < 15; ++i) x4[i] = x[i] + k3[i] * dt;
-    const Rocket::StateVec k4 = pDyn->Dynamics(x4, u, ref, userF);
+    const QuadRotor::StateVec k4 = pDyn->Dynamics(x4, u, ref, userF);
 
     // Weighted sum
     for (size_t i = 0; i < 15; ++i)
@@ -125,7 +125,7 @@ static bool rk4_step(void* pDynamics, Rocket::StateVec&     x,
     return false;
 }
 
-static void _init_dynamicsState(Reference_t& ref, Rocket::StateVec& state)
+static void _init_dynamicsState(Reference_t& ref, QuadRotor::StateVec& state)
 {
     using SN = CDS::Dynamics::ROCKET_FF_LQR_01::StateName;
 
@@ -149,7 +149,7 @@ static void _init_dynamicsState(Reference_t& ref, Rocket::StateVec& state)
 
 }
 
-Rocket::Rocket()
+QuadRotor::QuadRotor()
 {
     // Init dynamic model 
     m_modelPtr = new CDS::Dynamics::ROCKET_FF_LQR_01();
@@ -163,7 +163,7 @@ Rocket::Rocket()
 
 }
 
-Rocket::~Rocket()
+QuadRotor::~QuadRotor()
 {
     if(m_modelPtr)
     {
@@ -172,11 +172,11 @@ Rocket::~Rocket()
     }
 }
 
-bool Rocket::SetModelParams(const std::any& params)
+bool QuadRotor::SetModelParams(const std::any& params)
 {
     auto dynamics = (Dynamics::ROCKET_FF_LQR_01*)m_modelPtr;
 
-    if(dynamics == nullptr || params.type() != typeid(core_rocketParams_t&))
+    if(dynamics == nullptr || params.type() != typeid(const core_rocketParams_t&))
     {
         // Err
         return true;
@@ -200,7 +200,8 @@ bool Rocket::SetModelParams(const std::any& params)
 
     return false;
 }
-bool Rocket::SetTrajectoryManager(TrajectoryManager* pTrajectoryManager)
+
+bool QuadRotor::SetTrajectoryManager(TrajectoryManager* pTrajectoryManager)
 {
     Reference_t ref;
 
@@ -217,7 +218,7 @@ bool Rocket::SetTrajectoryManager(TrajectoryManager* pTrajectoryManager)
 }
 
 
-bool Rocket::PerformIntegration(const core_stepParams_t& params)
+bool QuadRotor::PerformIntegration(const core_stepParams_t& params)
 {
     // Getting reference setpoints from Trajectory
     Reference_t ref;
@@ -272,9 +273,9 @@ bool Rocket::PerformIntegration(const core_stepParams_t& params)
     return false;
 }
 
-bool Rocket::GetState(core_state_t& state)
+bool QuadRotor::GetState(core_state_t& state)
 {
-    // Copies rocket's state in the core's struct
+    // Copies QuadRotor's state in the core's struct
     state.x_dot = m_state[IDX_XDOT];
     state.y_dot = m_state[IDX_YDOT];
     state.z_dot = m_state[IDX_ZDOT];
@@ -295,7 +296,7 @@ bool Rocket::GetState(core_state_t& state)
     return false;
 }
 
-bool Rocket::GetTrackingErrors(core_trackingErrors_t& tErrors)
+bool QuadRotor::GetTrackingErrors(core_trackingErrors_t& tErrors)
 {
     tErrors.x = m_trackingErr[0];
     tErrors.y = m_trackingErr[1];

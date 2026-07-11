@@ -125,7 +125,7 @@ static ext_trajectoryPoint _convertExtToCore_trajectoryPoint(Vec3& point)
 
 /* ext functions */
 
-bool ext_init(ext_initParams params)
+bool ext_initRocket_FFLQR01(ext_initParams params)
 {
 
     /* Initialize core, return true if error */
@@ -138,7 +138,7 @@ bool ext_init(ext_initParams params)
     ASSERT_FALSE(ret);
 
     // Rocket initialization
-    ret = core_rocketInit(rPar);
+    ret = core_rocketFfLqr01_init(rPar);
     ASSERT_FALSE(ret);
 
     // Trajectory initialization

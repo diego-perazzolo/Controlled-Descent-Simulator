@@ -7,13 +7,14 @@ add_executable(simulator
     core.cpp
     Models/BaseModel.cpp
     Models/Rocket.cpp
+    Models/QuadRotor.cpp
     Trajectory/Trajectory.cpp
     Trajectory/TrajectoryManager.cpp
     Trajectory/Poly4.cpp
     Trajectory/Point.cpp
     ext/ext_comm.cpp
     ext/bindings.cpp
-    ../modeling/notebooks/exported_cpp/dynamics_ff_lqr_01.cpp
+    ../modeling/notebooks/exported_cpp/dynamics_rocket_ff_lqr_01.cpp
 )
 
 target_include_directories(simulator PRIVATE

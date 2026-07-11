@@ -54,6 +54,21 @@ typedef struct
     core_coord_t T2_min; // minimum torque around y axis (Nm)
 } core_rocketParams_t;
 
+// QuadRotor params
+typedef struct
+{
+    core_coord_t m ;   // mass (kg)
+    core_coord_t Ix;  // moment of inertia X (kg·m²)
+    core_coord_t Iy;  // moment of inertia Y (kg·m²)
+    core_coord_t Iz;   // moment of inertia Z (kg·m²)
+    core_coord_t g;   // gravity (m/s²)
+    core_coord_t c;   // lateral aerodynamic drag coefficient
+    core_coord_t cz;   // axial aerodynamic drag coefficient
+    core_coord_t F_max; // maximum thrust (N)
+    core_coord_t F_min; // minimum thrust (N)
+} core_quadRotorParams_t;
+
+
 // Trajectory Polynomial 4th order params
 typedef struct
 {

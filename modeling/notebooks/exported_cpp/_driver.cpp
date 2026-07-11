@@ -1,30 +1,30 @@
 
 #include <cstdio>
-#include "dynamics_ff_lqr_01.hpp"
+#include "dynamics_rocket_ff_lqr_01.hpp"
 
 int main() {
     using namespace CDS;
     using namespace CDS::Dynamics;
 
-    FF_LQR_01 model;
-    model.SetParam(FF_LQR_01::ParamName::Mass,        10.0);
-    model.SetParam(FF_LQR_01::ParamName::Ix,          10.0/3.0);
-    model.SetParam(FF_LQR_01::ParamName::Iy,          10.0/3.0);
-    model.SetParam(FF_LQR_01::ParamName::Iz,          1.0);
-    model.SetParam(FF_LQR_01::ParamName::Gravity,     9.81);
-    model.SetParam(FF_LQR_01::ParamName::DragLateral, 1.0);
-    model.SetParam(FF_LQR_01::ParamName::DragAxial,   0.02);
-    model.SetParam(FF_LQR_01::ParamName::ThrustMax,   500.0);
-    model.SetParam(FF_LQR_01::ParamName::ThrustMin,   0.0);
-    model.SetParam(FF_LQR_01::ParamName::TorqueXMax,   10.0);
-    model.SetParam(FF_LQR_01::ParamName::TorqueXMin,   -10.0);
-    model.SetParam(FF_LQR_01::ParamName::TorqueYMax,   10.0);
-    model.SetParam(FF_LQR_01::ParamName::TorqueYMin,   -10.0);
+    ROCKET_FF_LQR_01 model;
+    model.SetParam(ROCKET_FF_LQR_01::ParamName::Mass,        10.0);
+    model.SetParam(ROCKET_FF_LQR_01::ParamName::Ix,          10.0/3.0);
+    model.SetParam(ROCKET_FF_LQR_01::ParamName::Iy,          10.0/3.0);
+    model.SetParam(ROCKET_FF_LQR_01::ParamName::Iz,          1.0);
+    model.SetParam(ROCKET_FF_LQR_01::ParamName::Gravity,     9.81);
+    model.SetParam(ROCKET_FF_LQR_01::ParamName::DragLateral, 1.0);
+    model.SetParam(ROCKET_FF_LQR_01::ParamName::DragAxial,   0.02);
+    model.SetParam(ROCKET_FF_LQR_01::ParamName::ThrustMax,   500.0);
+    model.SetParam(ROCKET_FF_LQR_01::ParamName::ThrustMin,   0.0);
+    model.SetParam(ROCKET_FF_LQR_01::ParamName::TorqueXMax,   10.0);
+    model.SetParam(ROCKET_FF_LQR_01::ParamName::TorqueXMin,   -10.0);
+    model.SetParam(ROCKET_FF_LQR_01::ParamName::TorqueYMax,   10.0);
+    model.SetParam(ROCKET_FF_LQR_01::ParamName::TorqueYMin,   -10.0);
 
-    FF_LQR_01::StateVec s = {1.0, -2.0, 50.0,  0.05, -0.03, 0.0,
+    ROCKET_FF_LQR_01::StateVec s = {1.0, -2.0, 50.0,  0.05, -0.03, 0.0,
                              0.5, -0.1, -10.0,  0.01, -0.02, 0.0,
                              0.1, 0.2, -0.05};
-    FF_LQR_01::InputVec u = {100.0, 0.5, -0.3, 0.0};
+    ROCKET_FF_LQR_01::InputVec u = {100.0, 0.5, -0.3, 0.0};
     Vec3 userF = {2.5, -1.5, 0.7};
 
     // Test Dynamics with a Reference_t (only ref.pos is used inside, but we

@@ -82,7 +82,7 @@ EMSCRIPTEN_BINDINGS(simulator) {
         .field("time_s",     &ext_trajectoryPointParams_t::time_s);
 
     // --- Funzioni esposte a JS ---
-    function("ext_init", &ext_init);
+    function("ext_init", &ext_initRocket_FFLQR01);
     function("ext_step", &ext_step);
     function("ext_trajectory_get_point", &ext_trajectory_get_point);
     function("ext_trajectory_append_poly4", &ext_trajectory_append_poly4);

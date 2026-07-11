@@ -28,42 +28,37 @@
 // Author      : Diego Perazzolo
 // Created     : 2026
 // =============================================================================
-#pragma once
-#include "core_defs.hpp"
 
-/* Public C-like interface */
+#include "BaseModel.hpp"
 
-// Initializes the simulation core, returns true on error
-bool core_init(void);
+namespace CDS
+{
+    class QuadRotor : public BaseModel
+    {
+        public:
 
-// Set rocket FFLQR01 parameters, returns true on error
-bool core_rocketFfLqr01_init(const core_rocketParams_t rPar);
+        QuadRotor();
 
-// Set quadRotor FFLQR01 parameters, returns true on error
-bool core_quadRotorFfLqr01_init(const core_quadRotorParams_t rPar);
+        virtual ~QuadRotor();
+        virtual bool SetModelParams(const std::any& params) override;
+        virtual bool SetTrajectoryManager(TrajectoryManager* pTrajectoryManager) override;
+        virtual bool PerformIntegration(const core_stepParams_t& params) override;
+        virtual bool GetState(core_state_t& state) override;
+        virtual bool GetTrackingErrors(core_trackingErrors_t& tErrors) override; 
 
-// Set trajectory initial parameters, returns true on error
-bool core_trajectoryInit(void);
+        using StateVec = std::array<double, 15>;   // augmented state (12 + 3 integrals)
+        using InputVec = std::array<double, 4>;    // [F1, T1, T2, T3]
+        using RefVec   = std::array<double, 3>;    // position reference [x_ref, y_ref, z_ref]
+        using TrackingErr = std::array<double, 3>;    // Tracking err w.r.t. [x_ref, y_ref, z_ref]
+        using UserForces = std::array<double, 3>;    // User input forces [Fx, Fy, Fz]
 
-// Append to the trajectory list an item of type: 4th order Polynomial trajectory, returns true on error
-bool core_trajectoryAppendPoly4(const core_trajectoryPoly4Params_t tPar);
+        private:
+        void* m_modelPtr;
+        StateVec m_state;
+        TrajectoryManager* m_trajectoryManagerPtr;
+        TrackingErr m_trackingErr;
+        UserForces m_userForces;
+        double m_time;
 
-// Append to the trajectory list an item of type: Point, returns true on error
-bool core_trajectoryAppendPoint(const core_trajectoryPointParams_t tPar);
-
-// Remove last trajectory item, returns true on error
-bool core_trajectoryRemoveLastItem(void);
-
-// Performs one simulation (integration) step
-bool core_performSimulationStep(const core_stepParams_t sPar);
-
-// Get system's state, returns true on error
-bool core_getState(core_state_t *pState);
-
-// Get tracking error, returns true on error
-bool core_getTrackingError(core_trackingErrors_t *pTrackingErr);
-
-// Get Trajectory point at a certain time instant, returns true on error
-bool core_getTrajectoryPoint(core_coord_t time, Vec3& point);
-    
-    
+    };
+}

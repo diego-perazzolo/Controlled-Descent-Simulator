@@ -40,7 +40,7 @@ namespace CDS
         Rocket();
 
         virtual ~Rocket();
-        virtual bool SetModelParams(const core_rocketParams_t& params) override;
+        virtual bool SetModelParams(const std::any& params) override;
         virtual bool SetTrajectoryManager(TrajectoryManager* pTrajectoryManager) override;
         virtual bool PerformIntegration(const core_stepParams_t& params) override;
         virtual bool GetState(core_state_t& state) override;
