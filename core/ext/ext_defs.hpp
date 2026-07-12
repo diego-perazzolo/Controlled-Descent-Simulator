@@ -75,7 +75,7 @@ typedef struct
     ext_coord_t zErr;
 } ext_setpointError;
 
-/* struct to package the system parameters*/
+/* struct to package the rocket model parameters*/
 typedef struct
 {
     ext_coord_t mass_Kg;
@@ -86,15 +86,40 @@ typedef struct
     ext_coord_t cz;
 } ext_rocketParams;
 
+/* struct to package the quadRotor model parameters*/
+typedef struct
+{
+    ext_coord_t mass_Kg;
+    ext_coord_t inertiaX_Kgm2;
+    ext_coord_t inertiaY_Kgm2;
+    ext_coord_t inertiaZ_Kgm2;
+    ext_coord_t c;
+    ext_coord_t cz;
+    ext_coord_t motorThrustCoefficient;
+    ext_coord_t motorTorqueCoefficient;
+    ext_coord_t distanceBtwMotorAndCoM;
+    ext_coord_t motorMomentOfInertia;
+} ext_quadRotorParams;
+
 // struct of polynomial 4th order trajectory parameters
 typedef struct
 {
     ext_vec3_t initialPos;
+    ext_coord_t initialYaw;
+
     ext_vec3_t initialVel;
+    ext_coord_t initialYawRate;
     // not enough degrees of freedom to set also initial acceleration
+
     ext_vec3_t finalPos;
+    ext_coord_t finalYaw;
+
     ext_vec3_t finalVel;
+    ext_coord_t finalYawRate;
+
     ext_vec3_t finalAcc;
+    ext_coord_t finalYawAcc;
+
     ext_coord_t time_s; // total duration of the manouver towards the final state
 } ext_trajectoryPoly4Params_t;
 
@@ -102,6 +127,7 @@ typedef struct
 typedef struct
 {
     ext_vec3_t finalPos;
+    ext_coord_t finalYaw;
     ext_coord_t time_s; // total duration of the manouver towards the finalPos
 } ext_trajectoryPointParams_t;
 
@@ -122,7 +148,7 @@ typedef struct
     ext_coord_t fZ;
 } ext_userForce;
 
-/* struct of the actuator limits */
+/* struct of the rocket's actuator limits */
 typedef struct 
 {
     /* forces */
@@ -133,4 +159,12 @@ typedef struct
     ext_coord_t Tx_min; // around x axis
     ext_coord_t Ty_max; // around y axis
     ext_coord_t Ty_min; // around y axis
-} ext_actuatorLimits;
+} ext_rocketActuatorLimits;
+
+/* struct of the quadRotor's actuator limits */
+typedef struct 
+{
+    /* motor torques */
+    ext_coord_t motor_max_thrust;
+    ext_coord_t motor_min_thrust;
+} ext_quadRotorActuatorLimits;

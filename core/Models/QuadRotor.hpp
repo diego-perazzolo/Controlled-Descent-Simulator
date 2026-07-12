@@ -23,11 +23,15 @@
 // THE SOFTWARE.
 //
 // =============================================================================
-// File        : <filename.cpp>
-// Description : <brief description of this file>
+// File        : QuadRotor.hpp
+// Description : Quadrotor runtime model (BaseModel derivative).
+//               Wraps the generated CDS::Dynamics::QUADROTOR_FF_LQR_01
+//               (quaternion 6-DOF + differential-flatness feedforward + LQR)
+//               with an RK4 integrator and the core simulation interface.
 // Author      : Diego Perazzolo
 // Created     : 2026
 // =============================================================================
+#pragma once
 
 #include "BaseModel.hpp"
 
@@ -44,21 +48,23 @@ namespace CDS
         virtual bool SetTrajectoryManager(TrajectoryManager* pTrajectoryManager) override;
         virtual bool PerformIntegration(const core_stepParams_t& params) override;
         virtual bool GetState(core_state_t& state) override;
-        virtual bool GetTrackingErrors(core_trackingErrors_t& tErrors) override; 
+        virtual bool GetTrackingErrors(core_trackingErrors_t& tErrors) override;
 
-        using StateVec = std::array<double, 15>;   // augmented state (12 + 3 integrals)
-        using InputVec = std::array<double, 4>;    // [F1, T1, T2, T3]
-        using RefVec   = std::array<double, 3>;    // position reference [x_ref, y_ref, z_ref]
-        using TrackingErr = std::array<double, 3>;    // Tracking err w.r.t. [x_ref, y_ref, z_ref]
-        using UserForces = std::array<double, 3>;    // User input forces [Fx, Fy, Fz]
+        // Augmented runtime state (13 physical + 4 integrators):
+        //   [r(3), q(4, quaternion), v(3), omega(3, body rates), IntX, IntY, IntZ, IntPsi]
+        using StateVec    = std::array<double, 17>;
+        using InputVec    = std::array<double, 4>;   // [T1, T2, T3, T4] rotor thrusts
+        using RefVec      = std::array<double, 3>;    // position reference [x_ref, y_ref, z_ref]
+        using TrackingErr = std::array<double, 3>;    // tracking err w.r.t. [x_ref, y_ref, z_ref]
+        using UserForces  = std::array<double, 3>;    // user input forces [Fx, Fy, Fz]
 
         private:
-        void* m_modelPtr;
-        StateVec m_state;
+        void*              m_modelPtr;
+        StateVec           m_state;
         TrajectoryManager* m_trajectoryManagerPtr;
-        TrackingErr m_trackingErr;
-        UserForces m_userForces;
-        double m_time;
+        TrackingErr        m_trackingErr;
+        UserForces         m_userForces;
+        double             m_time;
 
     };
 }

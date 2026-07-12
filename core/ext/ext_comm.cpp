@@ -36,7 +36,7 @@
 #define ASSERT_FALSE(ret) if(ret) return ret 
 
 /* Static functions */
-static core_rocketParams_t _convertExtToCore_rocketParams(ext_rocketParams rPar, ext_actuatorLimits aPar)
+static core_rocketParams_t _convertExtToCore_rocketParams(ext_rocketParams rPar, ext_rocketActuatorLimits aPar)
 {
     core_rocketParams_t coreParam  = {};
     coreParam.m  = rPar.mass_Kg;
@@ -56,6 +56,25 @@ static core_rocketParams_t _convertExtToCore_rocketParams(ext_rocketParams rPar,
     return coreParam;
 }
 
+static core_quadRotorParams_t _convertExtToCore_quadRotorParams(ext_quadRotorParams rPar, ext_quadRotorActuatorLimits aPar)
+{
+    core_quadRotorParams_t coreParam  = {};
+    coreParam.m  = rPar.mass_Kg;
+    coreParam.Ix = rPar.inertiaX_Kgm2;
+    coreParam.Iy = rPar.inertiaY_Kgm2;
+    coreParam.Iz = rPar.inertiaZ_Kgm2;
+    coreParam.g = 9.81;
+    coreParam.c = rPar.c;
+    coreParam.cz = rPar.cz;
+    coreParam.kT = rPar.motorThrustCoefficient;
+    coreParam.kQ = rPar.motorTorqueCoefficient;
+    coreParam.L = rPar.distanceBtwMotorAndCoM;
+    coreParam.Irot = rPar.motorMomentOfInertia;
+    coreParam.Fm_max = aPar.motor_max_thrust;
+    coreParam.Fm_min = aPar.motor_min_thrust;
+
+    return coreParam;
+}
 
 static core_stepParams_t _convertExtToCore_stepParams(ext_stepParams sPar)
 {
@@ -96,10 +115,15 @@ static core_trajectoryPoly4Params_t _convertExtToCore_trajectoryPoly4Params(ext_
 {
     core_trajectoryPoly4Params_t coreParam = {
         .initialPos = {ext.initialPos.x, ext.initialPos.y, ext.initialPos.z},
+        .initialYaw = ext.initialYaw,
         .initialVel = {ext.initialVel.x, ext.initialVel.y, ext.initialVel.z},
+        .initialYawRate = ext.initialYawRate,
         .finalPos = {ext.finalPos.x, ext.finalPos.y, ext.finalPos.z},
+        .finalYaw = ext.finalYaw,
         .finalVel = {ext.finalVel.x, ext.finalVel.y, ext.finalVel.z},
+        .finalYawRate = ext.finalYawRate,
         .finalAcc = {ext.finalAcc.x, ext.finalAcc.y, ext.finalAcc.z},
+        .finalYawAcc = ext.finalYawAcc,
         .time_s = ext.time_s
     };
 
@@ -110,6 +134,7 @@ static core_trajectoryPointParams_t _convertExtToCore_trajectoryPointParams(ext_
 {
     core_trajectoryPointParams_t coreParam = {
         .finalPos = {ext.finalPos.x, ext.finalPos.y, ext.finalPos.z},
+        .finalYaw = ext.finalYaw,
         .time_s = ext.time_s
     };
 
@@ -125,13 +150,13 @@ static ext_trajectoryPoint _convertExtToCore_trajectoryPoint(Vec3& point)
 
 /* ext functions */
 
-bool ext_initRocket_FFLQR01(ext_initParams params)
+bool ext_initRocket_FFLQR01(ext_initRocketParams params)
 {
 
     /* Initialize core, return true if error */
 
     // Struct conversion
-    core_rocketParams_t rPar = _convertExtToCore_rocketParams(params.rocketPar, params.actuatorLimits);
+    core_rocketParams_t rPar = _convertExtToCore_rocketParams(params.params, params.actuatorLimits);
 
     // Core initialization
     bool ret = core_init();
@@ -139,6 +164,29 @@ bool ext_initRocket_FFLQR01(ext_initParams params)
 
     // Rocket initialization
     ret = core_rocketFfLqr01_init(rPar);
+    ASSERT_FALSE(ret);
+
+    // Trajectory initialization
+    ret = core_trajectoryInit();
+    ASSERT_FALSE(ret);
+
+    return ret;
+}
+
+bool ext_initQuadRotor_FFLQR01(ext_initQuadRotorParams params)
+{
+
+    /* Initialize core, return true if error */
+
+    // Struct conversion
+    core_quadRotorParams_t rPar = _convertExtToCore_quadRotorParams(params.params, params.actuatorLimits);
+
+    // Core initialization
+    bool ret = core_init();
+    ASSERT_FALSE(ret);
+
+    // Rocket initialization
+    ret = core_quadRotorFfLqr01_init(rPar);
     ASSERT_FALSE(ret);
 
     // Trajectory initialization

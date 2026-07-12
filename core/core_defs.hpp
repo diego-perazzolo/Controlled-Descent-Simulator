@@ -64,8 +64,12 @@ typedef struct
     core_coord_t g;   // gravity (m/s²)
     core_coord_t c;   // lateral aerodynamic drag coefficient
     core_coord_t cz;   // axial aerodynamic drag coefficient
-    core_coord_t F_max; // maximum thrust (N)
-    core_coord_t F_min; // minimum thrust (N)
+    core_coord_t kT;  // Motor + propeller thrust coefficient
+    core_coord_t kQ;  // Motor + propeller torque coefficient
+    core_coord_t L;   // distance between Center of Mass and motor (m)
+    core_coord_t Irot;// moment of inertia motor (kg·m²)
+    core_coord_t Fm_max; // maximum motor thrust (N)
+    core_coord_t Fm_min; // minimum motor thrust (N)
 } core_quadRotorParams_t;
 
 
@@ -73,11 +77,16 @@ typedef struct
 typedef struct
 {
     Vec3 initialPos;
+    core_coord_t initialYaw;
     Vec3 initialVel;
+    core_coord_t initialYawRate;
     // not enough degrees of freedom to set also initial acceleration
     Vec3 finalPos;
+    core_coord_t finalYaw;
     Vec3 finalVel;
+    core_coord_t finalYawRate;
     Vec3 finalAcc;
+    core_coord_t finalYawAcc;
     core_coord_t time_s;
 } core_trajectoryPoly4Params_t;
 
@@ -85,6 +94,7 @@ typedef struct
 typedef struct
 {
     Vec3 finalPos;
+    core_coord_t finalYaw;
     core_coord_t time_s;
 } core_trajectoryPointParams_t;
 
@@ -92,10 +102,19 @@ typedef struct
 
 typedef struct{
     Vec3 pos;
+    core_coord_t yaw;
+
     Vec3 vel;
+    core_coord_t yawRate;
+    
     Vec3 acc;
+    core_coord_t yawAcc;
+    
     Vec3 jerk;
+    core_coord_t yawJerk;
+
     Vec3 snap;
+    core_coord_t yawSnap;
 } Reference_t;
 
 // Integrations' step parameters

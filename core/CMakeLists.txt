@@ -15,6 +15,7 @@ add_executable(simulator
     ext/ext_comm.cpp
     ext/bindings.cpp
     ../modeling/notebooks/exported_cpp/dynamics_rocket_ff_lqr_01.cpp
+    ../modeling/notebooks/exported_cpp/QUADROTOR_FF_LQR_01/dynamics_quadrotor_ff_lqr_01.cpp
 )
 
 target_include_directories(simulator PRIVATE
@@ -23,6 +24,7 @@ target_include_directories(simulator PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/Models
     ${CMAKE_CURRENT_SOURCE_DIR}/Trajectory
     ${CMAKE_CURRENT_SOURCE_DIR}/../modeling/notebooks/exported_cpp/
+    ${CMAKE_CURRENT_SOURCE_DIR}/../modeling/notebooks/exported_cpp/QUADROTOR_FF_LQR_01
 )
 
 # Emscripten-specific flags

@@ -66,6 +66,7 @@ Poly4::Poly4(const core_trajectoryPoly4Params_t params) :
         m_a_x = { m_params.initialPos[0], 0.0, 0.0, 0.0, 0.0 };
         m_a_y = { m_params.initialPos[1], 0.0, 0.0, 0.0, 0.0 };
         m_a_z = { m_params.initialPos[2], 0.0, 0.0, 0.0, 0.0 };
+        m_a_psi = { m_params.initialYaw, 0.0, 0.0, 0.0, 0.0 };
         return;
     }
 
@@ -80,6 +81,10 @@ Poly4::Poly4(const core_trajectoryPoly4Params_t params) :
     m_a_z = ComputeAxisCoeffs(m_params.initialPos[2], m_params.initialVel[2],
                               m_params.finalPos[2],   m_params.finalVel[2],
                               m_params.finalAcc[2],   T);
+    m_a_psi = ComputeAxisCoeffs(m_params.initialYaw, m_params.initialYawRate,
+                              m_params.finalYaw,   m_params.finalYawRate,
+                              m_params.finalYawAcc,   T);
+
 }
 
 Poly4::~Poly4()
@@ -136,7 +141,7 @@ bool Poly4::GetReference(const core_coord_t& time, Reference_t& ref)
     //   p''  = 2*a2 + t*(6*a3 + t*12*a4)
     //   p''' = 6*a3 + 24*a4*t
     //   p'''' = 24*a4
-    for (int i = 0; i < 3; ++i)
+    for (int i = 0; i < 4; ++i)
     {
         const std::array<double, 5>& a = (i == 0) ? m_a_x : (i == 1) ? m_a_y : m_a_z;
 
@@ -146,6 +151,14 @@ bool Poly4::GetReference(const core_coord_t& time, Reference_t& ref)
         ref.jerk[i] = 6.0 * a[3] + 24.0 * a[4] * t;
         ref.snap[i] = 24.0 * a[4];
     }
+
+    // Yaw
+    ref.yaw = m_a_psi[0] + t * (m_a_psi[1] + t * (m_a_psi[2] + t * (m_a_psi[3] + t * m_a_psi[4])));
+    ref.yawRate = m_a_psi[1] + t * (2.0 * m_a_psi[2] + t * (3.0 * m_a_psi[3] + t * 4.0 * m_a_psi[4]));
+    ref.yawAcc = 2.0 * m_a_psi[2] + t * (6.0 * m_a_psi[3] + t * 12.0 * m_a_psi[4]);
+    ref.yawJerk = 6.0 * m_a_psi[3] + 24.0 * m_a_psi[4] * t;
+    ref.yawSnap = 24.0 * m_a_psi[4];
+
 
     return false;
 }

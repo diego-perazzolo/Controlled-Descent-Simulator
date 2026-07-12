@@ -46,25 +46,30 @@ bool Point::GetReference(const core_coord_t&  time, Reference_t& ref)
 {
     // Reference is constant, TODO DP
 
-    ref.pos[0] = m_params.finalPos[0];
+    ref.pos[0] = m_params.finalPos[0]; 
     ref.pos[1] = m_params.finalPos[1];
     ref.pos[2] = m_params.finalPos[2];
+    ref.yaw = m_params.finalYaw;
     
     ref.vel[0] = 0;
     ref.vel[1] = 0;
     ref.vel[2] = 0;
+    ref.yawRate = 0;
 
     ref.acc[0] = 0;
     ref.acc[1] = 0;
     ref.acc[2] = 0;
+    ref.yawAcc= 0;
 
     ref.jerk[0] =0;
     ref.jerk[1] =0;
     ref.jerk[2] =0;
+    ref.yawJerk =0;
 
     ref.snap[0] =0;
     ref.snap[1] =0;
     ref.snap[2] =0;
+    ref.yawSnap =0;
 
     return false;
 }

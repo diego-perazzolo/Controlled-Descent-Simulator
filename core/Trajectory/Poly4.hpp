@@ -80,5 +80,6 @@ namespace CDS
         std::array<double, 5> m_a_x;
         std::array<double, 5> m_a_y;
         std::array<double, 5> m_a_z;
+        std::array<double, 5> m_a_psi;
     };
 };

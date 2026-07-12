@@ -33,12 +33,20 @@
 
 /* structs */
 
-/* struct of the arguments of init core function */
+/* params for initializing rocket model */
 typedef struct 
 {
-    ext_rocketParams rocketPar;
-    ext_actuatorLimits actuatorLimits;
-} ext_initParams;
+    ext_rocketParams params;
+    ext_rocketActuatorLimits actuatorLimits;
+} ext_initRocketParams;
+
+/* params for initializing quadRotor model */
+typedef struct 
+{
+    ext_quadRotorParams params;
+    ext_quadRotorActuatorLimits actuatorLimits;
+} ext_initQuadRotorParams;
+
 
 /* struct of the arguments of step function */
 typedef struct
@@ -56,7 +64,10 @@ typedef struct
 } ext_stepRet;
 
 // Initialize Rocket model: FF_LQR_01, returns true on error
-bool ext_initRocket_FFLQR01(ext_initParams params);
+bool ext_initRocket_FFLQR01(ext_initRocketParams params);
+
+// Initialize QuadRotor model: FF_LQR_01, returns true on error
+bool ext_initQuadRotor_FFLQR01(ext_initQuadRotorParams params);
 
 // Advance one integration step
 ext_stepRet ext_step(ext_stepParams params);
