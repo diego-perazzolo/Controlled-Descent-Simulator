@@ -73,6 +73,7 @@ typedef struct
     ext_coord_t xErr;
     ext_coord_t yErr;
     ext_coord_t zErr;
+    ext_coord_t yawErr;
 } ext_setpointError;
 
 /* struct to package the rocket model parameters*/

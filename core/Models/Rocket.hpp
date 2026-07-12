@@ -48,8 +48,8 @@ namespace CDS
 
         using StateVec = std::array<double, 15>;   // augmented state (12 + 3 integrals)
         using InputVec = std::array<double, 4>;    // [F1, T1, T2, T3]
-        using RefVec   = std::array<double, 3>;    // position reference [x_ref, y_ref, z_ref]
-        using TrackingErr = std::array<double, 3>;    // Tracking err w.r.t. [x_ref, y_ref, z_ref]
+        using RefVec   = std::array<double, 3>;    // position reference [x_ref, y_ref, z_ref, psi_ref]
+        using TrackingErr = std::array<double, 4>;    // Tracking err w.r.t. [x_ref, y_ref, z_ref, psi_ref]
         using UserForces = std::array<double, 3>;    // User input forces [Fx, Fy, Fz]
 
         private:

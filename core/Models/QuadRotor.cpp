@@ -158,11 +158,13 @@ static void _init_dynamicsState(Reference_t& ref, QuadRotor::StateVec& state)
     Dynamics::QUADROTOR_FF_LQR_01::SetState(state, SN::Y, ref.pos[1]);
     Dynamics::QUADROTOR_FF_LQR_01::SetState(state, SN::Z, ref.pos[2]);
 
-    // Identity attitude (level hover); a yaw-aligned start would set q from ref.yaw
-    Dynamics::QUADROTOR_FF_LQR_01::SetState(state, SN::Qw, 1.0);
+    // Initial attitude: level, but heading = ref.yaw  ->  pure yaw quaternion
+    //   q = [cos(psi/2), 0, 0, sin(psi/2)]  (rotation about world Z)
+    const double half_psi = 0.5 * ref.yaw;
+    Dynamics::QUADROTOR_FF_LQR_01::SetState(state, SN::Qw, std::cos(half_psi));
     Dynamics::QUADROTOR_FF_LQR_01::SetState(state, SN::Qx, 0.0);
     Dynamics::QUADROTOR_FF_LQR_01::SetState(state, SN::Qy, 0.0);
-    Dynamics::QUADROTOR_FF_LQR_01::SetState(state, SN::Qz, 0.0);
+    Dynamics::QUADROTOR_FF_LQR_01::SetState(state, SN::Qz, std::sin(half_psi));
 
     Dynamics::QUADROTOR_FF_LQR_01::SetState(state, SN::VX, ref.vel[0]);
     Dynamics::QUADROTOR_FF_LQR_01::SetState(state, SN::VY, ref.vel[1]);
@@ -256,10 +258,18 @@ bool QuadRotor::PerformIntegration(const core_stepParams_t& params)
         return true;
     }
 
-    // Compute tracking errors (position)
+    // Compute tracking errors (position + heading; the LQR carries a yaw integrator)
     m_trackingErr[0] = ref.pos[0] - m_state[IDX_X];
     m_trackingErr[1] = ref.pos[1] - m_state[IDX_Y];
     m_trackingErr[2] = ref.pos[2] - m_state[IDX_Z];
+    {
+        const double qw = m_state[IDX_QW], qx = m_state[IDX_QX];
+        const double qy = m_state[IDX_QY], qz = m_state[IDX_QZ];
+        const double yaw = std::atan2(2.0*(qw*qz + qx*qy), 1.0 - 2.0*(qy*qy + qz*qz));
+        double eyaw = ref.yaw - yaw;                       // wrap to [-pi, pi]
+        eyaw = std::atan2(std::sin(eyaw), std::cos(eyaw));
+        m_trackingErr[3] = eyaw;
+    }
 
     // User forces
     m_userForces[0] = params.user_fX;
@@ -310,9 +320,10 @@ bool QuadRotor::GetState(core_state_t& state)
 
 bool QuadRotor::GetTrackingErrors(core_trackingErrors_t& tErrors)
 {
-    tErrors.x = m_trackingErr[0];
-    tErrors.y = m_trackingErr[1];
-    tErrors.z = m_trackingErr[2];
+    tErrors.x   = m_trackingErr[0];
+    tErrors.y   = m_trackingErr[1];
+    tErrors.z   = m_trackingErr[2];
+    tErrors.yaw = m_trackingErr[3];   // requires a `yaw` field in core_trackingErrors_t
     return false;
 }
 

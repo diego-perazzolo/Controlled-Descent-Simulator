@@ -23,7 +23,8 @@ EMSCRIPTEN_BINDINGS(simulator) {
     value_object<ext_setpointError>("ext_setpointError")
         .field("xErr",    &ext_setpointError::xErr)
         .field("yErr",    &ext_setpointError::yErr)
-        .field("zErr",    &ext_setpointError::zErr);
+        .field("zErr",    &ext_setpointError::zErr)
+        .field("yawErr",    &ext_setpointError::yawErr);
 
     value_object<ext_rocketParams>("ext_rocketParams")
         .field("mass_Kg",        &ext_rocketParams::mass_Kg)
@@ -64,7 +65,7 @@ EMSCRIPTEN_BINDINGS(simulator) {
 
     value_object<ext_quadRotorActuatorLimits>("ext_quadRotorActuatorLimits")
         .field("motor_max_thrust", &ext_quadRotorActuatorLimits::motor_max_thrust)
-        .field("motor_max_thrust", &ext_quadRotorActuatorLimits::motor_max_thrust);
+        .field("motor_min_thrust", &ext_quadRotorActuatorLimits::motor_min_thrust);
 
     value_object<ext_initQuadRotorParams>("ext_initQuadRotorParams")
         .field("quadRotorPar",      &ext_initQuadRotorParams::params)

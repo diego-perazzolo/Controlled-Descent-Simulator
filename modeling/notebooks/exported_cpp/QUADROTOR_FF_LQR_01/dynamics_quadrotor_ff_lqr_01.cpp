@@ -125,7 +125,9 @@ QUADROTOR_FF_LQR_01::StateVec QUADROTOR_FF_LQR_01::Dynamics(const StateVec& s, c
     const double refy = ref.pos[1];
     const double refz = ref.pos[2];
     const double ref_yaw = ref.yaw;
-    (void)userF;
+    const double user_fX = userF[0];
+    const double user_fY = userF[1];
+    const double user_fZ = userF[2];
 
     StateVec dxdt{};
     const double cse0 = 1.0/m_p.m;
@@ -133,36 +135,37 @@ QUADROTOR_FF_LQR_01::StateVec QUADROTOR_FF_LQR_01::Dynamics(const StateVec& s, c
     const double cse2 = q_w*q_y;
     const double cse3 = q_x*q_z;
     const double cse4 = cse2 + cse3;
-    const double cse5 = q_w*q_x;
-    const double cse6 = q_y*q_z;
-    const double cse7 = cse5 - cse6;
-    const double cse8 = 2.0*pow(q_x, 2);
-    const double cse9 = 2.0*pow(q_y, 2);
-    const double cse10 = cse8 + cse9 - 1.0;
-    const double cse11 = -cse10*v_z + 2.0*cse4*v_x - 2.0*cse7*v_y;
-    const double cse12 = q_w*q_z;
-    const double cse13 = q_x*q_y;
-    const double cse14 = 2.0*cse12 - 2.0*cse13;
-    const double cse15 = cse5 + cse6;
-    const double cse16 = 2.0*pow(q_z, 2) - 1.0;
-    const double cse17 = cse16 + cse8;
-    const double cse18 = m_p.c*(-cse14*v_x + 2.0*cse15*v_z - cse17*v_y);
-    const double cse19 = cse16 + cse9;
-    const double cse20 = cse12 + cse13;
-    const double cse21 = cse2 - cse3;
-    const double cse22 = m_p.c*(-cse19*v_x + 2.0*cse20*v_y - 2.0*cse21*v_z);
-    const double cse23 = 2.0*cse7;
-    const double cse24 = 2.0*cse22;
-    const double cse25 = m_p.cz*cse11;
-    const double cse26 = w_y*w_z;
-    const double cse27 = 0.70710678118654752*m_p.L;
-    const double cse28 = T1*cse27;
-    const double cse29 = T2*cse27;
-    const double cse30 = m_p.Irot*pow(m_p.kT, -0.5)*(sqrt(T1) + sqrt(T2) - sqrt(T3) - sqrt(T4));
-    const double cse31 = -T3*cse27 + T4*cse27;
-    const double cse32 = w_x*w_z;
-    const double cse33 = w_x*w_y;
-    const double cse34 = m_p.kQ/m_p.kT;
+    const double cse5 = 2.0*cse4;
+    const double cse6 = q_w*q_x;
+    const double cse7 = q_y*q_z;
+    const double cse8 = cse6 - cse7;
+    const double cse9 = 2.0*pow(q_x, 2);
+    const double cse10 = 2.0*pow(q_y, 2) - 1.0;
+    const double cse11 = cse10 + cse9;
+    const double cse12 = -cse11*v_z + 2.0*cse4*v_x - 2.0*cse8*v_y;
+    const double cse13 = m_p.cz*cse12;
+    const double cse14 = q_w*q_z;
+    const double cse15 = q_x*q_y;
+    const double cse16 = 2.0*cse14 - 2.0*cse15;
+    const double cse17 = cse6 + cse7;
+    const double cse18 = 2.0*pow(q_z, 2);
+    const double cse19 = cse18 + cse9 - 1.0;
+    const double cse20 = m_p.c*(-cse16*v_x + 2.0*cse17*v_z - cse19*v_y);
+    const double cse21 = cse10 + cse18;
+    const double cse22 = cse14 + cse15;
+    const double cse23 = cse2 - cse3;
+    const double cse24 = -cse21*v_x + 2.0*cse22*v_y - 2.0*cse23*v_z;
+    const double cse25 = m_p.c*cse24;
+    const double cse26 = 2.0*cse8;
+    const double cse27 = w_y*w_z;
+    const double cse28 = 0.70710678118654752*m_p.L;
+    const double cse29 = T1*cse28;
+    const double cse30 = T2*cse28;
+    const double cse31 = m_p.Irot*pow(m_p.kT, -0.5)*(sqrt(T1) + sqrt(T2) - sqrt(T3) - sqrt(T4));
+    const double cse32 = -T3*cse28 + T4*cse28;
+    const double cse33 = w_x*w_z;
+    const double cse34 = w_x*w_y;
+    const double cse35 = m_p.kQ/m_p.kT;
     dxdt[0] = v_x;
     dxdt[1] = v_y;
     dxdt[2] = v_z;
@@ -170,16 +173,16 @@ QUADROTOR_FF_LQR_01::StateVec QUADROTOR_FF_LQR_01::Dynamics(const StateVec& s, c
     dxdt[4] = 0.5*q_w*w_x + 0.5*q_y*w_z - 0.5*q_z*w_y;
     dxdt[5] = 0.5*q_w*w_y - 0.5*q_x*w_z + 0.5*q_z*w_x;
     dxdt[6] = 0.5*q_w*w_z + 0.5*q_x*w_y - 0.5*q_y*w_x;
-    dxdt[7] = -cse0*(2.0*m_p.cz*cse11*cse4 - 2.0*cse1*cse4 - cse14*cse18 - cse19*cse22);
-    dxdt[8] = -cse0*(cse1*cse23 - cse17*cse18 + cse20*cse24 - cse23*cse25);
-    dxdt[9] = -cse0*(m_p.g*m_p.m + cse1*cse10 - cse10*cse25 + 2.0*cse15*cse18 - cse21*cse24);
-    dxdt[10] = -(-m_p.Iy*cse26 + m_p.Iz*cse26 + cse28 - cse29 + cse30*w_y + cse31)/m_p.Ix;
-    dxdt[11] = (-m_p.Ix*cse32 + m_p.Iz*cse32 - cse28 + cse29 + cse30*w_x + cse31)/m_p.Iy;
-    dxdt[12] = (m_p.Ix*cse33 - m_p.Iy*cse33 - T1*cse34 - T2*cse34 + T3*cse34 + T4*cse34)/m_p.Iz;
+    dxdt[7] = cse0*(cse1*cse5 - cse13*cse5 + cse16*cse20 + cse21*cse25 + user_fX);
+    dxdt[8] = cse0*(-cse1*cse26 + cse13*cse26 + cse19*cse20 - 2.0*cse22*cse25 + user_fY);
+    dxdt[9] = cse0*(2.0*m_p.c*cse23*cse24 + m_p.cz*cse11*cse12 - m_p.g*m_p.m - cse1*cse11 - 2.0*cse17*cse20 + user_fZ);
+    dxdt[10] = -(-m_p.Iy*cse27 + m_p.Iz*cse27 + cse29 - cse30 + cse31*w_y + cse32)/m_p.Ix;
+    dxdt[11] = (-m_p.Ix*cse33 + m_p.Iz*cse33 - cse29 + cse30 + cse31*w_x + cse32)/m_p.Iy;
+    dxdt[12] = (m_p.Ix*cse34 - m_p.Iy*cse34 - T1*cse35 - T2*cse35 + T3*cse35 + T4*cse35)/m_p.Iz;
     dxdt[13] = -r_x + refx;
     dxdt[14] = -r_y + refy;
     dxdt[15] = -r_z + refz;
-    dxdt[16] = ref_yaw - atan2(2*cse20, -cse19);
+    dxdt[16] = ref_yaw - atan2(2*cse22, -cse21);
     return dxdt;
 }
 
@@ -367,12 +370,22 @@ QUADROTOR_FF_LQR_01::InputVec QUADROTOR_FF_LQR_01::ExecuteControl(const StateVec
     const double fac = (s2>1e-9)? th/s2 : 0.5;
     const double dth_x=fac*ex, dth_y=fac*ey, dth_z=fac*ez;
 
+    // Yaw-frame compensation: the LQR gain was synthesized at yaw=0 (body-x = world-x).
+    // At heading psi the horizontal position/velocity coupling is rotated by psi, so we
+    // express the horizontal position, velocity and integral errors in the heading frame
+    // (rotate by Rz(-psi)) before applying K. Without this the x/y loop slowly diverges as
+    // psi grows (unstable beyond ~0.5 rad).
+    const double cpsi = std::cos(psi), spsi = std::sin(psi);
+    const double drx = s[0]-r.pos[0], dry = s[1]-r.pos[1];
+    const double dvx = s[7]-r.vel[0], dvy = s[8]-r.vel[1];
+    const double iix = s[13],          iiy = s[14];
+
     double err[16];
-    err[0]=s[0]-r.pos[0]; err[1]=s[1]-r.pos[1]; err[2]=s[2]-r.pos[2];
+    err[0]= cpsi*drx + spsi*dry;  err[1]=-spsi*drx + cpsi*dry;  err[2]=s[2]-r.pos[2];
     err[3]=dth_x; err[4]=dth_y; err[5]=dth_z;
-    err[6]=s[7]-r.vel[0]; err[7]=s[8]-r.vel[1]; err[8]=s[9]-r.vel[2];
+    err[6]= cpsi*dvx + spsi*dvy;  err[7]=-spsi*dvx + cpsi*dvy;  err[8]=s[9]-r.vel[2];
     err[9]=s[10]-wref_x; err[10]=s[11]-wref_y; err[11]=s[12]-wref_z;
-    err[12]=s[13]; err[13]=s[14]; err[14]=s[15]; err[15]=s[16];
+    err[12]= cpsi*iix + spsi*iiy; err[13]=-spsi*iix + cpsi*iiy; err[14]=s[15]; err[15]=s[16];
 
     const double u_F = -(K_e[0][0]*err[0]+K_e[0][1]*err[1]+K_e[0][2]*err[2]+K_e[0][3]*err[3]+K_e[0][4]*err[4]+K_e[0][5]*err[5]+K_e[0][6]*err[6]+K_e[0][7]*err[7]+K_e[0][8]*err[8]+K_e[0][9]*err[9]+K_e[0][10]*err[10]+K_e[0][11]*err[11]+K_e[0][12]*err[12]+K_e[0][13]*err[13]+K_e[0][14]*err[14]+K_e[0][15]*err[15]);
     const double u_tx = -(K_e[1][0]*err[0]+K_e[1][1]*err[1]+K_e[1][2]*err[2]+K_e[1][3]*err[3]+K_e[1][4]*err[4]+K_e[1][5]*err[5]+K_e[1][6]*err[6]+K_e[1][7]*err[7]+K_e[1][8]*err[8]+K_e[1][9]*err[9]+K_e[1][10]*err[10]+K_e[1][11]*err[11]+K_e[1][12]*err[12]+K_e[1][13]*err[13]+K_e[1][14]*err[14]+K_e[1][15]*err[15]);

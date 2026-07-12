@@ -231,6 +231,7 @@ bool Rocket::PerformIntegration(const core_stepParams_t& params)
     m_trackingErr[0] = ref.pos[0] - m_state[IDX_X]; // Position X
     m_trackingErr[1] = ref.pos[1] - m_state[IDX_Y]; // Position Y
     m_trackingErr[2] = ref.pos[2] - m_state[IDX_Z]; // Position Z
+    m_trackingErr[3] = ref.yaw - m_state[IDX_PSI]; // Yaw angle
 
     // User forces
     m_userForces[0] = params.user_fX;
@@ -300,6 +301,7 @@ bool Rocket::GetTrackingErrors(core_trackingErrors_t& tErrors)
     tErrors.x = m_trackingErr[0];
     tErrors.y = m_trackingErr[1];
     tErrors.z = m_trackingErr[2];
+    tErrors.yaw = m_trackingErr[3];
     return false;
 }
 

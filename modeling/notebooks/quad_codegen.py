@@ -234,11 +234,15 @@ class QuadCodegen(BaseCodegen):
     """Quaternion 6-DOF + flatness FF + LQR, InputVec = [T1..T4]."""
     def __init__(self, cfg=None):
         super().__init__(cfg or CodegenConfig())
-        self._ff = None; self._Minv = None
+        self._ff = None; self._Minv = None; self._uforce_syms = []
 
     def set_feedforward_flat(self, F_ff, R_ref, omega_ff, tau_ff, M_inv):
         self._ff = dict(F=F_ff, R=sp.Matrix(R_ref), om=sp.Matrix(omega_ff), tau=sp.Matrix(tau_ff))
         self._Minv = sp.Matrix(M_inv); return self
+
+    def set_user_force_symbols(self, syms):
+        """External perturbation forces [Fx, Fy, Fz] (from userF[0..2]), applied in Dynamics."""
+        self._uforce_syms = list(syms); return self
 
     def _check_ready(self):
         assert self._rhs is not None and self._K_e is not None and self._ff is not None
@@ -248,8 +252,12 @@ class QuadCodegen(BaseCodegen):
         L = [f"    const double {n} = s[{i}];" for i, n in enumerate(SN)]
         L += [f"    const double {n} = u[{i}];" for i, n in enumerate(IN)]
         L += ["    const double refx = ref.pos[0];", "    const double refy = ref.pos[1];",
-              "    const double refz = ref.pos[2];", "    const double ref_yaw = ref.yaw;",
-              "    (void)userF;", "", "    StateVec dxdt{};"]
+              "    const double refz = ref.pos[2];", "    const double ref_yaw = ref.yaw;"]
+        if self._uforce_syms:
+            L += [f"    const double {str(s)} = userF[{i}];" for i, s in enumerate(self._uforce_syms)]
+        else:
+            L += ["    (void)userF;"]
+        L += ["", "    StateVec dxdt{};"]
         L += self._emit_cse([self._rhs[i] for i in range(self.cfg.aug_dim)],
                             [f"dxdt[{i}]" for i in range(self.cfg.aug_dim)])
         L += ["    return dxdt;"]
@@ -285,12 +293,21 @@ class QuadCodegen(BaseCodegen):
               "    const double th = std::atan2(0.5*s2, cth);",
               "    const double fac = (s2>1e-9)? th/s2 : 0.5;",
               "    const double dth_x=fac*ex, dth_y=fac*ey, dth_z=fac*ez;", "",
+              "    // Yaw-frame compensation: the LQR gain was synthesized at yaw=0 (body-x = world-x).",
+              "    // At heading psi the horizontal position/velocity coupling is rotated by psi, so we",
+              "    // express the horizontal position, velocity and integral errors in the heading frame",
+              "    // (rotate by Rz(-psi)) before applying K. Without this the x/y loop slowly diverges as",
+              "    // psi grows (unstable beyond ~0.5 rad).",
+              "    const double cpsi = std::cos(psi), spsi = std::sin(psi);",
+              "    const double drx = s[0]-r.pos[0], dry = s[1]-r.pos[1];",
+              "    const double dvx = s[7]-r.vel[0], dvy = s[8]-r.vel[1];",
+              "    const double iix = s[13],          iiy = s[14];", "",
               "    double err[16];",
-              "    err[0]=s[0]-r.pos[0]; err[1]=s[1]-r.pos[1]; err[2]=s[2]-r.pos[2];",
+              "    err[0]= cpsi*drx + spsi*dry;  err[1]=-spsi*drx + cpsi*dry;  err[2]=s[2]-r.pos[2];",
               "    err[3]=dth_x; err[4]=dth_y; err[5]=dth_z;",
-              "    err[6]=s[7]-r.vel[0]; err[7]=s[8]-r.vel[1]; err[8]=s[9]-r.vel[2];",
+              "    err[6]= cpsi*dvx + spsi*dvy;  err[7]=-spsi*dvx + cpsi*dvy;  err[8]=s[9]-r.vel[2];",
               "    err[9]=s[10]-wref_x; err[10]=s[11]-wref_y; err[11]=s[12]-wref_z;",
-              "    err[12]=s[13]; err[13]=s[14]; err[14]=s[15]; err[15]=s[16];", ""]
+              "    err[12]= cpsi*iix + spsi*iiy; err[13]=-spsi*iix + cpsi*iiy; err[14]=s[15]; err[15]=s[16];", ""]
         for i, n in enumerate(["F","tx","ty","tz"]):
             L.append(f"    const double u_{n} = -({'+'.join(f'K_e[{i}][{j}]*err[{j}]' for j in range(16))});")
         L += ["    const double Fc  = F_ff  + u_F;",

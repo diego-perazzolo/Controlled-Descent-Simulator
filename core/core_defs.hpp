@@ -175,4 +175,5 @@ typedef struct
     core_coord_t x;
     core_coord_t y;
     core_coord_t z;
+    core_coord_t yaw;
 } core_trackingErrors_t;

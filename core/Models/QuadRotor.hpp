@@ -55,7 +55,7 @@ namespace CDS
         using StateVec    = std::array<double, 17>;
         using InputVec    = std::array<double, 4>;   // [T1, T2, T3, T4] rotor thrusts
         using RefVec      = std::array<double, 3>;    // position reference [x_ref, y_ref, z_ref]
-        using TrackingErr = std::array<double, 3>;    // tracking err w.r.t. [x_ref, y_ref, z_ref]
+        using TrackingErr = std::array<double, 4>;    // tracking err w.r.t. [x, y, z, yaw]
         using UserForces  = std::array<double, 3>;    // user input forces [Fx, Fy, Fz]
 
         private:

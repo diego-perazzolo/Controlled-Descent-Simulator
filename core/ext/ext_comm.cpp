@@ -107,6 +107,7 @@ static ext_stepRet _convertCoreToExt_stepRetParams(core_state_t state, core_trac
     extParam.err.xErr = tErr.x;
     extParam.err.yErr = tErr.y;
     extParam.err.zErr = tErr.z;
+    extParam.err.yawErr = tErr.yaw;
 
     return extParam;
 }

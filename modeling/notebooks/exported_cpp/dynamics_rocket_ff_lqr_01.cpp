@@ -196,13 +196,13 @@ ROCKET_FF_LQR_01::InputVec ROCKET_FF_LQR_01::ExecuteControl(const StateVec& s,
     s_ref[StateToIdx(StateName::Z)]        = r.pos[2];
     s_ref[StateToIdx(StateName::Alpha)]    = alpha_ff;
     s_ref[StateToIdx(StateName::Beta)]     = beta_ff;
-    s_ref[StateToIdx(StateName::Psi)]      = 0.0;
+    s_ref[StateToIdx(StateName::Psi)]      = r.yaw;
     s_ref[StateToIdx(StateName::XDot)]     = r.vel[0];
     s_ref[StateToIdx(StateName::YDot)]     = r.vel[1];
     s_ref[StateToIdx(StateName::ZDot)]     = r.vel[2];
     s_ref[StateToIdx(StateName::AlphaDot)] = alpha_ff_dot;
     s_ref[StateToIdx(StateName::BetaDot)]  = beta_ff_dot;
-    s_ref[StateToIdx(StateName::PsiDot)]   = 0.0;
+    s_ref[StateToIdx(StateName::PsiDot)]   = r.yawRate;
 
     // LQR correction on the tracking error: u_lqr = -K_e * (s - s_ref).
     InputVec u_lqr{};

@@ -39,6 +39,10 @@
 
         .controls { display: flex; gap: 8px; margin-left: auto; flex-wrap: wrap; }
 
+        #modelBox { display: flex; align-items: center; gap: 8px; }
+        #modelBox label { color: #555; font-size: 0.85em; text-transform: uppercase; letter-spacing: 0.08em; }
+        #modelBox select { width: auto; color: #0cf; border-color: #0cf; }
+
         /* ── Buttons / inputs ── */
         button {
             background: #1a1a1a;
@@ -224,6 +228,13 @@
 <header>
     <h1>CDS</h1>
     <div id="simTime">0.000 <span>s</span></div>
+    <div id="modelBox">
+        <label for="modelSelect">model</label>
+        <select id="modelSelect">
+            <option value="rocket">rocket</option>
+            <option value="quadrotor">quadrotor</option>
+        </select>
+    </div>
     <div class="controls">
         <div id="viewToggle">
             <button id="btnCharts" class="active">Charts</button>
@@ -292,6 +303,7 @@
             <div class="field"><span class="lbl">xErr</span>  <span class="val" id="xErr">—</span></div>
             <div class="field"><span class="lbl">yErr</span>  <span class="val" id="yErr">—</span></div>
             <div class="field"><span class="lbl">zErr</span>  <span class="val" id="zErr">—</span></div>
+            <div class="field"><span class="lbl">yawErr</span><span class="val" id="yawErr">—</span></div>
             <div class="field"><span class="lbl">|err|</span> <span class="val" id="err_mag">—</span></div>
         </div>
         <div class="panel">
@@ -314,6 +326,8 @@
 
 <!-- ════ Params view ════ -->
 <div id="view-params">
+
+    <div id="panel-rocket">
     <div class="params-grid">
 
         <div class="panel">
@@ -383,14 +397,98 @@
                 <span class="unit">Nm</span>
             </div>
 
-            <h2 style="margin-top:16px">Simulation</h2>
+        </div>
+
+    </div>
+    </div><!-- /#panel-rocket -->
+
+    <!-- ── Quadrotor params (hidden unless model = quadrotor) ── -->
+    <div id="panel-quad" style="display:none">
+    <div class="params-grid">
+
+        <div class="panel">
+            <h2>Quadrotor</h2>
+            <div class="param-row">
+                <label>mass_Kg</label>
+                <input type="number" id="q_mass" step="0.1">
+                <span class="unit">kg</span>
+            </div>
+            <div class="param-row">
+                <label>inertiaX_Kgm2</label>
+                <input type="number" id="q_iX" step="0.001">
+                <span class="unit">kg·m²</span>
+            </div>
+            <div class="param-row">
+                <label>inertiaY_Kgm2</label>
+                <input type="number" id="q_iY" step="0.001">
+                <span class="unit">kg·m²</span>
+            </div>
+            <div class="param-row">
+                <label>inertiaZ_Kgm2</label>
+                <input type="number" id="q_iZ" step="0.001">
+                <span class="unit">kg·m²</span>
+            </div>
+            <div class="param-row">
+                <label>c (drag XY)</label>
+                <input type="number" id="q_c" step="0.1">
+                <span class="unit">—</span>
+            </div>
+            <div class="param-row">
+                <label>cz (drag Z)</label>
+                <input type="number" id="q_cz" step="0.001">
+                <span class="unit">—</span>
+            </div>
+        </div>
+
+        <div class="panel">
+            <h2>Motors</h2>
+            <div class="param-row">
+                <label>thrust coeff</label>
+                <input type="number" id="q_kThrust" step="1e-6">
+                <span class="unit">—</span>
+            </div>
+            <div class="param-row">
+                <label>torque coeff</label>
+                <input type="number" id="q_kTorque" step="1e-8">
+                <span class="unit">—</span>
+            </div>
+            <div class="param-row">
+                <label>motor↔CoM dist</label>
+                <input type="number" id="q_dist" step="0.01">
+                <span class="unit">m</span>
+            </div>
+            <div class="param-row">
+                <label>motor inertia</label>
+                <input type="number" id="q_motI" step="1e-6">
+                <span class="unit">kg·m²</span>
+            </div>
+
+            <h2 style="margin-top:16px">Actuators</h2>
+            <div class="param-row">
+                <label>motor_max_thrust</label>
+                <input type="number" id="q_motMax" step="0.5">
+                <span class="unit">N</span>
+            </div>
+            <div class="param-row">
+                <label>motor_min_thrust</label>
+                <input type="number" id="q_motMin" step="0.5">
+                <span class="unit">N</span>
+            </div>
+        </div>
+
+    </div>
+    </div><!-- /#panel-quad -->
+
+    <!-- ── Shared simulation params ── -->
+    <div class="params-grid">
+        <div class="panel">
+            <h2>Simulation</h2>
             <div class="param-row">
                 <label>timestep</label>
                 <input type="number" id="p_dt" step="0.0001" min="0.0001" max="0.5" value="0.01">
                 <span class="unit">s</span>
             </div>
         </div>
-
     </div>
 
     <button id="btnApply">Apply &amp; Reset</button>
@@ -463,6 +561,18 @@
                     <input type="number" id="traj_aF_y" step="0.1" placeholder="y">
                     <input type="number" id="traj_aF_z" step="0.1" placeholder="z">
                 </div>
+                <div class="traj-axis-row">
+                    <label>initial yaw</label>
+                    <input type="number" id="traj_yaw0"     step="0.01" placeholder="yaw (rad)">
+                    <input type="number" id="traj_yawRate0" step="0.01" placeholder="rate (rad/s)">
+                    <span></span>
+                </div>
+                <div class="traj-axis-row">
+                    <label>final yaw</label>
+                    <input type="number" id="traj_yawF"     step="0.01" placeholder="yaw (rad)">
+                    <input type="number" id="traj_yawRateF" step="0.01" placeholder="rate (rad/s)">
+                    <input type="number" id="traj_yawAccF"  step="0.01" placeholder="acc (rad/s²)">
+                </div>
             </div>
 
             <!-- Point-only fields -->
@@ -472,6 +582,12 @@
                     <input type="number" id="traj_pt_x" step="0.1" placeholder="x">
                     <input type="number" id="traj_pt_y" step="0.1" placeholder="y">
                     <input type="number" id="traj_pt_z" step="0.1" placeholder="z">
+                </div>
+                <div class="traj-axis-row">
+                    <label>finalYaw</label>
+                    <input type="number" id="traj_pt_yaw" step="0.01" placeholder="yaw (rad)">
+                    <span></span>
+                    <span></span>
                 </div>
             </div>
 

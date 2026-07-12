@@ -9,11 +9,20 @@ const DEFAULT_TIMESTEP_S = 0.01;
 const TIMESTEP_MIN_S     = 0.0001;
 const TIMESTEP_MAX_S     = 0.5;
 
+// Available dynamic models. The backend exposes a separate init entry point
+// per model; the trajectory / step API is shared between them.
+const MODEL_ROCKET    = 'rocket';
+const MODEL_QUADROTOR = 'quadrotor';
+
 // Hardcoded fallback for the very first Poly4 when the trajectory list is
 // empty and the user has no rocket state to seed from. Matches the reference
 // descent in the design notebook (section 6).
 const SEED_INITIAL_POS = { x: -50, y:  50, z: 150 };
 const SEED_INITIAL_VEL = { x:   0, y:   5, z: -50 };
+// Yaw seeds for the initial Poly4 (rad / rad·s⁻¹). Only meaningful once a
+// model that tracks yaw is selected, but always sent to the backend.
+const SEED_INITIAL_YAW      = 0;
+const SEED_INITIAL_YAW_RATE = 0;
 
 // Default trajectory loaded at boot so a user can press Start immediately
 // without having to compose a sequence first. Loaded once, on the first boot;
@@ -23,17 +32,23 @@ const DEFAULT_TRAJECTORY = [
     {
         kind: 'poly4',
         params: {
-            initialPos: { x: -50, y: 50, z:  80 },
-            initialVel: { x:   0, y:  5, z: -50 },
-            finalPos:   { x:   0, y:  0, z:   0 },
-            finalVel:   { x:   0, y:  0, z:   0 },
-            finalAcc:   { x:   0, y:  0, z:   0 },
+            initialPos:     { x: -50, y: 50, z:  80 },
+            initialYaw:     0,
+            initialVel:     { x:   0, y:  5, z: -50 },
+            initialYawRate: 0,
+            finalPos:       { x:   0, y:  0, z:   0 },
+            finalYaw:       0,
+            finalVel:       { x:   0, y:  0, z:   0 },
+            finalYawRate:   0,
+            finalAcc:       { x:   0, y:  0, z:   0 },
+            finalYawAcc:    0,
             time_s: 20,
         },
     },
 ];
 
-const INIT_PARAMS = {
+// ext_initRocketParams: { rocketPar, rocketActuatorLimits }
+const ROCKET_INIT_PARAMS = {
     rocketPar: {
         mass_Kg:        10.0,
         inertiaX_Kgm2: 10.0 / 3,
@@ -42,7 +57,7 @@ const INIT_PARAMS = {
         c:              1,
         cz:             0.02,
     },
-    actuatorLimits: {
+    rocketActuatorLimits: {
         fZ_max: 500.0,
         fZ_min: 0.0,
         Tx_max: 10.0,
@@ -50,6 +65,34 @@ const INIT_PARAMS = {
         Ty_max: 10.0,
         Ty_min: -10.0,
     },
+};
+
+// ext_initQuadRotorParams: { quadRotorPar, quadRotorActuatorLimits }
+// Defaults mirror the backend PhysicsParams reference airframe.
+// Note: gravity (g) has no field in the binding and is owned by the backend.
+const QUADROTOR_INIT_PARAMS = {
+    quadRotorPar: {
+        mass_Kg:        2.4,
+        inertiaX_Kgm2: 0.025,
+        inertiaY_Kgm2: 0.025,
+        inertiaZ_Kgm2: 0.045,
+        c:              0.2,
+        cz:             0.3,
+        motorThrustCoefficient: 1.0e-5,
+        motorTorqueCoefficient: 1.6e-7,
+        distanceBtwMotorAndCoM: 0.275,
+        motorMomentOfInertia:   3.0e-5,
+    },
+    quadRotorActuatorLimits: {
+        motor_max_thrust: 36.0,
+        motor_min_thrust: 0.0,
+    },
+};
+
+// Map model id -> its default init params, so boot / model-switch can pick.
+const DEFAULT_INIT_PARAMS = {
+    [MODEL_ROCKET]:    ROCKET_INIT_PARAMS,
+    [MODEL_QUADROTOR]: QUADROTOR_INIT_PARAMS,
 };
 
 // =============================================================================
@@ -65,6 +108,7 @@ let lastFpsTs  = performance.now();
 let fpsCounter = 0;
 let fpsDisplay = 0;
 let timestep_s = DEFAULT_TIMESTEP_S;
+let currentModel = MODEL_ROCKET;   // 'rocket' | 'quadrotor'
 
 // =============================================================================
 // Renderers registry — add a renderer here to hook into the sim loop
@@ -83,16 +127,25 @@ const ui = {
     x_dot:      $('x_dot'),  y_dot:  $('y_dot'),  z_dot:  $('z_dot'),  v_mag: $('v_mag'),
     roll:       $('roll'),   pitch:  $('pitch'),  yaw:    $('yaw'),
     roll_dot:   $('roll_dot'), pitch_dot: $('pitch_dot'), yaw_dot: $('yaw_dot'),
-    xErr:       $('xErr'),   yErr:   $('yErr'),   zErr:   $('zErr'),   err_mag: $('err_mag'),
+    xErr:       $('xErr'),   yErr:   $('yErr'),   zErr:   $('zErr'),   yawErr: $('yawErr'), err_mag: $('err_mag'),
     stepCount:  $('stepCount'), dt: $('dt'), fps: $('fps'),
     btnStart:   $('btnStart'), btnStop: $('btnStop'), btnReset: $('btnReset'),
     btnCharts:  $('btnCharts'), btn3d: $('btn3d'), btnParams: $('btnParams'),
     viewCharts: $('view-charts'), view3d: $('view-3d'), viewParams: $('view-params'),
     status:     $('statusBar'), error: $('errorMsg'),
     btnApply:   $('btnApply'),
+    modelSelect: $('modelSelect'),
+    // Rocket params panel
+    panelRocket: $('panel-rocket'),
     p_mass: $('p_mass'), p_iX: $('p_iX'), p_iY: $('p_iY'), p_iZ: $('p_iZ'),
     p_c:    $('p_c'),    p_cz: $('p_cz'),
     p_fZmax: $('p_fZmax'), p_fZmin: $('p_fZmin'), p_tXmax: $('p_tXmax'), p_tXmin: $('p_tXmin'), p_tYmax: $('p_tYmax'), p_tYmin: $('p_tYmin'),
+    // Quadrotor params panel
+    panelQuad: $('panel-quad'),
+    q_mass: $('q_mass'), q_iX: $('q_iX'), q_iY: $('q_iY'), q_iZ: $('q_iZ'),
+    q_c:    $('q_c'),    q_cz: $('q_cz'),
+    q_kThrust: $('q_kThrust'), q_kTorque: $('q_kTorque'), q_dist: $('q_dist'), q_motI: $('q_motI'),
+    q_motMax: $('q_motMax'), q_motMin: $('q_motMin'),
     p_dt:    $('p_dt'),
 };
 
@@ -127,24 +180,47 @@ function setupForceButtons() {
 // =============================================================================
 // Params form helpers
 // =============================================================================
-function fillParamsForm(p) {
+function fillRocketForm(p) {
     ui.p_mass.value  = p.rocketPar.mass_Kg;
     ui.p_iX.value    = p.rocketPar.inertiaX_Kgm2;
     ui.p_iY.value    = p.rocketPar.inertiaY_Kgm2;
     ui.p_iZ.value    = p.rocketPar.inertiaZ_Kgm2;
     ui.p_c.value     = p.rocketPar.c;
     ui.p_cz.value    = p.rocketPar.cz;
-    ui.p_fZmax.value = p.actuatorLimits.fZ_max;
-    ui.p_fZmin.value = p.actuatorLimits.fZ_min;
-    ui.p_tXmax.value = p.actuatorLimits.Tx_max;
-    ui.p_tXmin.value = p.actuatorLimits.Tx_min;
-    ui.p_tYmax.value = p.actuatorLimits.Ty_max;
-    ui.p_tYmin.value = p.actuatorLimits.Ty_min;
-    ui.p_dt.value    = timestep_s;
+    ui.p_fZmax.value = p.rocketActuatorLimits.fZ_max;
+    ui.p_fZmin.value = p.rocketActuatorLimits.fZ_min;
+    ui.p_tXmax.value = p.rocketActuatorLimits.Tx_max;
+    ui.p_tXmin.value = p.rocketActuatorLimits.Tx_min;
+    ui.p_tYmax.value = p.rocketActuatorLimits.Ty_max;
+    ui.p_tYmin.value = p.rocketActuatorLimits.Ty_min;
 }
 
-function readParamsForm() {
-    const n = id => parseFloat($(id).value) || 0;
+function fillQuadForm(p) {
+    ui.q_mass.value    = p.quadRotorPar.mass_Kg;
+    ui.q_iX.value      = p.quadRotorPar.inertiaX_Kgm2;
+    ui.q_iY.value      = p.quadRotorPar.inertiaY_Kgm2;
+    ui.q_iZ.value      = p.quadRotorPar.inertiaZ_Kgm2;
+    ui.q_c.value       = p.quadRotorPar.c;
+    ui.q_cz.value      = p.quadRotorPar.cz;
+    ui.q_kThrust.value = p.quadRotorPar.motorThrustCoefficient;
+    ui.q_kTorque.value = p.quadRotorPar.motorTorqueCoefficient;
+    ui.q_dist.value    = p.quadRotorPar.distanceBtwMotorAndCoM;
+    ui.q_motI.value    = p.quadRotorPar.motorMomentOfInertia;
+    ui.q_motMax.value  = p.quadRotorActuatorLimits.motor_max_thrust;
+    ui.q_motMin.value  = p.quadRotorActuatorLimits.motor_min_thrust;
+}
+
+// Populate the whole params view for a given model's default params, and set
+// the shared timestep field.
+function fillParamsForm(p) {
+    if (p.quadRotorPar) fillQuadForm(p);
+    else                fillRocketForm(p);
+    ui.p_dt.value = timestep_s;
+}
+
+const n = id => parseFloat($(id).value) || 0;
+
+function readRocketForm() {
     return {
         rocketPar: {
             mass_Kg:        n('p_mass'),
@@ -154,15 +230,42 @@ function readParamsForm() {
             c:              n('p_c'),
             cz:             n('p_cz'),
         },
-        actuatorLimits: { 
-            fZ_max: n('p_fZmax'), 
-            fZ_min: n('p_fZmin'), 
-            Tx_max: n('p_tXmax'), 
-            Tx_min: n('p_tXmin'), 
-            Ty_max: n('p_tYmax'), 
-            Ty_min: n('p_tYmin'), 
+        rocketActuatorLimits: {
+            fZ_max: n('p_fZmax'),
+            fZ_min: n('p_fZmin'),
+            Tx_max: n('p_tXmax'),
+            Tx_min: n('p_tXmin'),
+            Ty_max: n('p_tYmax'),
+            Ty_min: n('p_tYmin'),
         },
     };
+}
+
+function readQuadForm() {
+    return {
+        quadRotorPar: {
+            mass_Kg:        n('q_mass'),
+            inertiaX_Kgm2: n('q_iX'),
+            inertiaY_Kgm2: n('q_iY'),
+            inertiaZ_Kgm2: n('q_iZ'),
+            c:              n('q_c'),
+            cz:             n('q_cz'),
+            motorThrustCoefficient: n('q_kThrust'),
+            motorTorqueCoefficient: n('q_kTorque'),
+            distanceBtwMotorAndCoM: n('q_dist'),
+            motorMomentOfInertia:   n('q_motI'),
+        },
+        quadRotorActuatorLimits: {
+            motor_max_thrust: n('q_motMax'),
+            motor_min_thrust: n('q_motMin'),
+        },
+    };
+}
+
+// Read the params for whatever model is currently selected, in the shape its
+// init entry point expects.
+function readParamsForm() {
+    return currentModel === MODEL_QUADROTOR ? readQuadForm() : readRocketForm();
 }
 
 function readTimestep() {
@@ -180,6 +283,18 @@ const fmtI = v => Math.round(v).toString();
 function setStatus(msg) { ui.status.textContent = msg; }
 function setError(msg)  { ui.error.textContent  = msg; }
 
+// Initialise the backend core for the currently-selected model. `params` must
+// already be in the shape expected by that model's init entry point:
+//   rocket    -> ext_initRocketParams    { rocketPar, rocketActuatorLimits }
+//   quadrotor -> ext_initQuadRotorParams { quadRotorPar, quadRotorActuatorLimits }
+// Returns the backend error code (truthy = failure), matching the old ext_init.
+function initBackend(params) {
+    if (currentModel === MODEL_QUADROTOR) {
+        return sim.ext_quadRotorInit(params);
+    }
+    return sim.ext_rocketInit(params);
+}
+
 // =============================================================================
 // 3D renderer
 // =============================================================================
@@ -190,7 +305,7 @@ function make3DRenderer() {
     const trajectory = [];
 
     let scene, camera, renderer, controls;
-    let rocketGroup, trailLine, trajectoryLine;
+    let rocketGroup, trailLine, trajectoryLine;   // rocketGroup = active vehicle mesh
     let initialized = false;
     let animating   = false;
     let visible     = false;
@@ -228,6 +343,85 @@ function make3DRenderer() {
         }
 
         return group;
+    }
+
+    function buildQuadrotor() {
+        const group = new THREE.Group();
+
+        const armColor   = 0x555555;
+        const motorColor = 0x222222;
+        const hubColor   = 0xdddddd;
+
+        const ARM_LEN   = 3.2;   // centre -> motor, scene units
+        const ARM_THICK = 0.18;
+        const MOTOR_R   = 0.45;
+        const PROP_R    = 1.5;
+
+        // Central hub
+        const hub = new THREE.Mesh(
+            new THREE.CylinderGeometry(0.9, 0.9, 0.5, 16),
+            new THREE.MeshLambertMaterial({ color: hubColor })
+        );
+        group.add(hub);
+
+        // Small canopy so orientation is readable
+        const canopy = new THREE.Mesh(
+            new THREE.SphereGeometry(0.55, 16, 12, 0, Math.PI * 2, 0, Math.PI / 2),
+            new THREE.MeshLambertMaterial({ color: 0xaaaaaa })
+        );
+        canopy.position.y = 0.25;
+        group.add(canopy);
+
+        // X-configuration: motors at 45°, so +X/+Z quadrant is "front-right".
+        // Front rotors get a distinct colour so heading is visible in flight.
+        const diagonals = [
+            { ax:  1, az:  1, front: true  },
+            { ax: -1, az:  1, front: true  },
+            { ax:  1, az: -1, front: false },
+            { ax: -1, az: -1, front: false },
+        ];
+
+        const arm = ARM_LEN / Math.SQRT2;   // per-axis offset for a 45° arm
+        for (const d of diagonals) {
+            const mx = d.ax * arm;
+            const mz = d.az * arm;
+
+            // Arm (box) from hub to motor
+            const armMesh = new THREE.Mesh(
+                new THREE.BoxGeometry(ARM_THICK, ARM_THICK, ARM_LEN),
+                new THREE.MeshLambertMaterial({ color: armColor })
+            );
+            armMesh.position.set(mx / 2, 0, mz / 2);
+            armMesh.lookAt(new THREE.Vector3(mx, 0, mz));
+            group.add(armMesh);
+
+            // Motor pod
+            const motor = new THREE.Mesh(
+                new THREE.CylinderGeometry(MOTOR_R, MOTOR_R, 0.5, 14),
+                new THREE.MeshLambertMaterial({ color: motorColor })
+            );
+            motor.position.set(mx, 0.15, mz);
+            group.add(motor);
+
+            // Propeller disc
+            const prop = new THREE.Mesh(
+                new THREE.CylinderGeometry(PROP_R, PROP_R, 0.04, 20),
+                new THREE.MeshLambertMaterial({
+                    color: d.front ? 0xff3333 : 0x33aaff,
+                    transparent: true,
+                    opacity: 0.55,
+                })
+            );
+            prop.position.set(mx, 0.45, mz);
+            group.add(prop);
+        }
+
+        return group;
+    }
+
+    // Build the mesh for whichever model is currently selected.
+    function buildVehicle() {
+        return currentModel === MODEL_QUADROTOR ? buildQuadrotor() : buildRocket();
     }
 
     function init() {
@@ -268,8 +462,8 @@ function make3DRenderer() {
         // Ground grid
         scene.add(new THREE.GridHelper(600, 60, 0x2a2a2a, 0x1a1a1a));
 
-        // Rocket
-        rocketGroup = buildRocket();
+        // Vehicle (rocket or quadrotor, per current model)
+        rocketGroup = buildVehicle();
         scene.add(rocketGroup);
 
         // Trail line
@@ -393,6 +587,17 @@ function make3DRenderer() {
         invalidateTrajectory() {
             clearTrajectoryPreview();
         },
+        // Swap the vehicle mesh to match the current model. Safe to call before
+        // init (no-op until the scene exists); the correct mesh is then built
+        // lazily on first show().
+        rebuildVehicle() {
+            if (!initialized || !scene) return;
+            if (rocketGroup) scene.remove(rocketGroup);
+            rocketGroup = buildVehicle();
+            rocketGroup.position.set(0, 0, 0);
+            rocketGroup.rotation.set(0, 0, 0);
+            scene.add(rocketGroup);
+        },
         show() {
             visible = true;
 
@@ -496,11 +701,11 @@ function makeUplotRenderer() {
 //
 // Item shape on the JS side:
 //   { kind: 'poly4',
-//     params: { initialPos:{x,y,z}, initialVel:{x,y,z},
-//               finalPos:{x,y,z},   finalVel:{x,y,z}, finalAcc:{x,y,z},
-//               time_s } }
+//     params: { initialPos:{x,y,z}, initialYaw, initialVel:{x,y,z}, initialYawRate,
+//               finalPos:{x,y,z},   finalYaw,   finalVel:{x,y,z},   finalYawRate,
+//               finalAcc:{x,y,z},   finalYawAcc, time_s } }
 //   { kind: 'point',
-//     params: { finalPos:{x,y,z}, time_s } }
+//     params: { finalPos:{x,y,z}, finalYaw, time_s } }
 //
 const trajectoryBuilder = (() => {
     const items = [];
@@ -523,9 +728,16 @@ const trajectoryBuilder = (() => {
         pF: ['traj_pF_x', 'traj_pF_y', 'traj_pF_z'].map($),
         vF: ['traj_vF_x', 'traj_vF_y', 'traj_vF_z'].map($),
         aF: ['traj_aF_x', 'traj_aF_y', 'traj_aF_z'].map($),
+        // Poly4 yaw scalars
+        yaw0:     $('traj_yaw0'),
+        yawRate0: $('traj_yawRate0'),
+        yawF:     $('traj_yawF'),
+        yawRateF: $('traj_yawRateF'),
+        yawAccF:  $('traj_yawAccF'),
         // Point inputs
         pointBox: $('traj_point_fields'),
         pt: ['traj_pt_x', 'traj_pt_y', 'traj_pt_z'].map($),
+        ptYaw: $('traj_pt_yaw'),
     };
 
     // ---- Helpers ----
@@ -535,24 +747,34 @@ const trajectoryBuilder = (() => {
     }
     function readVec3(els)    { return { x: num(els[0]), y: num(els[1]), z: num(els[2]) }; }
     function setVec3(els, v)  { els[0].value = v.x; els[1].value = v.y; els[2].value = v.z; }
+    function setScalar(el, v) { if (el) el.value = v; }
     function emitChange()     { onChangeListeners.forEach(fn => fn()); }
     function getTotalDuration() {
         return items.reduce((acc, it) => acc + it.params.time_s, 0);
     }
 
     function endStateOfLastItem() {
-        // What the rocket position/velocity will be at the end of the last
-        // item in the sequence. Used to seed initialPos/initialVel of the
-        // next Poly4 so successive segments line up by default.
+        // What the rocket position/velocity/yaw will be at the end of the last
+        // item in the sequence. Used to seed initialPos/initialVel/initialYaw
+        // of the next Poly4 so successive segments line up by default.
         if (items.length === 0) {
-            return { pos: SEED_INITIAL_POS, vel: SEED_INITIAL_VEL };
+            return {
+                pos: SEED_INITIAL_POS, vel: SEED_INITIAL_VEL,
+                yaw: SEED_INITIAL_YAW, yawRate: SEED_INITIAL_YAW_RATE,
+            };
         }
         const last = items[items.length - 1];
         if (last.kind === 'poly4') {
-            return { pos: last.params.finalPos, vel: last.params.finalVel };
+            return {
+                pos: last.params.finalPos, vel: last.params.finalVel,
+                yaw: last.params.finalYaw ?? 0, yawRate: last.params.finalYawRate ?? 0,
+            };
         }
-        // 'point' has no finalVel; assume zero velocity at the waypoint.
-        return { pos: last.params.finalPos, vel: { x: 0, y: 0, z: 0 } };
+        // 'point' has no finalVel/finalYawRate; assume zero at the waypoint.
+        return {
+            pos: last.params.finalPos, vel: { x: 0, y: 0, z: 0 },
+            yaw: last.params.finalYaw ?? 0, yawRate: 0,
+        };
     }
 
     // ---- Rendering ----
@@ -593,6 +815,8 @@ const trajectoryBuilder = (() => {
         const end = endStateOfLastItem();
         setVec3(dom.p0, end.pos);
         setVec3(dom.v0, end.vel);
+        setScalar(dom.yaw0,     end.yaw);
+        setScalar(dom.yawRate0, end.yawRate);
     }
 
     function setTypeVisibility() {
@@ -615,11 +839,16 @@ const trajectoryBuilder = (() => {
             item = {
                 kind: 'poly4',
                 params: {
-                    initialPos: readVec3(dom.p0),
-                    initialVel: readVec3(dom.v0),
-                    finalPos:   readVec3(dom.pF),
-                    finalVel:   readVec3(dom.vF),
-                    finalAcc:   readVec3(dom.aF),
+                    initialPos:     readVec3(dom.p0),
+                    initialYaw:     num(dom.yaw0),
+                    initialVel:     readVec3(dom.v0),
+                    initialYawRate: num(dom.yawRate0),
+                    finalPos:       readVec3(dom.pF),
+                    finalYaw:       num(dom.yawF),
+                    finalVel:       readVec3(dom.vF),
+                    finalYawRate:   num(dom.yawRateF),
+                    finalAcc:       readVec3(dom.aF),
+                    finalYawAcc:    num(dom.yawAccF),
                     time_s,
                 },
             };
@@ -629,6 +858,7 @@ const trajectoryBuilder = (() => {
                 kind: 'point',
                 params: {
                     finalPos: readVec3(dom.pt),
+                    finalYaw: num(dom.ptYaw),
                     time_s,
                 },
             };
@@ -770,6 +1000,7 @@ function updatePanels(state, err, t, step) {
     ui.xErr.textContent = fmt(err.xErr);
     ui.yErr.textContent = fmt(err.yErr);
     ui.zErr.textContent = fmt(err.zErr);
+    if (ui.yawErr) ui.yawErr.textContent = fmt(err.yawErr ?? 0);
     const eMag = Math.sqrt(err.xErr**2 + err.yErr**2 + err.zErr**2);
     ui.err_mag.textContent = fmt(eMag);
 
@@ -864,10 +1095,10 @@ function reset() {
     setError('');
     ui.btnReset.disabled = true;
 
-    // Re-init core. ext_init wipes the backend trajectory, so the JS-side
+    // Re-init core. Init wipes the backend trajectory, so the JS-side
     // sequence has to be replayed for the next run to be valid.
-    const err = sim.ext_init(readParamsForm());
-    if (err) { setError('ext_init failed on reset'); return; }
+    const err = initBackend(readParamsForm());
+    if (err) { setError('init failed on reset'); return; }
     trajectoryBuilder.replayToBackend();
 
     // 3D preview must be recomputed from the freshly-replayed backend state.
@@ -896,15 +1127,55 @@ ui.btnCharts.addEventListener('click', () => showView('charts'));
 ui.btn3d.addEventListener('click',     () => showView('3d'));
 ui.btnParams.addEventListener('click', () => showView('params'));
 
+// =============================================================================
+// Model selection (rocket / quadrotor)
+// =============================================================================
+function applyModelPanelVisibility() {
+    const isQuad = currentModel === MODEL_QUADROTOR;
+    if (ui.panelRocket) ui.panelRocket.style.display = isQuad ? 'none' : '';
+    if (ui.panelQuad)   ui.panelQuad.style.display   = isQuad ? '' : 'none';
+}
+
+// Switch the active dynamic model. Stops the sim, re-inits the core with the
+// new model's default params, and replays the (shared) trajectory so the run
+// stays valid. The trajectory sequence itself is model-agnostic and preserved.
+function switchModel(model) {
+    if (model !== MODEL_ROCKET && model !== MODEL_QUADROTOR) return;
+    stop();
+    currentModel = model;
+
+    // Load that model's default params into its form and show only its panel.
+    fillParamsForm(DEFAULT_INIT_PARAMS[model]);
+    applyModelPanelVisibility();
+
+    const err = initBackend(readParamsForm());
+    if (err) { setError(`init failed switching to ${model}`); return; }
+
+    // Init wipes the backend trajectory; replay the JS-side sequence.
+    trajectoryBuilder.replayToBackend();
+    renderer3d?.rebuildVehicle?.();
+    renderer3d?.invalidateTrajectory?.();
+
+    renderers.forEach(r => r.reset());
+    simTime = 0; stepCount = 0;
+    ui.simTime.innerHTML = `0.000 <span>s</span>`;
+    setStatus(`Ready — model: ${model}.`);
+    setError('');
+    ui.btnReset.disabled = true;
+    refreshStartEnabled();
+}
+
+ui.modelSelect.addEventListener('change', () => switchModel(ui.modelSelect.value));
+
 // Apply rocket / actuator params + timestep (also re-inits the core).
 ui.btnApply.addEventListener('click', () => {
     const params = readParamsForm();
     timestep_s = readTimestep();
     stop();
-    const err = sim.ext_init(params);
-    if (err) { setError('ext_init failed'); return; }
+    const err = initBackend(params);
+    if (err) { setError('init failed'); return; }
 
-    // ext_init wipes the backend trajectory; replay the JS-side sequence.
+    // Init wipes the backend trajectory; replay the JS-side sequence.
     trajectoryBuilder.replayToBackend();
     renderer3d?.invalidateTrajectory?.();
 
@@ -937,13 +1208,17 @@ trajectoryBuilder.onChange(() => {
         renderers.push(renderer3d);
         ui.btn3d.disabled = false;
 
-        const err = sim.ext_init(INIT_PARAMS);
+        // Reflect the default model in the selector and show its params panel.
+        currentModel = ui.modelSelect ? ui.modelSelect.value : MODEL_ROCKET;
+        applyModelPanelVisibility();
+
+        const err = initBackend(DEFAULT_INIT_PARAMS[currentModel]);
         if (err) {
-            setError('ext_init failed');
+            setError('init failed');
             return;
         }
 
-        fillParamsForm(INIT_PARAMS);
+        fillParamsForm(DEFAULT_INIT_PARAMS[currentModel]);
         // Inject a default sequence so a fresh user can press Start straight
         // away. Done after ext_init so the backend trajectory is empty.
         // loadPreset triggers refreshAutofill internally, so initialPos /
