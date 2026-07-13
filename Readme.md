@@ -10,8 +10,7 @@ Two vehicle models are available, selectable at runtime:
 
 ![Rocket demo](docs/demo.gif)
 
-<!-- TODO: add quadrotor demo GIF -->
-<!-- ![QuadRotor demo](docs/demo-quadrotor.gif) -->
+![QuadRotor demo](docs/demo-quadrotor.gif)
 
 ---
 
