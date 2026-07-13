@@ -358,24 +358,26 @@ function make3DRenderer() {
         const motorColor = 0x222222;
         const hubColor   = 0xdddddd;
 
-        const ARM_LEN   = 3.2;   // centre -> motor, scene units
-        const ARM_THICK = 0.18;
-        const MOTOR_R   = 0.45;
-        const PROP_R    = 1.5;
+        // Real-size drone (scene units = meters): ~520-class frame,
+        // centre->motor arm 0.26 m as on the physical vehicle.
+        const ARM_LEN   = 0.26;   // centre -> motor, scene units (m)
+        const ARM_THICK = 0.02;
+        const MOTOR_R   = 0.014;
+        const PROP_R    = 0.115;  // ~9" propeller
 
         // Central hub
         const hub = new THREE.Mesh(
-            new THREE.CylinderGeometry(0.9, 0.9, 0.5, 16),
+            new THREE.CylinderGeometry(0.06, 0.06, 0.035, 16),
             new THREE.MeshLambertMaterial({ color: hubColor })
         );
         group.add(hub);
 
         // Small canopy so orientation is readable
         const canopy = new THREE.Mesh(
-            new THREE.SphereGeometry(0.55, 16, 12, 0, Math.PI * 2, 0, Math.PI / 2),
+            new THREE.SphereGeometry(0.08, 16, 12, 0, Math.PI * 2, 0, Math.PI / 2),
             new THREE.MeshLambertMaterial({ color: 0xaaaaaa })
         );
-        canopy.position.y = 0.25;
+        canopy.position.y = 0.03;
         group.add(canopy);
 
         // X-configuration: motors at 45°, so +X/+Z quadrant is "front-right".
@@ -403,22 +405,22 @@ function make3DRenderer() {
 
             // Motor pod
             const motor = new THREE.Mesh(
-                new THREE.CylinderGeometry(MOTOR_R, MOTOR_R, 0.5, 14),
+                new THREE.CylinderGeometry(MOTOR_R, MOTOR_R, 0.03, 14),
                 new THREE.MeshLambertMaterial({ color: motorColor })
             );
-            motor.position.set(mx, 0.15, mz);
+            motor.position.set(mx, 0.025, mz);
             group.add(motor);
 
             // Propeller disc
             const prop = new THREE.Mesh(
-                new THREE.CylinderGeometry(PROP_R, PROP_R, 0.04, 20),
+                new THREE.CylinderGeometry(PROP_R, PROP_R, 0.006, 20),
                 new THREE.MeshLambertMaterial({
                     color: d.front ? 0xff3333 : 0x33aaff,
                     transparent: true,
                     opacity: 0.55,
                 })
             );
-            prop.position.set(mx, 0.45, mz);
+            prop.position.set(mx, 0.045, mz);
             group.add(prop);
         }
 
@@ -428,6 +430,21 @@ function make3DRenderer() {
     // Build the mesh for whichever model is currently selected.
     function buildVehicle() {
         return currentModel === MODEL_QUADROTOR ? buildQuadrotor() : buildRocket();
+    }
+
+    // Camera preset per model: the quadrotor is real-size (~0.75 m tip-to-tip),
+    // so it needs a much closer start and a smaller zoom-in limit than the rocket.
+    function applyCameraForModel() {
+        if (!camera || !controls) return;
+        if (currentModel === MODEL_QUADROTOR) {
+            camera.position.set(2.5, 1.5, 2.5);
+            controls.minDistance = 0.5;
+        } else {
+            camera.position.set(40, 25, 40);
+            controls.minDistance = 5;
+        }
+        controls.target.set(0, 0, 0);
+        controls.update();
     }
 
     function init() {
@@ -450,14 +467,13 @@ function make3DRenderer() {
 
         // Camera
         camera = new THREE.PerspectiveCamera(50, W / H, 0.1, 5000);
-        camera.position.set(40, 25, 40);
 
         // OrbitControls
         controls = new OrbitControls(camera, renderer.domElement);
         controls.enableDamping  = true;
         controls.dampingFactor  = 0.06;
-        controls.minDistance    = 5;
         controls.maxDistance    = 1000;
+        applyCameraForModel();
 
         // Lights
         scene.add(new THREE.AmbientLight(0xffffff, 0.45));
@@ -603,6 +619,7 @@ function make3DRenderer() {
             rocketGroup.position.set(0, 0, 0);
             rocketGroup.rotation.set(0, 0, 0);
             scene.add(rocketGroup);
+            applyCameraForModel();
         },
         show() {
             visible = true;
