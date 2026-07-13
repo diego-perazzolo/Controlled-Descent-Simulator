@@ -141,7 +141,7 @@ bool Poly4::GetReference(const core_coord_t& time, Reference_t& ref)
     //   p''  = 2*a2 + t*(6*a3 + t*12*a4)
     //   p''' = 6*a3 + 24*a4*t
     //   p'''' = 24*a4
-    for (int i = 0; i < 4; ++i)
+    for (int i = 0; i < 3; ++i)
     {
         const std::array<double, 5>& a = (i == 0) ? m_a_x : (i == 1) ? m_a_y : m_a_z;
 

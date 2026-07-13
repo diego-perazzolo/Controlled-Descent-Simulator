@@ -31,5 +31,6 @@ env/
 # Jupyter
 .ipynb_checkpoints/
 
-# Compiled driver binary from notebook codegen
-modeling/notebooks/exported_cpp/_driver
+# Compiled driver binaries from notebook codegen
+modeling/notebooks/exported_cpp/**/driver
+modeling/notebooks/exported_cpp/**/_driver

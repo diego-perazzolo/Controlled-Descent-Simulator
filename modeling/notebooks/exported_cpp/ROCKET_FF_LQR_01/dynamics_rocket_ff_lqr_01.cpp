@@ -74,6 +74,8 @@ double ROCKET_FF_LQR_01::GetParam(ParamName n) const {
         case ParamName::TorqueXMin: return m_p.T1_min;
         case ParamName::TorqueYMax: return m_p.T2_max;
         case ParamName::TorqueYMin: return m_p.T2_min;
+        case ParamName::TorqueZMax: return m_p.T3_max;
+        case ParamName::TorqueZMin: return m_p.T3_min;
     }
     return 0.0;
 }
@@ -92,6 +94,8 @@ void ROCKET_FF_LQR_01::SetParam(ParamName n, double v) {
         case ParamName::TorqueXMin: m_p.T1_min = v; return;
         case ParamName::TorqueYMax: m_p.T2_max = v; return;
         case ParamName::TorqueYMin: m_p.T2_min = v; return;
+        case ParamName::TorqueZMax: m_p.T3_max = v; return;
+        case ParamName::TorqueZMin: m_p.T3_min = v; return;
     }
 }
 
@@ -155,7 +159,12 @@ ROCKET_FF_LQR_01::StateVec ROCKET_FF_LQR_01::Dynamics(const StateVec& s, const I
 ROCKET_FF_LQR_01::InputVec ROCKET_FF_LQR_01::ExecuteControl(const StateVec& s, const Reference_t& r) const
 {
     // Pull reference derivatives into named locals for clarity.
-    const double ax = r.acc[0], ay = r.acc[1], az = r.acc[2];
+    // The tilt-angle FF is only defined for thrust-positive references
+    // (az + g > 0): at az <= -g the FF angles flip / their rate expressions
+    // divide by zero (free-fall singularity). Clamp az to keep the FF
+    // well-posed; trajectories demanding > 1 g downward are out of envelope.
+    const double ax = r.acc[0], ay = r.acc[1];
+    const double az = std::max(r.acc[2], -m_p.g + 1e-6);
     const double jx = r.jerk[0], jy = r.jerk[1], jz = r.jerk[2];
     const double sx = r.snap[0], sy = r.snap[1], sz = r.snap[2];
 
@@ -223,6 +232,8 @@ ROCKET_FF_LQR_01::InputVec ROCKET_FF_LQR_01::ExecuteControl(const StateVec& s, c
     else if (u[1] < m_p.T1_min) { u[1] = m_p.T1_min; }
     if      (u[2] > m_p.T2_max) { u[2] = m_p.T2_max; }
     else if (u[2] < m_p.T2_min) { u[2] = m_p.T2_min; }
+    if      (u[3] > m_p.T3_max) { u[3] = m_p.T3_max; }
+    else if (u[3] < m_p.T3_min) { u[3] = m_p.T3_min; }
 
     return u;
 }

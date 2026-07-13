@@ -10,6 +10,7 @@ int main() {
     model.SetParam(PN::DragAxial,0.02); model.SetParam(PN::ThrustMax,500.0); model.SetParam(PN::ThrustMin,0.0);
     model.SetParam(PN::TorqueXMax,10.0); model.SetParam(PN::TorqueXMin,-10.0);
     model.SetParam(PN::TorqueYMax,10.0); model.SetParam(PN::TorqueYMin,-10.0);
+    model.SetParam(PN::TorqueZMax,10.0); model.SetParam(PN::TorqueZMin,-10.0);
     ROCKET_FF_LQR_01::StateVec s = { 1.0, -2.0, 50.0, 0.05, -0.03, 0.0, 0.5, -0.1, -10.0, 0.01, -0.02, 0.0, 0.1, 0.2, -0.05, 0.15 };
     ROCKET_FF_LQR_01::InputVec u = { 100.0, 0.5, -0.3, 0.0 };
     Vec3 userF = { 2.5, -1.5, 0.7 };

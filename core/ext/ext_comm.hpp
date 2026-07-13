@@ -23,8 +23,8 @@
 // THE SOFTWARE.
 //
 // =============================================================================
-// File        : <filename.cpp>
-// Description : <brief description of this file>
+// File        : ext_comm.hpp
+// Description : External communication API (ext ↔ core adapter layer)
 // Author      : Diego Perazzolo
 // Created     : 2026
 // =============================================================================
@@ -83,6 +83,3 @@ bool ext_trajectory_append_point(ext_trajectoryPointParams_t params);
 
 /* Remove last trajectory item, returns true on error */
 bool ext_trajectory_remove_last_item(void);
-
-/* Get a point at time instant t along the trajectory */
-ext_trajectoryPoint ext_trajectory_get_point(ext_coord_t t);

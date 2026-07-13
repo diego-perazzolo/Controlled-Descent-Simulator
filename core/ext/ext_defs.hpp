@@ -121,7 +121,7 @@ typedef struct
     ext_vec3_t finalAcc;
     ext_coord_t finalYawAcc;
 
-    ext_coord_t time_s; // total duration of the manouver towards the final state
+    ext_coord_t time_s; // total duration of the maneuver towards the final state
 } ext_trajectoryPoly4Params_t;
 
 // struct of the Point trajectory parameters
@@ -129,7 +129,7 @@ typedef struct
 {
     ext_vec3_t finalPos;
     ext_coord_t finalYaw;
-    ext_coord_t time_s; // total duration of the manouver towards the finalPos
+    ext_coord_t time_s; // total duration of the maneuver towards the finalPos
 } ext_trajectoryPointParams_t;
 
 
@@ -155,17 +155,20 @@ typedef struct
     /* forces */
     ext_coord_t fZ_max;
     ext_coord_t fZ_min;
-    /* torques */
-    ext_coord_t Tx_max; // around x axis
-    ext_coord_t Tx_min; // around x axis
-    ext_coord_t Ty_max; // around y axis
-    ext_coord_t Ty_min; // around y axis
+    /* torques — NOTE: "Tx" acts about body Y (drives alpha/pitch) and "Ty"
+       about body X (drives beta); names kept for backward compatibility */
+    ext_coord_t Tx_max; // about body y axis
+    ext_coord_t Tx_min; // about body y axis
+    ext_coord_t Ty_max; // about body x axis
+    ext_coord_t Ty_min; // about body x axis
+    ext_coord_t Tz_max; // about body z axis (roll about thrust axis)
+    ext_coord_t Tz_min; // about body z axis (roll about thrust axis)
 } ext_rocketActuatorLimits;
 
 /* struct of the quadRotor's actuator limits */
 typedef struct 
 {
-    /* motor torques */
+    /* motor thrusts */
     ext_coord_t motor_max_thrust;
     ext_coord_t motor_min_thrust;
 } ext_quadRotorActuatorLimits;

@@ -24,8 +24,9 @@
 // THE SOFTWARE.
 //
 // =============================================================================
-// File        : <filename.cpp>
-// Description : <brief description of this file>
+// File        : core_defs.hpp
+// Description : Shared core type definitions (model parameters, trajectory
+//               parameters, references, state and tracking errors)
 // Author      : Diego Perazzolo
 // Created     : 2026
 // =============================================================================
@@ -33,7 +34,7 @@
 #include <array>
 
 /* Types */
-typedef double core_coord_t; // type for running coordinartes: position, pose, force
+typedef double core_coord_t; // type for running coordinates: position, pose, force
 typedef std::array<core_coord_t, 3> Vec3;
 
 // Rocket params
@@ -48,10 +49,14 @@ typedef struct
     core_coord_t cz;   // axial aerodynamic drag coefficient
     core_coord_t F1_max; // maximum thrust (N)
     core_coord_t F1_min; // minimum thrust (N)
-    core_coord_t T1_max; // maximum torque around x axis (Nm)
-    core_coord_t T1_min; // minimum torque around x axis (Nm)
-    core_coord_t T2_max; // maximum torque around y axis (Nm)
-    core_coord_t T2_min; // minimum torque around y axis (Nm)
+    // NOTE: T1 acts about body Y (drives alpha/pitch), T2 about body X (drives
+    // beta). Field names are kept for backward compatibility.
+    core_coord_t T1_max; // maximum torque about body y axis (Nm)
+    core_coord_t T1_min; // minimum torque about body y axis (Nm)
+    core_coord_t T2_max; // maximum torque about body x axis (Nm)
+    core_coord_t T2_min; // minimum torque about body x axis (Nm)
+    core_coord_t T3_max; // maximum torque about body z axis / roll (Nm)
+    core_coord_t T3_min; // minimum torque about body z axis / roll (Nm)
 } core_rocketParams_t;
 
 // QuadRotor params

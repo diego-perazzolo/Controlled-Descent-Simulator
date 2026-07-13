@@ -57,7 +57,9 @@ EMSCRIPTEN_BINDINGS(simulator) {
         .field("Tx_max", &ext_rocketActuatorLimits::Tx_max)
         .field("Tx_min", &ext_rocketActuatorLimits::Tx_min)
         .field("Ty_max", &ext_rocketActuatorLimits::Ty_max)
-        .field("Ty_min", &ext_rocketActuatorLimits::Ty_min);
+        .field("Ty_min", &ext_rocketActuatorLimits::Ty_min)
+        .field("Tz_max", &ext_rocketActuatorLimits::Tz_max)
+        .field("Tz_min", &ext_rocketActuatorLimits::Tz_min);
 
     value_object<ext_initRocketParams>("ext_initRocketParams")
         .field("rocketPar",      &ext_initRocketParams::params)

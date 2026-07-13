@@ -52,6 +52,8 @@ static core_rocketParams_t _convertExtToCore_rocketParams(ext_rocketParams rPar,
     coreParam.T1_min = aPar.Tx_min;
     coreParam.T2_max = aPar.Ty_max;
     coreParam.T2_min = aPar.Ty_min;
+    coreParam.T3_max = aPar.Tz_max;
+    coreParam.T3_min = aPar.Tz_min;
 
     return coreParam;
 }
@@ -186,7 +188,7 @@ bool ext_initQuadRotor_FFLQR01(ext_initQuadRotorParams params)
     bool ret = core_init();
     ASSERT_FALSE(ret);
 
-    // Rocket initialization
+    // QuadRotor initialization
     ret = core_quadRotorFfLqr01_init(rPar);
     ASSERT_FALSE(ret);
 
@@ -199,7 +201,7 @@ bool ext_initQuadRotor_FFLQR01(ext_initQuadRotorParams params)
 
 ext_stepRet ext_step(ext_stepParams stepParams)
 {
-    /* Executes one integratiion step with the simulation, returns system state, tracking errors */
+    /* Executes one integration step with the simulation, returns system state, tracking errors */
     ext_stepRet ret = {};
     core_state_t coreState;
     core_trackingErrors_t coreTrackingErr;

@@ -21,7 +21,7 @@ def quad_config(model_name="QUADROTOR_FF_LQR_01"):
 class QuadCodegen(BaseCodegen):
     """Quaternion 6-DOF + flatness FF + LQR, InputVec = [T1..T4]."""
     def __init__(self, cfg=None):
-        super().__init__(cfg or CodegenConfig())
+        super().__init__(cfg or quad_config())
         self._ff = None; self._Minv = None
 
     def set_feedforward_flat(self, F_ff, R_ref, omega_ff, tau_ff, M_inv):
@@ -49,7 +49,11 @@ class QuadCodegen(BaseCodegen):
 
     def _emit_execute_control_body(self):
         cc = self._cc; ff = self._ff; Mi = self._Minv
-        L = ["    const double a_x=r.acc[0], a_y=r.acc[1], a_z=r.acc[2];",
+        L = ["    // Flatness FF divides by ||a + g z_w||: clamp a_z away from free-fall",
+             "    // (a_z <= -g with a_x=a_y=0 would make z_B undefined). Trajectories",
+             "    // demanding > 1 g downward acceleration are out of the envelope.",
+             "    const double a_x=r.acc[0], a_y=r.acc[1];",
+             "    const double a_z=std::max(r.acc[2], -m_p.g + 1e-6);",
              "    const double j_x=r.jerk[0], j_y=r.jerk[1], j_z=r.jerk[2];",
              "    const double s_x=r.snap[0], s_y=r.snap[1], s_z=r.snap[2];",
              "    const double psi=r.yaw, psi_dot=r.yawRate, psi_ddot=r.yawAcc;", ""]

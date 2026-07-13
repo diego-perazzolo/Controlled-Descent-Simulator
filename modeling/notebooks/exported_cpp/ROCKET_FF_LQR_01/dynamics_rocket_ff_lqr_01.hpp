@@ -49,6 +49,8 @@ public:
         TorqueXMin = 10,
         TorqueYMax = 11,
         TorqueYMin = 12,
+        TorqueZMax = 13,
+        TorqueZMin = 14,
     };
 
     ROCKET_FF_LQR_01();
@@ -72,10 +74,12 @@ private:
             double cz = 0.02;  // axial drag coeff (body z) [N s/m]
             double F1_max = 500.0;  // thrust upper saturation [N]
             double F1_min = 0.0;  // thrust lower saturation [N]
-            double T1_max = 10;  // Torque around x axis upper saturation [Nm]
-            double T1_min = -10;  // Torque around x axis lower saturation [Nm]
-            double T2_max = 10;  // Torque around y axis upper saturation [Nm]
-            double T2_min = -10;  // Torque around y axis lower saturation [Nm]
+            double T1_max = 10;  // Torque T1, about body y axis (drives alpha), upper saturation [Nm]
+            double T1_min = -10;  // Torque T1, about body y axis (drives alpha), lower saturation [Nm]
+            double T2_max = 10;  // Torque T2, about body x axis (drives beta), upper saturation [Nm]
+            double T2_min = -10;  // Torque T2, about body x axis (drives beta), lower saturation [Nm]
+            double T3_max = 10;  // Torque T3, about body z axis (drives psi), upper saturation [Nm]
+            double T3_min = -10;  // Torque T3, about body z axis (drives psi), lower saturation [Nm]
     };
     PhysicsParams m_p;
 };

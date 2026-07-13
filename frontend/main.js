@@ -64,6 +64,8 @@ const ROCKET_INIT_PARAMS = {
         Tx_min: -10.0,
         Ty_max: 10.0,
         Ty_min: -10.0,
+        Tz_max: 10.0,
+        Tz_min: -10.0,
     },
 };
 
@@ -139,7 +141,7 @@ const ui = {
     panelRocket: $('panel-rocket'),
     p_mass: $('p_mass'), p_iX: $('p_iX'), p_iY: $('p_iY'), p_iZ: $('p_iZ'),
     p_c:    $('p_c'),    p_cz: $('p_cz'),
-    p_fZmax: $('p_fZmax'), p_fZmin: $('p_fZmin'), p_tXmax: $('p_tXmax'), p_tXmin: $('p_tXmin'), p_tYmax: $('p_tYmax'), p_tYmin: $('p_tYmin'),
+    p_fZmax: $('p_fZmax'), p_fZmin: $('p_fZmin'), p_tXmax: $('p_tXmax'), p_tXmin: $('p_tXmin'), p_tYmax: $('p_tYmax'), p_tYmin: $('p_tYmin'), p_tZmax: $('p_tZmax'), p_tZmin: $('p_tZmin'),
     // Quadrotor params panel
     panelQuad: $('panel-quad'),
     q_mass: $('q_mass'), q_iX: $('q_iX'), q_iY: $('q_iY'), q_iZ: $('q_iZ'),
@@ -193,6 +195,8 @@ function fillRocketForm(p) {
     ui.p_tXmin.value = p.rocketActuatorLimits.Tx_min;
     ui.p_tYmax.value = p.rocketActuatorLimits.Ty_max;
     ui.p_tYmin.value = p.rocketActuatorLimits.Ty_min;
+    ui.p_tZmax.value = p.rocketActuatorLimits.Tz_max;
+    ui.p_tZmin.value = p.rocketActuatorLimits.Tz_min;
 }
 
 function fillQuadForm(p) {
@@ -237,6 +241,8 @@ function readRocketForm() {
             Tx_min: n('p_tXmin'),
             Ty_max: n('p_tYmax'),
             Ty_min: n('p_tYmin'),
+            Tz_max: n('p_tZmax'),
+            Tz_min: n('p_tZmin'),
         },
     };
 }
@@ -910,9 +916,9 @@ const trajectoryBuilder = (() => {
         emitChange();
     }
 
-    // ---- Replay (after ext_init wipes backend state) ----
+    // ---- Replay (after re-init wipes backend state) ----
     function replayToBackend() {
-        // After ext_init the backend trajectory is assumed to be empty. Push
+        // After re-init the backend trajectory is assumed to be empty. Push
         // every JS-side item back into it. If any push fails, reset the UI
         // list to whatever the backend actually accepted.
         const surviving = [];
@@ -1220,7 +1226,7 @@ trajectoryBuilder.onChange(() => {
 
         fillParamsForm(DEFAULT_INIT_PARAMS[currentModel]);
         // Inject a default sequence so a fresh user can press Start straight
-        // away. Done after ext_init so the backend trajectory is empty.
+        // away. Done after re-init so the backend trajectory is empty.
         // loadPreset triggers refreshAutofill internally, so initialPos /
         // initialVel of the form will reflect the end of the default item.
         trajectoryBuilder.loadPreset(DEFAULT_TRAJECTORY);

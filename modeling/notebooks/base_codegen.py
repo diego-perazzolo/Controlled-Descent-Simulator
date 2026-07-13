@@ -24,7 +24,7 @@ class CodegenConfig:
     out_dir: str = "exported_cpp"          # base; files go to <out_dir>/<model_name>/
     state_dim: int = 13
     aug_dim: int = 17          # runtime StateVec length
-    error_dim: int = 16        # LQR error length (K_e columns)  <-- NEW vs rocket
+    error_dim: int = 16        # LQR error length (K_e columns)
     input_dim: int = 4
     indent: str = "    "
     author: str = "Diego Perazzolo"

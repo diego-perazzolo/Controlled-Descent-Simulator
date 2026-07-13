@@ -23,8 +23,9 @@
 // THE SOFTWARE.
 //
 // =============================================================================
-// File        : <filename.cpp>
-// Description : <brief description of this file>
+// File        : core.cpp
+// Description : Core simulation API — model lifecycle, trajectory management
+//               and integration stepping
 // Author      : Diego Perazzolo
 // Created     : 2026
 // =============================================================================
@@ -77,7 +78,7 @@ bool core_quadRotorFfLqr01_init(const core_quadRotorParams_t rPar)
 
     _ctx.pModel = new QuadRotor();
 
-    // Initializing rocket's parameters
+    // Initializing quadrotor's parameters
     return _ctx.pModel->SetModelParams(rPar);
 }
 
@@ -135,7 +136,7 @@ bool core_trajectoryInit()
 
 bool core_trajectoryAppendPoly4(const core_trajectoryPoly4Params_t tPar)
 {
-    if (_ctx.pTrajectoryManager == nullptr)
+    if (_ctx.pTrajectoryManager == nullptr || _ctx.pModel == nullptr)
     {
         // ERR
         return true;
@@ -149,7 +150,7 @@ bool core_trajectoryAppendPoly4(const core_trajectoryPoly4Params_t tPar)
 
 bool core_trajectoryAppendPoint(const core_trajectoryPointParams_t tPar)
 {
-    if (_ctx.pTrajectoryManager == nullptr)
+    if (_ctx.pTrajectoryManager == nullptr || _ctx.pModel == nullptr)
     {
         // ERR
         return true;

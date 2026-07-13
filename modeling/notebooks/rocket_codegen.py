@@ -19,14 +19,22 @@ def rocket_config(model_name="ROCKET_FF_LQR_01"):
         state_enum_names=("X","Y","Z","Alpha","Beta","Psi","XDot","YDot","ZDot",
                           "AlphaDot","BetaDot","PsiDot","IntX","IntY","IntZ","IntPsi"),
         param_enum_names=("Mass","Ix","Iy","Iz","Gravity","DragLateral","DragAxial",
-                          "ThrustMax","ThrustMin","TorqueXMax","TorqueXMin","TorqueYMax","TorqueYMin"),
-        param_field_names=("m","Ix","Iy","Iz","g","c","cz","F1_max","F1_min","T1_max","T1_min","T2_max","T2_min"),
+                          "ThrustMax","ThrustMin","TorqueXMax","TorqueXMin","TorqueYMax","TorqueYMin",
+                          "TorqueZMax","TorqueZMin"),
+        param_field_names=("m","Ix","Iy","Iz","g","c","cz","F1_max","F1_min","T1_max","T1_min","T2_max","T2_min",
+                           "T3_max","T3_min"),
+        # NOTE on torque naming: T1 acts about body Y (drives alpha/pitch) and T2
+        # about body X (drives beta); enum/field names keep the legacy X/Y labels.
         param_field_comments=("vehicle mass [kg]","inertia around body x [kg m^2]","inertia around body y [kg m^2]",
             "inertia around body z [kg m^2]","gravity [m/s^2]","lateral drag coeff (body x, y) [N s/m]",
             "axial drag coeff (body z) [N s/m]","thrust upper saturation [N]","thrust lower saturation [N]",
-            "Torque around x axis upper saturation [Nm]","Torque around x axis lower saturation [Nm]",
-            "Torque around y axis upper saturation [Nm]","Torque around y axis lower saturation [Nm]"),
-        param_default_values=(10.0, 10.0/3.0, 10.0/3.0, 1.0, 9.81, 1.0, 0.02, 500.0, 0.0, 10, -10, 10, -10),
+            "Torque T1, about body y axis (drives alpha), upper saturation [Nm]",
+            "Torque T1, about body y axis (drives alpha), lower saturation [Nm]",
+            "Torque T2, about body x axis (drives beta), upper saturation [Nm]",
+            "Torque T2, about body x axis (drives beta), lower saturation [Nm]",
+            "Torque T3, about body z axis (drives psi), upper saturation [Nm]",
+            "Torque T3, about body z axis (drives psi), lower saturation [Nm]"),
+        param_default_values=(10.0, 10.0/3.0, 10.0/3.0, 1.0, 9.81, 1.0, 0.02, 500.0, 0.0, 10, -10, 10, -10, 10, -10),
         user_forces_type="Vec3")
 
 
@@ -157,7 +165,12 @@ class RocketCodegen(BaseCodegen):
         def _used(name): return re.search(rf"\b{name}\b", all_str) is not None
 
         L = [f"{ind}// Pull reference derivatives into named locals for clarity.",
-             f"{ind}const double ax = r.acc[0], ay = r.acc[1], az = r.acc[2];"]
+             f"{ind}// The tilt-angle FF is only defined for thrust-positive references",
+             f"{ind}// (az + g > 0): at az <= -g the FF angles flip / their rate expressions",
+             f"{ind}// divide by zero (free-fall singularity). Clamp az to keep the FF",
+             f"{ind}// well-posed; trajectories demanding > 1 g downward are out of envelope.",
+             f"{ind}const double ax = r.acc[0], ay = r.acc[1];",
+             f"{ind}const double az = std::max(r.acc[2], -m_p.g + 1e-6);"]
         if any(_used(n) for n in ("jx","jy","jz")):
             L.append(f"{ind}const double " + ", ".join(f"{n} = r.jerk[{i}]" for i, n in enumerate(("jx","jy","jz")) if _used(n)) + ";")
         if any(_used(n) for n in ("sx","sy","sz")):
@@ -205,7 +218,7 @@ class RocketCodegen(BaseCodegen):
               f"{ind}InputVec u_lqr{{}};",
               f"{ind}for (std::size_t i = 0; i < {self.cfg.input_dim}; ++i) {{",
               f"{ind}{ind}double v = 0.0;",
-              f"{ind}{ind}for (std::size_t j = 0; j < {self.cfg.aug_dim}; ++j) {{",
+              f"{ind}{ind}for (std::size_t j = 0; j < {self.cfg.error_dim}; ++j) {{",
               f"{ind}{ind}{ind}v += K_e[i][j] * e[j];",
               f"{ind}{ind}}}",
               f"{ind}{ind}u_lqr[i] = -v;",
@@ -221,6 +234,8 @@ class RocketCodegen(BaseCodegen):
               f"{ind}if      (u[1] > m_p.T1_max) {{ u[1] = m_p.T1_max; }}",
               f"{ind}else if (u[1] < m_p.T1_min) {{ u[1] = m_p.T1_min; }}",
               f"{ind}if      (u[2] > m_p.T2_max) {{ u[2] = m_p.T2_max; }}",
-              f"{ind}else if (u[2] < m_p.T2_min) {{ u[2] = m_p.T2_min; }}", "",
+              f"{ind}else if (u[2] < m_p.T2_min) {{ u[2] = m_p.T2_min; }}",
+              f"{ind}if      (u[3] > m_p.T3_max) {{ u[3] = m_p.T3_max; }}",
+              f"{ind}else if (u[3] < m_p.T3_min) {{ u[3] = m_p.T3_min; }}", "",
               f"{ind}return u;"]
         return "\n".join(L)

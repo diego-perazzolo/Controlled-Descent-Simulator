@@ -23,8 +23,8 @@
 // THE SOFTWARE.
 //
 // =============================================================================
-// File        : <filename.cpp>
-// Description : <brief description of this file>
+// File        : Rocket.hpp
+// Description : Rocket model wrapper around the generated FF-LQR dynamics
 // Author      : Diego Perazzolo
 // Created     : 2026
 // =============================================================================
@@ -48,14 +48,14 @@ namespace CDS
 
         using StateVec = std::array<double, 16>;   // augmented state (12 + 4 integrals)
         using InputVec = std::array<double, 4>;    // [F1, T1, T2, T3]
-        using RefVec   = std::array<double, 3>;    // position reference [x_ref, y_ref, z_ref, psi_ref]
+        using RefVec   = std::array<double, 3>;    // position reference [x_ref, y_ref, z_ref]
         using TrackingErr = std::array<double, 4>;    // Tracking err w.r.t. [x_ref, y_ref, z_ref, psi_ref]
         using UserForces = std::array<double, 3>;    // User input forces [Fx, Fy, Fz]
 
         private:
         void* m_modelPtr;
         StateVec m_state;
-        TrajectoryManager* m_trajectoryManagerPtr;
+        TrajectoryManager* m_trajectoryManagerPtr = nullptr;
         TrackingErr m_trackingErr;
         UserForces m_userForces;
         double m_time;

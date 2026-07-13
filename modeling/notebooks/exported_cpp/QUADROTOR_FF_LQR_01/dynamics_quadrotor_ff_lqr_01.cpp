@@ -183,13 +183,22 @@ QUADROTOR_FF_LQR_01::StateVec QUADROTOR_FF_LQR_01::Dynamics(const StateVec& s, c
     dxdt[13] = -r_x + refx;
     dxdt[14] = -r_y + refy;
     dxdt[15] = -r_z + refz;
-    dxdt[16] = atan2(sin(cse36), cos(cse36));
+    dxdt[16] = ((pow(cse21, 2) + 4*pow(cse22, 2) < 9.9999999999999995e-7) ? (
+   0
+)
+: (
+   atan2(sin(cse36), cos(cse36))
+));
     return dxdt;
 }
 
 QUADROTOR_FF_LQR_01::InputVec QUADROTOR_FF_LQR_01::ExecuteControl(const StateVec& s, const Reference_t& r) const
 {
-    const double a_x=r.acc[0], a_y=r.acc[1], a_z=r.acc[2];
+    // Flatness FF divides by ||a + g z_w||: clamp a_z away from free-fall
+    // (a_z <= -g with a_x=a_y=0 would make z_B undefined). Trajectories
+    // demanding > 1 g downward acceleration are out of the envelope.
+    const double a_x=r.acc[0], a_y=r.acc[1];
+    const double a_z=std::max(r.acc[2], -m_p.g + 1e-6);
     const double j_x=r.jerk[0], j_y=r.jerk[1], j_z=r.jerk[2];
     const double s_x=r.snap[0], s_y=r.snap[1], s_z=r.snap[2];
     const double psi=r.yaw, psi_dot=r.yawRate, psi_ddot=r.yawAcc;

@@ -323,7 +323,7 @@ bool QuadRotor::GetTrackingErrors(core_trackingErrors_t& tErrors)
     tErrors.x   = m_trackingErr[0];
     tErrors.y   = m_trackingErr[1];
     tErrors.z   = m_trackingErr[2];
-    tErrors.yaw = m_trackingErr[3];   // requires a `yaw` field in core_trackingErrors_t
+    tErrors.yaw = m_trackingErr[3];
     return false;
 }
 

@@ -51,15 +51,16 @@
 //  [9]  alpha_dot  angular rate α (rad/s)
 //  [10] beta_dot   angular rate β (rad/s)
 //  [11] psi_dot    angular rate ψ (rad/s)
-//  [12] y1         integral of position error X (for LQR augmented state)
-//  [13] y2         integral of position error Y
-//  [14] y3         integral of position error Z
+//  [12] IntX       integral of position error X (for LQR augmented state)
+//  [13] IntY       integral of position error Y
+//  [14] IntZ       integral of position error Z
+//  [15] IntPsi     integral of yaw error ψ
 //
 // Input vector u[4]:
 //  [0]  F1   main thrust (N)
-//  [1]  T1   torque around X (N·m)
-//  [2]  T2   torque around Y (N·m)
-//  [3]  T3   torque around Z (N·m)
+//  [1]  T1   torque about body Y (N·m) — drives alpha (pitch)
+//  [2]  T2   torque about body X (N·m) — drives beta
+//  [3]  T3   torque about body Z (N·m) — drives psi (roll about thrust axis)
 // =============================================================================
 
 // State indexes
@@ -200,6 +201,8 @@ bool Rocket::SetModelParams(const std::any& params)
     dynamics->SetParam(PN::TorqueXMin, p.T1_min);
     dynamics->SetParam(PN::TorqueYMax, p.T2_max);
     dynamics->SetParam(PN::TorqueYMin, p.T2_min);
+    dynamics->SetParam(PN::TorqueZMax, p.T3_max);
+    dynamics->SetParam(PN::TorqueZMin, p.T3_min);
 
     return false;
 }
@@ -244,8 +247,9 @@ bool Rocket::PerformIntegration(const core_stepParams_t& params)
     m_userForces[1] = params.user_fY;
     m_userForces[2] = params.user_fZ;
 
+#if 0 // Debug logging of the first 30 integration steps
     auto u = ((Dynamics::ROCKET_FF_LQR_01*)m_modelPtr)->ExecuteControl(m_state, ref);
-    
+
     if (m_time < 30 * params.timestep) {
         using SN = CDS::Dynamics::ROCKET_FF_LQR_01::StateName;
         std::printf("=== t=%.6f  dt=%.6f ===\n", m_time, params.timestep);
@@ -266,6 +270,7 @@ bool Rocket::PerformIntegration(const core_stepParams_t& params)
         std::printf("  CONTROL: F1=%.3f  T1=%.6f  T2=%.6f  T3=%.6f\n",
             u[0], u[1], u[2], u[3]);
     }
+#endif
 
     // Runge Kutta 4
     if(rk4_step(m_modelPtr, m_state, ref, m_userForces, params.timestep))
