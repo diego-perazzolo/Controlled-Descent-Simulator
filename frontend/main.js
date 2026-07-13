@@ -590,8 +590,19 @@ function make3DRenderer() {
 
             // sim(x, y, z=up) → Three.js(x, z, y)  [Y is up in Three.js]
             rocketGroup.position.set(state.x, state.z, state.y);
-            // roll→Z, pitch→X, yaw→Y  (intrinsic, adjust once physics is live)
-            rocketGroup.rotation.set(-state.pitch, -state.yaw, -state.roll);
+            // The world→scene axis swap (y↔z) is a reflection: every world
+            // rotation maps to the permuted scene axis with negated angle
+            // (world X→scene X, world Y→scene Z, world Z→scene Y), and the
+            // composition order must match each model's Euler sequence.
+            if (currentModel === MODEL_QUADROTOR) {
+                // Aerospace ZYX: roll about X, pitch about Y, yaw about Z
+                // R = Rz(yaw)·Ry(pitch)·Rx(roll) → scene 'YZX' with negated angles.
+                rocketGroup.rotation.set(-state.roll, -state.yaw, -state.pitch, 'YZX');
+            } else {
+                // Rocket Rm = Ry(alpha)·Rx(beta)·Rz(psi), GetState maps
+                // roll=alpha, pitch=beta, yaw=psi → scene 'ZXY' with negated angles.
+                rocketGroup.rotation.set(-state.pitch, -state.yaw, -state.roll, 'ZXY');
+            }
             updateTrail(state.x, state.z, state.y);
         },
         reset() {
