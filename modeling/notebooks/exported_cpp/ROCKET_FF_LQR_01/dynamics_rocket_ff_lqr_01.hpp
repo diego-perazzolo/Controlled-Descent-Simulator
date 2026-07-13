@@ -2,10 +2,8 @@
  * Author: Diego Perazzolo. Do not edit by hand.
  */
 #pragma once
-
 #include <array>
 #include <cstddef>
-
 #ifdef JUST_TESTING_DYNAMICS
 #include "test_core_defs.hpp"
 #else
@@ -16,11 +14,9 @@ namespace CDS { namespace Dynamics {
 
 class ROCKET_FF_LQR_01 {
 public:
-    using StateVec = std::array<double, 15>;
+    using StateVec = std::array<double, 16>;
     using InputVec = std::array<double, 4>;
 
-    // Public name enums for state and parameter accessors.
-    // Internal indices and the parameter struct layout are private to the .cpp.
     enum class StateName : std::size_t {
         X = 0,
         Y = 1,
@@ -37,8 +33,8 @@ public:
         IntX = 12,
         IntY = 13,
         IntZ = 14,
+        IntPsi = 15,
     };
-
     enum class ParamName : std::size_t {
         Mass = 0,
         Ix = 1,
@@ -56,29 +52,14 @@ public:
     };
 
     ROCKET_FF_LQR_01();
-
-    // ----- Control -----
-    // u = u_ff(reference) + u_lqr(state).
     InputVec ExecuteControl(const StateVec& s, const Reference_t& r) const;
-
-    // ----- Dynamics -----
-    // dxdt = f(s, u, ref, userF). Augmented integrators use only ref.pos.
-    StateVec Dynamics(const StateVec& s,
-                      const InputVec& u,
-                      const Reference_t& ref,
-                      const Vec3& userF) const;
-
-    // ----- Accessors -----
+    StateVec Dynamics(const StateVec& s, const InputVec& u,
+                      const Reference_t& ref, const Vec3& userF) const;
     static double GetState(const StateVec& s, StateName n);
     static void   SetState(StateVec& s, StateName n, double v);
     double GetParam(ParamName n) const;
     void   SetParam(ParamName n, double v);
-
-    // Convert a StateName to its array index. Use this everywhere instead of
-    // raw static_cast<std::size_t> to keep call sites readable.
-    static constexpr std::size_t StateToIdx(StateName n) noexcept {
-        return static_cast<std::size_t>(n);
-    }
+    static constexpr std::size_t StateToIdx(StateName n) noexcept { return static_cast<std::size_t>(n); }
 
 private:
     struct PhysicsParams {
@@ -96,7 +77,6 @@ private:
             double T2_max = 10;  // Torque around y axis upper saturation [Nm]
             double T2_min = -10;  // Torque around y axis lower saturation [Nm]
     };
-
     PhysicsParams m_p;
 };
 

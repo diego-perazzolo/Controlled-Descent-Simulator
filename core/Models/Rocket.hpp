@@ -46,7 +46,7 @@ namespace CDS
         virtual bool GetState(core_state_t& state) override;
         virtual bool GetTrackingErrors(core_trackingErrors_t& tErrors) override; 
 
-        using StateVec = std::array<double, 15>;   // augmented state (12 + 3 integrals)
+        using StateVec = std::array<double, 16>;   // augmented state (12 + 4 integrals)
         using InputVec = std::array<double, 4>;    // [F1, T1, T2, T3]
         using RefVec   = std::array<double, 3>;    // position reference [x_ref, y_ref, z_ref, psi_ref]
         using TrackingErr = std::array<double, 4>;    // Tracking err w.r.t. [x_ref, y_ref, z_ref, psi_ref]

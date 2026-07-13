@@ -2,26 +2,22 @@
  * Author: Diego Perazzolo. Do not edit by hand.
  */
 #include "dynamics_rocket_ff_lqr_01.hpp"
-
 #include <cmath>
+#include <algorithm>
 
 namespace CDS { namespace Dynamics {
 
 namespace {
-    // LQR augmented gain matrix. Row i = gains for input u[i].
-    static constexpr std::array<std::array<double, 15>, 4> K_e = {{
-        {{ -9.473030436060591091e-15, 4.971323259741968030e-16, 3.953120887042830844e+01, -1.658611779951683237e-14, 1.049856741317867734e-14, 9.115166648894372265e-20, -5.743521935285377868e-15, -2.665480057398528492e-16, 2.811582373787139488e+01, -8.790929960032375101e-16, 2.830171275596240560e-15, -3.847772625665432055e-20, 2.354725662972446723e-15, 6.721059078437195320e-15, -9.999999999999992895e+00 }},
-        {{ 4.194782617982674822e+01, 4.679544678980609893e-14, -1.815154911684523544e-15, 1.750834812839657104e+02, -1.458916308968266243e-13, 7.289498798221232611e-14, 3.619626109343095521e+01, 2.852670366886705177e-14, -2.637278988009712136e-15, 4.655344464762813317e+01, 5.169086328434727614e-15, -7.214405721221319581e-15, -1.000000000000001066e+01, -8.906336799041390493e-15, -3.846203234163202848e-16 }},
-        {{ 1.887797444826613768e-13, -4.194782617982704664e+01, 3.145011495297660025e-14, 2.488537743018944526e-13, 1.750834812839652557e+02, 2.455206440720302032e-14, 1.088134384415194456e-13, -3.619626109343107601e+01, 8.490513826788721680e-15, 5.169086328434727614e-15, 4.655344464762812606e+01, -6.342946042144703928e-15, -4.507751536383623188e-14, 1.000000000000009237e+01, -8.426888283655109957e-15 }},
-        {{ -1.537231564522373342e-13, 3.172886004915302471e-14, 1.471365882096264164e-18, -3.640021139846792100e-13, -1.643457869943794823e-13, 3.162277660168388849e+01, -1.157507519810773624e-13, 3.417121528449758316e-14, -3.847772625665431934e-19, -2.404801907073773404e-14, -2.114315347381567976e-14, 3.260744628460462025e+01, 3.608281461057490196e-14, -4.878741829764852927e-15, -3.815252115626924496e-19 }}
-    }};
+    const double K_e[4][16] = {
+        {4.6055549845799718e-15, -2.1091003943872612e-15, 39.531208870428195, 1.0631527810417284e-14, 3.3601739376413414e-15, 1.2822211396605455e-14, 2.8953533947241414e-15, -1.3097809928156019e-15, 28.115823737871331, 5.2196498785991177e-16, 2.8056410225783001e-15, -3.5103307315527992e-17, -8.0683644062056301e-16, 1.5581419217315965e-14, -9.9999999999999805, 1.0007452020541331e-15},
+        {41.947826179827103, 8.857911294655855e-14, -4.5327367610473728e-16, 175.08348128396622, -2.7756995501078431e-13, -1.0785602009712214e-14, 36.196261093431097, 6.0476173658365047e-14, 1.5658949635797352e-15, 46.553444647628105, -7.3449083610720979e-14, -7.2360521274788512e-15, -10.000000000000076, -1.9473387552413528e-14, -8.0636060507049021e-17, -6.1157210864037773e-16},
+        {-1.7354184758925816e-13, -41.947826179826798, 2.180333821946545e-14, -3.4374311812722503e-13, 175.08348128396599, 1.7114784684976749e-14, -1.0751796777978205e-13, -36.196261093431076, 8.4169230677349e-15, -7.3449083610720979e-14, 46.553444647628311, 1.079805682745567e-14, 4.1319332474066991e-14, 10.000000000000027, -7.6841804249848058e-16, -7.3329664101714948e-15},
+        {-2.6926856215205186e-13, -4.8025208598904944e-14, -2.8759734327636873e-15, -1.8193847123326699e-13, 2.045448558188725e-13, 40.714886604804654, -9.1366265818344339e-14, -5.18600847968973e-14, -3.5103307315527988e-16, -2.4120173758262836e-14, 3.5993522758185566e-14, 32.885099562105736, 6.8525995959872754e-14, 3.0015223380176701e-15, 1.2888214608271235e-15, -9.9999999999999645}
+    };
 } // anonymous namespace
 
 ROCKET_FF_LQR_01::ROCKET_FF_LQR_01() = default;
 
-// =============================================================================
-// Accessors
-// =============================================================================
 double ROCKET_FF_LQR_01::GetState(const StateVec& s, StateName n) {
     switch (n) {
         case StateName::X: return s[0];
@@ -39,10 +35,10 @@ double ROCKET_FF_LQR_01::GetState(const StateVec& s, StateName n) {
         case StateName::IntX: return s[12];
         case StateName::IntY: return s[13];
         case StateName::IntZ: return s[14];
+        case StateName::IntPsi: return s[15];
     }
     return 0.0;
 }
-
 void ROCKET_FF_LQR_01::SetState(StateVec& s, StateName n, double v) {
     switch (n) {
         case StateName::X: s[0] = v; return;
@@ -60,9 +56,9 @@ void ROCKET_FF_LQR_01::SetState(StateVec& s, StateName n, double v) {
         case StateName::IntX: s[12] = v; return;
         case StateName::IntY: s[13] = v; return;
         case StateName::IntZ: s[14] = v; return;
+        case StateName::IntPsi: s[15] = v; return;
     }
 }
-
 double ROCKET_FF_LQR_01::GetParam(ParamName n) const {
     switch (n) {
         case ParamName::Mass: return m_p.m;
@@ -81,7 +77,6 @@ double ROCKET_FF_LQR_01::GetParam(ParamName n) const {
     }
     return 0.0;
 }
-
 void ROCKET_FF_LQR_01::SetParam(ParamName n, double v) {
     switch (n) {
         case ParamName::Mass: m_p.m = v; return;
@@ -100,13 +95,8 @@ void ROCKET_FF_LQR_01::SetParam(ParamName n, double v) {
     }
 }
 
-// =============================================================================
-// Dynamics: dxdt = f(s, u, ref, userF). Only ref.pos is used (for the integrators).
-// =============================================================================
-ROCKET_FF_LQR_01::StateVec ROCKET_FF_LQR_01::Dynamics(const StateVec& s,
-                                    const InputVec& u,
-                                    const Reference_t& ref,
-                                    const Vec3& userF) const
+ROCKET_FF_LQR_01::StateVec ROCKET_FF_LQR_01::Dynamics(const StateVec& s, const InputVec& u,
+                                    const Reference_t& ref, const Vec3& userF) const
 {
     using SN = StateName;
     StateVec dxdt{};
@@ -151,19 +141,18 @@ ROCKET_FF_LQR_01::StateVec ROCKET_FF_LQR_01::Dynamics(const StateVec& s,
     dxdt[StateToIdx(SN::BetaDot)]  = T2 / m_p.Iy;
     dxdt[StateToIdx(SN::PsiDot)]   = T3 / m_p.Iz;
 
-    // Augmented states: integral of position tracking error.
+    // Augmented states: integral of position + heading tracking error.
     dxdt[StateToIdx(SN::IntX)] = ref_pos[0] - s[StateToIdx(SN::X)];
     dxdt[StateToIdx(SN::IntY)] = ref_pos[1] - s[StateToIdx(SN::Y)];
     dxdt[StateToIdx(SN::IntZ)] = ref_pos[2] - s[StateToIdx(SN::Z)];
+    // Yaw integrator error wrapped to [-pi, pi] (ref.yaw is unbounded).
+    { const double dpsi = ref.yaw - s[StateToIdx(SN::Psi)];
+      dxdt[StateToIdx(SN::IntPsi)] = std::atan2(std::sin(dpsi), std::cos(dpsi)); }
 
     return dxdt;
 }
 
-// =============================================================================
-// ExecuteControl: u = u_ff(r) + u_lqr(s), actuators saturated
-// =============================================================================
-ROCKET_FF_LQR_01::InputVec ROCKET_FF_LQR_01::ExecuteControl(const StateVec& s,
-                                          const Reference_t& r) const
+ROCKET_FF_LQR_01::InputVec ROCKET_FF_LQR_01::ExecuteControl(const StateVec& s, const Reference_t& r) const
 {
     // Pull reference derivatives into named locals for clarity.
     const double ax = r.acc[0], ay = r.acc[1], az = r.acc[2];
@@ -174,22 +163,13 @@ ROCKET_FF_LQR_01::InputVec ROCKET_FF_LQR_01::ExecuteControl(const StateVec& s,
     const double F1_ff        = m_p.m*std::sqrt(ax*ax + ay*ay + std::pow(az + m_p.g, 2));
     const double alpha_ff     = std::atan2(ax, az + m_p.g);
     const double beta_ff      = std::atan2(-ay, std::sqrt(ax*ax + std::pow(az + m_p.g, 2)));
-    // Time derivatives of the FF angles. Needed to fill the angular-velocity
-    // entries of the LQR reference state s_ref. Without them the LQR would
-    // see the FF angular velocity as tracking error and emit spurious torques.
     const double alpha_ff_dot = (-ax*jz + jx*(az + m_p.g))/(ax*ax + std::pow(az + m_p.g, 2));
     const double beta_ff_dot  = std::pow(ax*ax + std::pow(az + m_p.g, 2), -0.5)*(ay*(ax*jx + jz*(az + m_p.g)) - jy*(ax*ax + std::pow(az + m_p.g, 2)))/(ax*ax + ay*ay + std::pow(az + m_p.g, 2));
-    // Torque feedforward: second time derivatives of the FF angles (needs jerk and snap).
     const double T1_ff        = m_p.Ix*(2.0*ax*jz*(ax*jx + jz*(az + m_p.g)) - 2.0*jx*(az + m_p.g)*(ax*jx + jz*(az + m_p.g)) + (ax*ax + std::pow(az + m_p.g, 2))*(-ax*sz + sx*(az + m_p.g)))/std::pow(ax*ax + std::pow(az + m_p.g, 2), 2);
     const double T2_ff        = -m_p.Iy*std::pow(ax*ax + std::pow(az + m_p.g, 2), -1.5)*(2.0*ay*(ax*ax + std::pow(az + m_p.g, 2))*(ax*jx + jz*(az + m_p.g))*(ax*jx + ay*jy + jz*(az + m_p.g)) - ay*(ax*ax + std::pow(az + m_p.g, 2))*(ax*ax + ay*ay + std::pow(az + m_p.g, 2))*(ax*sx + jx*jx + jz*jz + sz*(az + m_p.g)) + ay*std::pow(ax*jx + jz*(az + m_p.g), 2)*(ax*ax + ay*ay + std::pow(az + m_p.g, 2)) - 2.0*jy*std::pow(ax*ax + std::pow(az + m_p.g, 2), 2)*(ax*jx + ay*jy + jz*(az + m_p.g)) + sy*std::pow(ax*ax + std::pow(az + m_p.g, 2), 2)*(ax*ax + ay*ay + std::pow(az + m_p.g, 2)))/std::pow(ax*ax + ay*ay + std::pow(az + m_p.g, 2), 2);
-    // Roll FF is zero by design (psi held at zero).
-    const double T3_ff        = 0.0;
+    const double T3_ff        = m_p.Iz * r.yawAcc;   // yaw-torque FF = Iz * yawAcc
 
-    // Build the LQR reference state s_ref. The LQR sees u_lqr = -K_e * (s - s_ref):
-    // position, attitude, linear velocity, and angular velocity from the FF.
-    // Yaw and yaw-rate references are zero (roll-axis held at zero).
-    // Integrators have no FF reference: their states are themselves the integral
-    // of position error, so s_ref entries 12..14 stay zero.
+    // Build the LQR reference state s_ref; u_lqr = -K_e * (s - s_ref).
     StateVec s_ref{};
     s_ref[StateToIdx(StateName::X)]        = r.pos[0];
     s_ref[StateToIdx(StateName::Y)]        = r.pos[1];
@@ -204,12 +184,28 @@ ROCKET_FF_LQR_01::InputVec ROCKET_FF_LQR_01::ExecuteControl(const StateVec& s,
     s_ref[StateToIdx(StateName::BetaDot)]  = beta_ff_dot;
     s_ref[StateToIdx(StateName::PsiDot)]   = r.yawRate;
 
-    // LQR correction on the tracking error: u_lqr = -K_e * (s - s_ref).
+    // Tracking error e = s - s_ref, with two corrections before applying K:
+    //  (1) heading wrap on the yaw error, and (2) yaw-frame compensation: the gain
+    //      was synthesized at yaw=0, so rotate the horizontal position/velocity/
+    //      integral errors into the heading frame (Rz(-psi)) before feeding K.
+    std::array<double, 16> e{};
+    for (std::size_t j = 0; j < 16; ++j) e[j] = s[j] - s_ref[j];
+    { double dp = e[StateToIdx(StateName::Psi)];
+      e[StateToIdx(StateName::Psi)] = std::atan2(std::sin(dp), std::cos(dp)); }
+    const double cpsi = std::cos(r.yaw), spsi = std::sin(r.yaw);
+    auto rot = [cpsi, spsi](double& ex, double& ey) {
+        const double rx =  cpsi*ex + spsi*ey, ry = -spsi*ex + cpsi*ey;
+        ex = rx; ey = ry; };
+    rot(e[StateToIdx(StateName::X)],    e[StateToIdx(StateName::Y)]);
+    rot(e[StateToIdx(StateName::XDot)], e[StateToIdx(StateName::YDot)]);
+    rot(e[StateToIdx(StateName::IntX)], e[StateToIdx(StateName::IntY)]);
+
+    // LQR correction: u_lqr = -K_e * e.
     InputVec u_lqr{};
-    for (size_t i = 0; i < 4; ++i) {
+    for (std::size_t i = 0; i < 4; ++i) {
         double v = 0.0;
-        for (size_t j = 0; j < 15; ++j) {
-            v += K_e[i][j] * (s[j] - s_ref[j]);
+        for (std::size_t j = 0; j < 16; ++j) {
+            v += K_e[i][j] * e[j];
         }
         u_lqr[i] = -v;
     }

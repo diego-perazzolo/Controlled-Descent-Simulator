@@ -161,11 +161,12 @@ QUADROTOR_FF_LQR_01::StateVec QUADROTOR_FF_LQR_01::Dynamics(const StateVec& s, c
     const double cse28 = 0.70710678118654752*m_p.L;
     const double cse29 = T1*cse28;
     const double cse30 = T2*cse28;
-    const double cse31 = m_p.Irot*pow(m_p.kT, -0.5)*(sqrt(T1) + sqrt(T2) - sqrt(T3) - sqrt(T4));
+    const double cse31 = m_p.Irot*pow(m_p.kT, -0.5)*(sqrt(fabs(T1))*(((T1) > 0) - ((T1) < 0)) + sqrt(fabs(T2))*(((T2) > 0) - ((T2) < 0)) - sqrt(fabs(T3))*(((T3) > 0) - ((T3) < 0)) - sqrt(fabs(T4))*(((T4) > 0) - ((T4) < 0)));
     const double cse32 = -T3*cse28 + T4*cse28;
     const double cse33 = w_x*w_z;
     const double cse34 = w_x*w_y;
     const double cse35 = m_p.kQ/m_p.kT;
+    const double cse36 = ref_yaw - atan2(2*cse22, -cse21);
     dxdt[0] = v_x;
     dxdt[1] = v_y;
     dxdt[2] = v_z;
@@ -182,7 +183,7 @@ QUADROTOR_FF_LQR_01::StateVec QUADROTOR_FF_LQR_01::Dynamics(const StateVec& s, c
     dxdt[13] = -r_x + refx;
     dxdt[14] = -r_y + refy;
     dxdt[15] = -r_z + refz;
-    dxdt[16] = ref_yaw - atan2(2*cse22, -cse21);
+    dxdt[16] = atan2(sin(cse36), cos(cse36));
     return dxdt;
 }
 

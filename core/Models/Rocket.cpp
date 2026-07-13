@@ -78,6 +78,7 @@
 #define IDX_INTX      12
 #define IDX_INTY      13
 #define IDX_INTZ      14
+#define IDX_INTPSI    15
 
 namespace CDS {
 
@@ -107,19 +108,19 @@ static bool rk4_step(void* pDynamics, Rocket::StateVec&     x,
     const Rocket::StateVec k1 = pDyn->Dynamics(x, u, ref, userF);
 
     Rocket::StateVec x2{};
-    for (size_t i = 0; i < 15; ++i) x2[i] = x[i] + k1[i] * dt * 0.5;
+    for (size_t i = 0; i < 16; ++i) x2[i] = x[i] + k1[i] * dt * 0.5;
     const Rocket::StateVec k2 = pDyn->Dynamics(x2, u, ref, userF);
 
     Rocket::StateVec x3{};
-    for (size_t i = 0; i < 15; ++i) x3[i] = x[i] + k2[i] * dt * 0.5;
+    for (size_t i = 0; i < 16; ++i) x3[i] = x[i] + k2[i] * dt * 0.5;
     const Rocket::StateVec k3 = pDyn->Dynamics(x3, u, ref, userF);
 
     Rocket::StateVec x4{};
-    for (size_t i = 0; i < 15; ++i) x4[i] = x[i] + k3[i] * dt;
+    for (size_t i = 0; i < 16; ++i) x4[i] = x[i] + k3[i] * dt;
     const Rocket::StateVec k4 = pDyn->Dynamics(x4, u, ref, userF);
 
     // Weighted sum
-    for (size_t i = 0; i < 15; ++i)
+    for (size_t i = 0; i < 16; ++i)
         x[i] = x[i] + (k1[i] + 2.0*k2[i] + 2.0*k3[i] + k4[i]) * dt / 6.0;
 
     return false;
@@ -135,7 +136,8 @@ static void _init_dynamicsState(Reference_t& ref, Rocket::StateVec& state)
     Dynamics::ROCKET_FF_LQR_01::SetState(state, SN::Z,        ref.pos[2]);
     Dynamics::ROCKET_FF_LQR_01::SetState(state, SN::Alpha,      0.0);
     Dynamics::ROCKET_FF_LQR_01::SetState(state, SN::Beta,       0.0);
-    Dynamics::ROCKET_FF_LQR_01::SetState(state, SN::Psi,        0.0);
+    // Initial heading = ref.yaw so the yaw tracking error starts at zero.
+    Dynamics::ROCKET_FF_LQR_01::SetState(state, SN::Psi,        ref.yaw);
     Dynamics::ROCKET_FF_LQR_01::SetState(state, SN::XDot,       ref.vel[0]);
     Dynamics::ROCKET_FF_LQR_01::SetState(state, SN::YDot,       ref.vel[1]);
     Dynamics::ROCKET_FF_LQR_01::SetState(state, SN::ZDot,     ref.vel[2]);
@@ -146,6 +148,7 @@ static void _init_dynamicsState(Reference_t& ref, Rocket::StateVec& state)
     Dynamics::ROCKET_FF_LQR_01::SetState(state, SN::IntX,       0.0);
     Dynamics::ROCKET_FF_LQR_01::SetState(state, SN::IntY,       0.0);
     Dynamics::ROCKET_FF_LQR_01::SetState(state, SN::IntZ,       0.0);
+    Dynamics::ROCKET_FF_LQR_01::SetState(state, SN::IntPsi,     0.0);
 
 }
 
@@ -231,7 +234,10 @@ bool Rocket::PerformIntegration(const core_stepParams_t& params)
     m_trackingErr[0] = ref.pos[0] - m_state[IDX_X]; // Position X
     m_trackingErr[1] = ref.pos[1] - m_state[IDX_Y]; // Position Y
     m_trackingErr[2] = ref.pos[2] - m_state[IDX_Z]; // Position Z
-    m_trackingErr[3] = ref.yaw - m_state[IDX_PSI]; // Yaw angle
+    {                                               // Heading (wrapped to [-pi, pi])
+        const double eyaw = ref.yaw - m_state[IDX_PSI];
+        m_trackingErr[3] = std::atan2(std::sin(eyaw), std::cos(eyaw));
+    }
 
     // User forces
     m_userForces[0] = params.user_fX;
@@ -298,9 +304,9 @@ bool Rocket::GetState(core_state_t& state)
 
 bool Rocket::GetTrackingErrors(core_trackingErrors_t& tErrors)
 {
-    tErrors.x = m_trackingErr[0];
-    tErrors.y = m_trackingErr[1];
-    tErrors.z = m_trackingErr[2];
+    tErrors.x   = m_trackingErr[0];
+    tErrors.y   = m_trackingErr[1];
+    tErrors.z   = m_trackingErr[2];
     tErrors.yaw = m_trackingErr[3];
     return false;
 }
