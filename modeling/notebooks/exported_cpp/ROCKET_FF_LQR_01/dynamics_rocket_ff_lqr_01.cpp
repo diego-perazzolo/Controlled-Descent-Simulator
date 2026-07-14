@@ -193,21 +193,18 @@ ROCKET_FF_LQR_01::InputVec ROCKET_FF_LQR_01::ExecuteControl(const StateVec& s, c
     s_ref[StateToIdx(StateName::BetaDot)]  = beta_ff_dot;
     s_ref[StateToIdx(StateName::PsiDot)]   = r.yawRate;
 
-    // Tracking error e = s - s_ref, with two corrections before applying K:
-    //  (1) heading wrap on the yaw error, and (2) yaw-frame compensation: the gain
-    //      was synthesized at yaw=0, so rotate the horizontal position/velocity/
-    //      integral errors into the heading frame (Rz(-psi)) before feeding K.
+    // Tracking error e = s - s_ref, with a heading wrap on the yaw error.
+    // NOTE: unlike the quadrotor, NO yaw-frame rotation of the horizontal
+    // errors is applied here — and none is needed. In Rm = Ry(a)*Rx(b)*Rz(psi)
+    // the roll Rz is the innermost rotation and leaves body-z invariant, so
+    // the thrust direction (and the isotropic lateral drag) do not depend on
+    // psi: the plant is roll-invariant and the yaw=0 gain is valid at any psi.
+    // Rotating the errors here would MIS-align the loop by psi (unstable
+    // beyond ~0.8 rad; verified by closed-loop eigenvalues).
     std::array<double, 16> e{};
     for (std::size_t j = 0; j < 16; ++j) e[j] = s[j] - s_ref[j];
     { double dp = e[StateToIdx(StateName::Psi)];
       e[StateToIdx(StateName::Psi)] = std::atan2(std::sin(dp), std::cos(dp)); }
-    const double cpsi = std::cos(r.yaw), spsi = std::sin(r.yaw);
-    auto rot = [cpsi, spsi](double& ex, double& ey) {
-        const double rx =  cpsi*ex + spsi*ey, ry = -spsi*ex + cpsi*ey;
-        ex = rx; ey = ry; };
-    rot(e[StateToIdx(StateName::X)],    e[StateToIdx(StateName::Y)]);
-    rot(e[StateToIdx(StateName::XDot)], e[StateToIdx(StateName::YDot)]);
-    rot(e[StateToIdx(StateName::IntX)], e[StateToIdx(StateName::IntY)]);
 
     // LQR correction: u_lqr = -K_e * e.
     InputVec u_lqr{};
