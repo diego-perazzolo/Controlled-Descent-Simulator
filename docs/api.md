@@ -59,6 +59,24 @@ ext_fullState                  { x, y, z, x_dot, y_dot, z_dot,
 ext_setpointError              { xErr, yErr, zErr, yawErr }
 ```
 
+## Adding a command
+
+1. **Describe it in `apps/common/ext_api.py`**: declare any new structs, then
+   add a `Cmd` entry. Mind the meaning of the naming fields:
+   - `wire` (2nd arg) — PascalCase stem for the wire-level names only
+     (`Step` → `reqStep_t`, `WS_MSG_STEP`);
+   - `cfn` (3rd arg) — the C++ function name: this is the symbol you will
+     implement in `ext_comm.cpp`;
+   - `js` (4th arg) — the name the frontend calls (`sim.<js>(...)`).
+2. **Regenerate**: run `python3 apps/common/gen_ext.py`, or simply build any
+   app — CMake re-runs the generator when the description changes.
+3. **Implement the adapter** in the hand-written `apps/common/ext_comm.cpp`:
+   the function named `cfn`, converting the ext structs and calling the core.
+   Until you do, `wasm-only` and the `ws-served` server fail to link with an
+   undefined reference to `cfn` — that is the reminder, not a generator bug.
+   (The `ws-served` client links regardless: its implementation of `cfn` is
+   the generated marshalling.)
+
 ## JS-side usage
 
 The frontend imports the module from `build/simulator.js` and calls the API

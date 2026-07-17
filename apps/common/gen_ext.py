@@ -131,16 +131,34 @@ def req_breakdown(cmd):
         return ""
     if isinstance(cmd.req, tuple):
         return f" // 1 + {size_of(cmd.req[1]) // 4}f"
+    if has_bool(cmd.req):
+        return _field_breakdown(cmd.req)
     return f" // 1 + {size_of(cmd.req) // 4}f"
 
 
 def resp_breakdown(cmd):
     if cmd.resp == "bool":
         return " // 1 + u8"
+    return _field_breakdown(cmd.resp)
+
+
+def _field_breakdown(struct_name):
     parts = []
-    for f in STRUCTS[cmd.resp].fields:
+    for f in STRUCTS[struct_name].fields:
         parts.append("u8" if f.type == "bool" else f"{size_of(f.type) // 4}f")
     return " // 1 + " + " + ".join(parts)
+
+
+def _check_no_nested_bool(struct_name):
+    """bool is converted to uint8_t on the wire, but only at the top level of
+    request/response structs: a bool buried in a nested struct would cross
+    the wire raw. Fail generation loudly instead."""
+    for f in STRUCTS[struct_name].fields:
+        if f.type not in BASE_SIZES and has_bool(f.type):
+            raise SystemExit(
+                f"ext_api.py: {struct_name}.{f.name} nests a bool inside "
+                f"{f.type} — not supported on the wire, move the bool to the "
+                f"top level of {struct_name}")
 
 
 def struct_block(s):
@@ -309,7 +327,15 @@ def gen_ws_protocol():
     out += "/* Common message header: every request/response starts with this */\n"
     out += "typedef struct\n{\n    uint8_t type; // MsgType, echoed in the response\n} header_t;\n\n"
 
-    # requests
+    # validate wire-crossing structs before emitting anything
+    for cmd in COMMANDS:
+        if cmd.req is not None and not isinstance(cmd.req, tuple):
+            _check_no_nested_bool(cmd.req)
+        if cmd.resp != "bool":
+            _check_no_nested_bool(cmd.resp)
+
+    # requests: structs containing bool are expanded field by field with
+    # bool -> uint8_t, exactly like the responses (symmetric conversion)
     out += "/* ------------------------------- requests ------------------------------- */\n"
     for cmd in COMMANDS:
         out += "\ntypedef struct\n{\n    header_t h;\n"
@@ -317,7 +343,12 @@ def gen_ws_protocol():
             _, t, n = cmd.req
             out += f"    {t} {n};\n"
         elif cmd.req is not None:
-            out += f"    {cmd.req} p;\n"
+            if has_bool(cmd.req):
+                for f in STRUCTS[cmd.req].fields:
+                    t = "uint8_t" if f.type == "bool" else f.type
+                    out += f"    {t} {f.name};\n"
+            else:
+                out += f"    {cmd.req} p;\n"
         out += f"}} {wire_req_name(cmd)};\n"
 
     # responses
@@ -467,6 +498,14 @@ def _fill_req(cmd):
     if isinstance(cmd.req, tuple):
         _, _, n = cmd.req
         return f"    req.{n} = {n};\n"
+    if has_bool(cmd.req):
+        out = ""
+        for f in STRUCTS[cmd.req].fields:
+            if f.type == "bool":
+                out += f"    req.{f.name} = params.{f.name} ? 1 : 0;\n"
+            else:
+                out += f"    req.{f.name} = params.{f.name};\n"
+        return out
     return "    req.p = params;\n"
 
 
@@ -547,7 +586,8 @@ def gen_dispatch():
         b += "            if(_parse(msg, req)) return _respBool(h, true);\n\n"
         if cmd.log:
             b += f"            printf(\"[cds-server] {cmd.log}\\n\");\n"
-        call = _dispatch_call(cmd)
+        setup, call = _dispatch_call(cmd)
+        b += setup
         if cmd.resp == "bool":
             b += f"            return _respBool(h, {call});\n"
         elif has_bool(cmd.resp):
@@ -581,12 +621,22 @@ def gen_dispatch():
 
 
 def _dispatch_call(cmd):
+    """Returns (setup lines, call expression) to invoke the ext function."""
     if cmd.req is None:
-        return f"{cmd.cfn}()"
+        return "", f"{cmd.cfn}()"
     if isinstance(cmd.req, tuple):
         _, _, n = cmd.req
-        return f"{cmd.cfn}(req.{n})"
-    return f"{cmd.cfn}(req.p)"
+        return "", f"{cmd.cfn}(req.{n})"
+    if has_bool(cmd.req):
+        setup = f"            {cmd.req} par = {{}};\n"
+        for f in STRUCTS[cmd.req].fields:
+            if f.type == "bool":
+                setup += f"            par.{f.name} = req.{f.name} != 0;\n"
+            else:
+                setup += f"            par.{f.name} = req.{f.name};\n"
+        setup += "\n"
+        return setup, f"{cmd.cfn}(par)"
+    return "", f"{cmd.cfn}(req.p)"
 
 
 # --------------------------------------------------------------------------- #
