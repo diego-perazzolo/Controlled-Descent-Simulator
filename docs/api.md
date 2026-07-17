@@ -1,11 +1,19 @@
 # Core API
 
-The external communication API (`apps/common/ext_comm.hpp`) is the boundary
-between the frontend and the core. It is exposed to JavaScript one-to-one via
-the embind bindings (`apps/common/bindings.cpp`) and is identical for every
-app: `wasm-only` implements it by calling straight into the core
-(`ext_comm.cpp`), `ws-served` by marshalling each call over WebSocket to
-`cds_server` (`ext_comm_ws.cpp`).
+The external communication API (`apps/common/exported_cpp/ext_comm.hpp`) is
+the boundary between the frontend and the core. It is exposed to JavaScript
+one-to-one via the embind bindings (`exported_cpp/bindings.cpp`) and is
+identical for every app: `wasm-only` implements it by calling straight into
+the core (`ext_comm.cpp`), `ws-served` by marshalling each call over
+WebSocket to `cds_server` (`exported_cpp/ext_comm_ws.cpp`).
+
+The API is **described declaratively in `apps/common/ext_api.py`** — structs,
+bindings, wire protocol, client marshalling and server dispatch are all
+generated from it into the `exported_cpp/` folders by
+`apps/common/gen_ext.py` (the app builds re-run it automatically when the
+description changes). To add a command: add its structs and a `Cmd` entry
+there, regenerate (or just build), then implement the adapter function in
+the hand-written `apps/common/ext_comm.cpp`.
 
 Error convention: functions returning `bool` return `true` on error.
 
@@ -34,8 +42,8 @@ bool ext_trajectory_remove_last_item(void);
 
 ## Key types
 
-Defined in `apps/common/ext_defs.hpp`; all fields are `ext_coord_t` (float).
-Structs at this boundary are POD — no STL containers.
+Defined in `apps/common/exported_cpp/ext_defs.hpp`; all fields are
+`ext_coord_t` (float). Structs at this boundary are POD — no STL containers.
 
 ```cpp
 ext_rocketParams               { mass_Kg, inertiaX/Y/Z_Kgm2, c, cz }

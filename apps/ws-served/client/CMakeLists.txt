@@ -22,19 +22,25 @@ endif()
 
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../../../libs/ws libs_ws)
 
+# ext API generation: re-runs gen_ext.py when ext_api.py changes
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../common/gen_ext.cmake)
+
 add_executable(simulator
-    ext_comm_ws.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../common/bindings.cpp
+    ${CDS_EXT_WS_GEN_DIR}/ext_comm_ws.cpp
+    ${CDS_EXT_COMMON_GEN_DIR}/bindings.cpp
 )
 
 target_include_directories(simulator PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/..           # ws_protocol.hpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../common  # ext_comm.hpp, ext_defs.hpp
+    ${CDS_EXT_WS_GEN_DIR}      # ws_protocol.hpp
+    ${CDS_EXT_COMMON_GEN_DIR}  # ext_comm.hpp, ext_defs.hpp
 )
+
+target_compile_features(simulator PRIVATE cxx_std_20)
 
 # cds_ws_client also carries the transport pre-js and the exported runtime
 # methods it needs, via INTERFACE link options
 target_link_libraries(simulator PRIVATE cds_ws_client)
+add_dependencies(simulator cds_gen_ext)
 
 set_target_properties(simulator PROPERTIES
     OUTPUT_NAME "simulator"
@@ -53,6 +59,7 @@ add_custom_target(deploy_to_build ALL
     DEPENDS simulator
     COMMENT "Deploying ws-served proxy module to build/"
 )
+
 target_link_options(simulator PRIVATE
     -lembind
     -sEXPORT_ES6=1

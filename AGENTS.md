@@ -7,10 +7,14 @@ conventions, invariants, verification commands and the review procedure.
 
 ## Golden rules (violating these causes real damage)
 
-1. **Everything under `modeling/notebooks/exported_cpp/` is generated code.**
-   Never hand-edit it. To change it, modify the codegen
-   (`base_codegen.py`, `rocket_codegen.py`, `quad_codegen.py`) or the notebook
-   that drives it, then re-run the notebook's export section.
+1. **Every `exported_cpp/` folder is generated code — never hand-edit it.**
+   - `modeling/notebooks/exported_cpp/` — to change it, modify the codegen
+     (`base_codegen.py`, `rocket_codegen.py`, `quad_codegen.py`) or the
+     notebook that drives it, then re-run the notebook's export section;
+   - `apps/common/exported_cpp/` and `apps/ws-served/exported_cpp/` — to
+     change them, edit `apps/common/ext_api.py` and run
+     `python3 apps/common/gen_ext.py` (the app builds also re-run it
+     automatically when the description changes).
 2. **Error convention: functions returning `bool` return `true` on error.**
    A `return true;` after an error comment is correct — do not "fix" it.
 3. **Layer separation:** `ext_*` types live only under `apps/` (the `common/`
@@ -29,17 +33,17 @@ conventions, invariants, verification commands and the review procedure.
 6. **Never commit build artifacts** (WASM output, `cds_server`, compiled
    `driver` / `_driver` test binaries). They are gitignored — keep it that way.
 7. Jupyter notebooks are committed with outputs and execution counts cleared.
-8. **ext API ↔ WS protocol coupling:** any change to the API in
-   `apps/common/ext_comm.hpp` / `ext_defs.hpp` must be replicated in
-   `apps/ws-served/ws_protocol.hpp`, `apps/ws-served/client/ext_comm_ws.cpp`
-   and `apps/ws-served/server/dispatch.cpp`, or the ws-served app silently
-   diverges from wasm-only. Request/response correlation is owned by the
-   `libs/ws` transport (4-byte id framing) — never add ids to `ws_protocol`.
-   Fields crossing the wire (including via `ext_defs.hpp` structs) must be
-   `ext_coord_t` or `uint8_t` only — never `bool`, `double`, `size_t`, `long`
-   or pointers, whose width/padding is architecture-dependent. The exact-size
-   `static_assert`s in `ws_protocol.hpp` enforce this: update the expected
-   numbers on every protocol change.
+8. **The ext API is described in `apps/common/ext_api.py`, nowhere else.**
+   To add or change a command: edit the description, run
+   `python3 apps/common/gen_ext.py` (regenerates structs, contract, bindings
+   and the whole ws wire layer, including the exact-size `static_assert`s),
+   then implement the adapter function in the hand-written
+   `apps/common/ext_comm.cpp`.
+   `python3 apps/common/gen_ext.py --check` must pass before every commit.
+   Wire-crossing fields must be `ext_coord_t` or `bool` only — never
+   `double`, `size_t`, `long` or pointers, whose width/padding is
+   architecture-dependent. Request/response correlation is owned by the
+   `libs/ws` transport (4-byte id framing) — never add ids to the protocol.
 
 ## Naming
 
@@ -63,12 +67,16 @@ cmake -S apps/ws-served/server -B build-server && cmake --build build-server
 # Fast C++ syntax check without emsdk (per file)
 clang++ -std=c++20 -fsyntax-only \
   -Icore -Icore/Models -Icore/Trajectory \
-  -Iapps/common -Iapps/ws-served -Ilibs/ws \
+  -Iapps/common/exported_cpp -Iapps/ws-served/exported_cpp \
+  -Iapps/ws-served/server -Ilibs/ws \
   -Imodeling/notebooks/exported_cpp/ROCKET_FF_LQR_01 \
   -Imodeling/notebooks/exported_cpp/QUADROTOR_FF_LQR_01 <file.cpp>
 
 # Frontend syntax check (main.js is an ES module)
 cp frontend/main.js /tmp/main_check.mjs && node --check /tmp/main_check.mjs
+
+# ext API generator: verify generated files match apps/common/ext_api.py
+python3 apps/common/gen_ext.py --check
 
 # Python codegen sanity
 python3 -c "import ast; [ast.parse(open('modeling/notebooks/'+f).read()) \

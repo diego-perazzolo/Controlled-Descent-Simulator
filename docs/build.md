@@ -125,21 +125,27 @@ The repository includes a GitHub Actions workflow ([`.github/workflows/deploy.ym
 │       └── Poly4.hpp / Poly4.cpp               # 4th order polynomial trajectory
 │
 ├── apps/                                       # Deployments of the core; each app has its own CMakeLists
-│   ├── common/                                 # Shared by all apps
-│   │   ├── ext_defs.hpp                        # External struct definitions (the ext API boundary)
-│   │   ├── ext_comm.hpp                        # ext API contract (implemented by each adapter)
-│   │   ├── ext_comm.cpp                        # Direct adapter: ext → core function calls
-│   │   └── bindings.cpp                        # Emscripten embind bindings
+│   ├── common/                                 # Shared by all apps: the ext API "factory"
+│   │   ├── ext_api.py                          # Declarative description of the ext API (source of truth)
+│   │   ├── gen_ext.py                          # Generator: ext_api.py → the exported_cpp/ folders
+│   │   ├── gen_ext.cmake                       # Hooks the generator into the app builds (auto re-run)
+│   │   ├── ext_comm.cpp                        # Direct adapter: ext → core function calls (hand-written)
+│   │   └── exported_cpp/                       # GENERATED — never hand-edit
+│   │       ├── ext_defs.hpp                    # External struct definitions (the ext API boundary)
+│   │       ├── ext_comm.hpp                    # ext API contract (implemented by each adapter)
+│   │       └── bindings.cpp                    # Emscripten embind bindings
 │   ├── wasm-only/
 │   │   └── CMakeLists.txt                      # Full in-browser app: core + direct adapter in one WASM
 │   └── ws-served/                              # Core on a native server, browser as thin client
-│       ├── ws_protocol.hpp                     # Binary wire protocol (client ↔ server)
+│       ├── exported_cpp/                       # GENERATED — never hand-edit
+│       │   ├── ws_protocol.hpp                 # Binary wire protocol (client ↔ server)
+│       │   ├── ext_comm_ws.cpp                 # WebSocket adapter: ext ↔ ws_protocol marshalling
+│       │   └── dispatch.cpp                    # ws_protocol requests → ext communication layer
 │       ├── client/
-│       │   ├── CMakeLists.txt
-│       │   └── ext_comm_ws.cpp                 # WebSocket adapter: ext ↔ ws_protocol marshalling
+│       │   └── CMakeLists.txt
 │       ├── server/
 │       │   ├── CMakeLists.txt
-│       │   ├── dispatch.hpp / dispatch.cpp     # ws_protocol requests → ext communication layer
+│       │   ├── dispatch.hpp
 │       │   └── main.cpp                        # cds_server entry point
 │       └── test/
 │           └── test_ws_e2e.html                # Manual end-to-end check of the ws-served app

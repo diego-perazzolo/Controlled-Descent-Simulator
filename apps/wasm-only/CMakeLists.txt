@@ -19,16 +19,20 @@ endif()
 
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../../core core)
 
+# ext API generation: re-runs gen_ext.py when ext_api.py changes
+include(${CMAKE_CURRENT_SOURCE_DIR}/../common/gen_ext.cmake)
+
 add_executable(simulator
     ${CMAKE_CURRENT_SOURCE_DIR}/../common/ext_comm.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../common/bindings.cpp
+    ${CDS_EXT_COMMON_GEN_DIR}/bindings.cpp
 )
 
 target_include_directories(simulator PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/../common
+    ${CDS_EXT_COMMON_GEN_DIR}
 )
 
 target_link_libraries(simulator PRIVATE cds_core)
+add_dependencies(simulator cds_gen_ext)
 
 set_target_properties(simulator PROPERTIES
     OUTPUT_NAME "simulator"
@@ -47,6 +51,7 @@ add_custom_target(deploy_to_build ALL
     DEPENDS simulator
     COMMENT "Deploying wasm-only module to build/"
 )
+
 target_link_options(simulator PRIVATE
     -lembind
     -sEXPORT_ES6=1

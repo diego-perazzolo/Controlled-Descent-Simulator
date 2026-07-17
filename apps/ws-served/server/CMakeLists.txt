@@ -17,15 +17,20 @@ endif()
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../../../core core)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../../../libs/ws libs_ws)
 
+# ext API generation: re-runs gen_ext.py when ext_api.py changes
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../common/gen_ext.cmake)
+
 add_executable(cds_server
     main.cpp
-    dispatch.cpp
+    ${CDS_EXT_WS_GEN_DIR}/dispatch.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../../common/ext_comm.cpp
 )
 
 target_include_directories(cds_server PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/..           # ws_protocol.hpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../common  # ext_comm.hpp, ext_defs.hpp
+    ${CMAKE_CURRENT_SOURCE_DIR}   # dispatch.hpp
+    ${CDS_EXT_WS_GEN_DIR}         # ws_protocol.hpp
+    ${CDS_EXT_COMMON_GEN_DIR}     # ext_comm.hpp, ext_defs.hpp
 )
 
 target_link_libraries(cds_server PRIVATE cds_core cds_ws_server)
+add_dependencies(cds_server cds_gen_ext)
