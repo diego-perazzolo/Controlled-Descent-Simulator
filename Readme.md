@@ -1,6 +1,6 @@
 # Controlled Descent Simulator
 
-A real-time, interactive simulator of **controlled flight and descent**, built with a C++ physics core compiled to **WebAssembly** and a vanilla JS frontend. Runs entirely in the browser — no server required.
+A real-time, interactive simulator of **controlled flight and descent**, built with a C++ physics core compiled to **WebAssembly** and a vanilla JS frontend. Runs entirely in the browser — no server required. Alternatively, the same core can run natively in a **WebSocket server** (`cds_server`) with the browser acting as a thin client; each deployment is an app under `apps/` selected at build time (see [docs/build.md](docs/build.md)).
 
 Two vehicle models are available, selectable at runtime:
 - **Rocket** — powered descent of a single-stage booster (SpaceX Falcon 9 style)
@@ -31,14 +31,14 @@ Simulate the controlled 3D flight of a rocket booster and of a quadrotor, with:
 - **Model selector** — switch between Rocket and QuadRotor at runtime; each model has its own parameter panel
 - **Charts view** — real-time strip charts for x, y, z position, yaw error and position error magnitude
 - **3D view** — Three.js scene with vehicle mesh (rocket: body + nose cone + landing legs; quadrotor: frame + rotors), trajectory trail, orbital camera (orbit / pan / zoom)
-- **Params tab** — edit all physical and trajectory parameters at runtime (including yaw setpoints); Apply & Reset re-initializes the core without reloading the page
+- **Params tab** — edit all physical and trajectory parameters at runtime; Apply & Reset re-initializes the core without reloading the page
 - **User force buttons** — six hold-to-apply buttons (±X, ±Y, ±Z) inject external perturbation forces into the simulation at every step; force magnitude is configurable
 - **Simulation controls** — Start / Stop / Reset
 - **Live simulation time** display
 
-### Core (C++ → WebAssembly)
+### Core (C++ — in-browser WASM or native server)
 
-#### Communication Layer (`ext/`)
+#### Communication Layer (`apps/common`)
 - `ext_rocketInit(params)` — initializes the Rocket model with parameters and actuator limits
 - `ext_quadRotorInit(params)` — initializes the QuadRotor model with parameters and actuator limits
 - `ext_step(stepParams)` — advances one integration step; returns full state and tracking errors (position + yaw)
@@ -85,7 +85,7 @@ Simulate the controlled 3D flight of a rocket booster and of a quadrotor, with:
 │                   SIMULATOR (.wasm)                     │
 │                                                         │
 │  ┌───────────────────────────────────────────────────┐  │
-│  │           ext/ — Communication Layer              │  │
+│  │          apps/ — Communication Layer              │  │
 │  │   embind bindings · struct conversion · errors    │  │
 │  └──────────────────────┬────────────────────────────┘  │
 │                         │                               │
@@ -153,44 +153,10 @@ LQR on tracking error (position + yaw, with error integrators), feedforward on a
 
 ## Core API
 
-```cpp
-// Initialize the Rocket model (FF_LQR_01), returns true on error
-bool ext_initRocket_FFLQR01(ext_initRocketParams params);      // JS: ext_rocketInit
-
-// Initialize the QuadRotor model (FF_LQR_01), returns true on error
-bool ext_initQuadRotor_FFLQR01(ext_initQuadRotorParams params); // JS: ext_quadRotorInit
-
-// Advance one integration step
-ext_stepRet ext_step(ext_stepParams params);
-
-// Get a point at time instant t along the trajectory
-ext_trajectoryPoint ext_trajectory_get_point(ext_coord_t t);
-
-/* Add a trajectory Polynomial 4th order, returns true on error */
-bool ext_trajectory_append_poly4(ext_trajectoryPoly4Params_t params);
-
-/* Add a trajectory Point, returns true on error */
-bool ext_trajectory_append_point(ext_trajectoryPointParams_t params);
-
-/* Remove last trajectory item, returns true on error */
-bool ext_trajectory_remove_last_item(void);
-```
-
-
-### Key types
-```cpp
-ext_rocketParams               { mass_Kg, inertiaX/Y/Z_Kgm2, c, cz }
-ext_rocketActuatorLimits       { fZ_max/min, Tx_max/min, Ty_max/min }
-ext_quadRotorParams            { mass_Kg, inertiaX/Y/Z_Kgm2, c, cz, motorThrustCoefficient,
-                                motorTorqueCoefficient, distanceBtwMotorAndCoM, motorMomentOfInertia }
-ext_quadRotorActuatorLimits    { motor_max_thrust, motor_min_thrust }
-ext_trajectoryPoly4Params_t    { initialPos/Vel + initialYaw/YawRate, finalPos/Vel/Acc + finalYaw/YawRate/YawAcc, time_s }
-ext_trajectoryPointParams_t    { finalPos, finalYaw, time_s }
-ext_userForce                  { fX, fY, fZ }
-ext_fullState                  { x, y, z, x_dot, y_dot, z_dot,
-                                roll, pitch, yaw, roll_dot, pitch_dot, yaw_dot }
-ext_setpointError              { xErr, yErr, zErr, yawErr }
-```
+The frontend talks to the core through a small C-style API (init, step,
+trajectory composition), identical for every app and exposed to JavaScript
+via embind. Functions, types and JS usage are documented in
+**[docs/api.md](docs/api.md)**.
 
 ---
 
@@ -214,136 +180,44 @@ ext_setpointError              { xErr, yErr, zErr, yawErr }
 
 ```
 /
-├── core/
-│   ├── CMakeLists.txt
-│   ├── core.hpp / core.cpp                     # C-style public interface (stubs → impl)
-│   ├── core_defs.hpp                           # Internal type definitions
-│   ├── Models/
-│   │   ├── BaseModel.hpp / BaseModel.cpp       # Abstract model base
-│   │   ├── Rocket.hpp / Rocket.cpp             # 6 DOF rocket model (Euler angles)
-│   │   └── QuadRotor.hpp / QuadRotor.cpp       # 6 DOF quadrotor model (quaternion)
-│   ├── Trajectory/
-│   │   ├── TrajectoryManager.hpp / .cpp        # trajectory composition
-│   │   ├── Trajectory.hpp / Trajectory.cpp     # base trajectory class
-│   │   ├── Point.hpp / Point.cpp               # waypoint-like
-│   │   └── Poly4.hpp / Poly4.cpp               # 4th order polynomial trajectory
-│   └── ext/
-│       ├── ext_defs.hpp                        # External struct definitions
-│       ├── ext_comm.hpp / ext_comm.cpp         # Adapter layer (ext ↔ core)
-│       └── bindings.cpp                        # Emscripten embind bindings
-│
-├── modeling/
-│   ├── requirements.txt                        # Python requirements
-│   └── notebooks/
-│       ├── dynamics_rocket_FFLQR01.ipynb       # Rocket dynamics with LQR + FF for trajectory tracking
-│       ├── dynamics_quadRotor_FFLQR01.ipynb    # QuadRotor dynamics with LQR + flatness FF
-│       ├── base_codegen.py                     # Shared C++ code-generation base
-│       ├── rocket_codegen.py                   # Rocket-specific codegen (derives from base)
-│       ├── quad_codegen.py                     # QuadRotor-specific codegen (derives from base)
-│       └── exported_cpp/
-│           ├── ROCKET_FF_LQR_01/
-│           │   └── dynamics_rocket_ff_lqr_01.cpp / .hpp        # Generated rocket dynamics + controller
-│           └── QUADROTOR_FF_LQR_01/
-│               └── dynamics_quadrotor_ff_lqr_01.cpp / .hpp     # Generated quadrotor dynamics + controller
-│
-├── frontend/
-│   ├── index.html
-│   └── main.js                                 # Simulation loop, renderers, UI logic
-│
-├── .github/
-│   └── workflows/
-│       └── deploy.yml                          # GitHub Pages CI/CD
-│
-└── Readme.md
+├── core/        # The physics core (models, controller, trajectory), a static library
+├── apps/        # Deployments of the core: common/ (ext API + bindings), wasm-only/, ws-served/
+├── libs/        # In-house infrastructure libraries (ws: WebSocket RPC transport)
+├── frontend/    # Shared web UI — runs whichever app was built last into build/
+├── modeling/    # Jupyter/SymPy notebooks + C++ code generation
+├── tools/       # Dev utilities (serve.py: COOP/COEP dev server)
+└── docs/        # Documentation and media
 ```
+
+The full annotated tree is in [docs/build.md](docs/build.md#repository-structure).
 
 ---
 
-## Prerequisites
-
-| Tool | Version | Notes |
-|------|---------|-------|
-| [Emscripten SDK](https://emscripten.org/docs/getting_started/downloads.html) | 3.1.56+ | Provides `emcmake` / `emcc` |
-| CMake | 3.15+ | Build system |
-| Python 3 | any | Local dev server |
-
-## Build & Run
-
-### Compile the core (WebAssembly)
-
-If necessary configure the environment with:
+## Quickstart
 
 ```bash
-source pathToEmSDK/emsdk_env.sh
-```
-
-**Debug** (with source maps for local development):
-
-```bash
-emcmake cmake -S core -B build -DCMAKE_BUILD_TYPE=Debug
-cmake --build build
-```
-
-**Release** (optimised, no debug symbols):
-
-```bash
-emcmake cmake -S core -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build
-```
-
-### Run the frontend locally
-
-From the project root:
-
-```bash
-python3 -m http.server 8080
+emcmake cmake -S apps/wasm-only -B build-wasm-only -DCMAKE_BUILD_TYPE=Release
+cmake --build build-wasm-only
+python3 tools/serve.py 8080
 ```
 
 Then open `http://localhost:8080/frontend/` in the browser.
 
-### Run Jupyter notebooks in VS Code
-
-Create and activate a python virtual environment.
-Navigate with the Terminal to a folder where you want to store the virtual environment - venv -, then:
-
-```bash
-# Create virtual environment
-python3 -m venv venv
-
-# Activate environment (macOS/zsh)
-source venv/bin/activate
-```
-
-
-Register kernel name:
-
-```bash
-python -m ipykernel install --user --name=rocket-modeling --display-name="Python (rocket-modeling)"
-```
-
-Now it is possible to open the notebook in VS Code, select the previously created python kernel and run the notebook
-
-### GitHub Pages
-
-The repository includes a GitHub Actions workflow ([`.github/workflows/deploy.yml`](.github/workflows/deploy.yml)) that automatically builds the WASM in Release mode and deploys to GitHub Pages on every push to `main`.
+Prerequisites, the ws-served app (native core server + WebSocket thin
+client), app switching, notebook setup and deployment are documented in
+**[docs/build.md](docs/build.md)**.
 
 ---
 
-## Roadmap
+## Future Steps
 
-- [x] Architecture design
-- [x] Communication layer (`ext/`) with embind bindings
-- [x] Plain HTML/JS frontend — charts, 3D view, params tab, force buttons
-- [x] Three.js 3D scene — rocket mesh + trajectory trail + OrbitControls
-- [x] C++ core: 6 DOF model + RK4 integrator
-- [x] C++ core: LQR controller
-- [x] Customizable trajectory (with yaw setpoints)
-- [x] QuadRotor model (quaternion attitude, flatness FF + LQR)
-- [x] Shared codegen base class (rocket + quadrotor generators)
-- [ ] C++ core: PID controller
-- [x] GitHub Pages deployment (CI/CD workflow)
-- [x] Quaternion rotation support (QuadRotor)
-- [ ] DAE solver (future)
+- [x] C++ core: 6 DOF models + RK4 integrator (Rocket: Euler angles, QuadRotor: quaternion)
+- [x] LQR controller with feedforward (differential flatness for the QuadRotor)
+- [x] Customizable trajectory composition (with yaw setpoints)
+- [x] Notebook-driven C++ code generation (shared codegen base, per-model generators)
+- [x] ws-served app: core on a native WebSocket server, browser as thin client
+- [ ] Save / load of parameters and trajectories from the frontend
+- [ ] Real hardware interface (MAVLink-based, with supporting facilities)
 
 ---
 

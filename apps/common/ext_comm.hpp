@@ -63,16 +63,16 @@ typedef struct
     ext_setpointError err;
 } ext_stepRet;
 
-// Initialize Rocket model: FF_LQR_01, returns true on error
+/* Initialize Rocket model: FF_LQR_01, returns true on error */
 bool ext_initRocket_FFLQR01(ext_initRocketParams params);
 
-// Initialize QuadRotor model: FF_LQR_01, returns true on error
+/* Initialize QuadRotor model: FF_LQR_01, returns true on error */
 bool ext_initQuadRotor_FFLQR01(ext_initQuadRotorParams params);
 
-// Advance one integration step
+/* Advance one integration step */
 ext_stepRet ext_step(ext_stepParams params);
 
-// Get a point at time instant t along the trajectory
+/* Get a point at time instant t along the trajectory */
 ext_trajectoryPoint ext_trajectory_get_point(ext_coord_t t);
 
 /* Add a trajectory Polynomial 4th order, returns true on error */

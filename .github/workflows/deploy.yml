@@ -27,8 +27,8 @@ jobs:
 
       - name: Build WASM (Release)
         run: |
-          emcmake cmake -S core -B build -DCMAKE_BUILD_TYPE=Release
-          cmake --build build
+          emcmake cmake -S apps/wasm-only -B build-wasm-only -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-wasm-only
 
       - name: Prepare site
         run: |

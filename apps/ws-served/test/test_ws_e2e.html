@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<!-- Manual end-to-end check of the ws-served app.
+     1. build the proxy: emcmake cmake -S apps/ws-served/client -B build-ws-client
+                         cmake --build build-ws-client   (lands in build/)
+     2. build and run the native core server:
+                         cmake -S apps/ws-served/server -B build-server
+                         cmake --build build-server && ./build-server/cds_server
+     3. serve the repo root:  python3 tools/serve.py 8080
+     4. open http://localhost:8080/apps/ws-served/test/test_ws_e2e.html
+        (append ?ws=ws://host:port to target a non-default server)
+     The div below reports TESTRESULT ... on success, TESTFAIL otherwise. -->
+<html>
+<body>
+<div id="out">PENDING</div>
+<script type="module">
+import createSimulator from '../../../build/simulator.js';
+
+const out = document.getElementById('out');
+try {
+    const sim = await createSimulator();
+
+    const initErr = sim.ext_rocketInit({
+        rocketPar: { mass_Kg: 10.0, inertiaX_Kgm2: 10/3, inertiaY_Kgm2: 10/3,
+                     inertiaZ_Kgm2: 1, c: 1, cz: 0.02 },
+        rocketActuatorLimits: { fZ_max: 500, fZ_min: 0, Tx_max: 10, Tx_min: -10,
+                                Ty_max: 10, Ty_min: -10, Tz_max: 10, Tz_min: -10 },
+    });
+
+    const polyErr = sim.ext_trajectory_append_poly4({
+        initialPos: { x: -50, y: 50, z: 80 }, initialYaw: 0,
+        initialVel: { x: 0, y: 5, z: -50 },  initialYawRate: 0,
+        finalPos: { x: 0, y: 0, z: 0 },      finalYaw: 0,
+        finalVel: { x: 0, y: 0, z: 0 },      finalYawRate: 0,
+        finalAcc: { x: 0, y: 0, z: 0 },      finalYawAcc: 0,
+        time_s: 20,
+    });
+
+    const p = sim.ext_trajectory_get_point(10.0);
+
+    let step = null;
+    for (let i = 0; i < 50; i++) {
+        step = sim.ext_step({ timeStep_s: 0.01, userForce: { fX: 0, fY: 0, fZ: 0 } });
+    }
+
+    out.textContent = 'TESTRESULT initErr=' + initErr + ' polyErr=' + polyErr +
+        ' point=(' + p.x.toFixed(2) + ',' + p.y.toFixed(2) + ',' + p.z.toFixed(2) + ')' +
+        ' stepErr=' + step.isError + ' z=' + step.state.z.toFixed(2);
+} catch (e) {
+    out.textContent = 'TESTFAIL ' + e;
+}
+/* report the outcome to the HTTP server log so it can be read from the CLI */
+fetch('/__result__' + encodeURIComponent(out.textContent)).catch(() => {});
+fetch('/__result__' + encodeURIComponent(out.textContent)).catch(() => {});
+</script>
+</body>
+</html>

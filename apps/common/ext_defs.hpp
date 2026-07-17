@@ -24,8 +24,9 @@
 // THE SOFTWARE.
 //
 // =============================================================================
-// File        : <filename.cpp>
-// Description : <brief description of this file>
+// File        : ext_defs.hpp
+// Description : Struct definitions of the external communication API (the
+//               boundary shared by all apps and the embind bindings)
 // Author      : Diego Perazzolo
 // Created     : 2026
 // =============================================================================

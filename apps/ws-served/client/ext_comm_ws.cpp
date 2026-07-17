@@ -1,0 +1,190 @@
+// =============================================================================
+// Controlled Descent Simulator
+// =============================================================================
+//
+// Copyright (c) 2026 Diego Perazzolo
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+// THE SOFTWARE.
+//
+// =============================================================================
+// File        : ext_comm_ws.cpp
+// Description : WebSocket adapter of the external communication API.
+//               Drop-in replacement for ext_comm.cpp: instead of calling the
+//               core directly, every ext_* call is marshalled into a
+//               ws_protocol message and round-tripped through the libs/ws
+//               synchronous RPC transport (ws_rpc_client) to a native server
+//               running the core. See ws_rpc_client.hpp for the transport
+//               requirements (COOP/COEP, bridge worker) and URL selection.
+// Author      : Diego Perazzolo
+// Created     : 2026
+// =============================================================================
+
+#include <cstdint>
+#include "ext_comm.hpp"
+#include "ws_protocol.hpp"
+#include "ws_rpc_client.hpp"
+
+using namespace ws_proto;
+
+/* Static functions */
+
+/* Round-trips one request/response pair, returns true on error */
+template <typename Req, typename Resp>
+static bool _rpc(Req& req, Resp& resp)
+{
+    int n = ws_rpc(reinterpret_cast<const uint8_t*>(&req), sizeof(Req),
+                   reinterpret_cast<uint8_t*>(&resp), sizeof(Resp));
+
+    if(n != (int)sizeof(Resp))
+    {
+        // Err: transport failure or unexpected response size
+        return true;
+    }
+
+    if(resp.h.type != req.h.type)
+    {
+        // Err: response does not match the request
+        return true;
+    }
+
+    return false;
+}
+
+/* ext functions */
+
+bool ext_initRocket_FFLQR01(ext_initRocketParams params)
+{
+    reqInitRocket_t req = {};
+    respBool_t resp = {};
+
+    req.h.type = WS_MSG_INIT_ROCKET;
+    req.params = params.params;
+    req.actuatorLimits = params.actuatorLimits;
+
+    if(_rpc(req, resp))
+    {
+        return true;
+    }
+
+    return resp.isError != 0;
+}
+
+bool ext_initQuadRotor_FFLQR01(ext_initQuadRotorParams params)
+{
+    reqInitQuadRotor_t req = {};
+    respBool_t resp = {};
+
+    req.h.type = WS_MSG_INIT_QUADROTOR;
+    req.params = params.params;
+    req.actuatorLimits = params.actuatorLimits;
+
+    if(_rpc(req, resp))
+    {
+        return true;
+    }
+
+    return resp.isError != 0;
+}
+
+ext_stepRet ext_step(ext_stepParams stepParams)
+{
+    ext_stepRet ret = {};
+    reqStep_t req = {};
+    respStep_t resp = {};
+
+    req.h.type = WS_MSG_STEP;
+    req.timeStep_s = stepParams.timeStep_s;
+    req.userForce = stepParams.userForce;
+
+    if(_rpc(req, resp))
+    {
+        ret.isError = true;
+        return ret;
+    }
+
+    ret.isError = resp.isError != 0;
+    ret.state = resp.state;
+    ret.err = resp.err;
+
+    return ret;
+}
+
+ext_trajectoryPoint ext_trajectory_get_point(ext_coord_t t)
+{
+    reqTrajGetPoint_t req = {};
+    respPoint_t resp = {};
+
+    req.h.type = WS_MSG_TRAJ_GET_POINT;
+    req.t = t;
+
+    if(_rpc(req, resp))
+    {
+        // Err
+        return {};
+    }
+
+    return resp.point;
+}
+
+bool ext_trajectory_append_poly4(ext_trajectoryPoly4Params_t params)
+{
+    reqTrajAppendPoly4_t req = {};
+    respBool_t resp = {};
+
+    req.h.type = WS_MSG_TRAJ_APPEND_POLY4;
+    req.params = params;
+
+    if(_rpc(req, resp))
+    {
+        return true;
+    }
+
+    return resp.isError != 0;
+}
+
+bool ext_trajectory_append_point(ext_trajectoryPointParams_t params)
+{
+    reqTrajAppendPoint_t req = {};
+    respBool_t resp = {};
+
+    req.h.type = WS_MSG_TRAJ_APPEND_POINT;
+    req.params = params;
+
+    if(_rpc(req, resp))
+    {
+        return true;
+    }
+
+    return resp.isError != 0;
+}
+
+bool ext_trajectory_remove_last_item(void)
+{
+    reqTrajRemoveLast_t req = {};
+    respBool_t resp = {};
+
+    req.h.type = WS_MSG_TRAJ_REMOVE_LAST;
+
+    if(_rpc(req, resp))
+    {
+        return true;
+    }
+
+    return resp.isError != 0;
+}

@@ -23,14 +23,17 @@
 // THE SOFTWARE.
 //
 // =============================================================================
-// File        : <filename.cpp>
-// Description : <brief description of this file>
+// File        : ext_comm.cpp
+// Description : Direct implementation of the external communication API:
+//               converts ext structs and calls straight into the core.
+//               Linked by apps/wasm-only (in-browser core) and by
+//               apps/ws-served/server (native core behind cds_server).
 // Author      : Diego Perazzolo
 // Created     : 2026
 // =============================================================================
 
 #include "ext_comm.hpp"
-#include "../core.hpp"
+#include "core.hpp"
 
 /* Immediately return if ret == true */
 #define ASSERT_FALSE(ret) if(ret) return ret 

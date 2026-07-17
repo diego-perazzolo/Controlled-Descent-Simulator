@@ -1,5 +1,6 @@
-# Build artifacts
+# Build artifacts (build/ = WASM, build-*/ = native server & alt configs)
 build/
+build-*/
 
 # IDE
 .vscode/

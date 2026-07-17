@@ -1,0 +1,171 @@
+// =============================================================================
+// Controlled Descent Simulator
+// =============================================================================
+//
+// Copyright (c) 2026 Diego Perazzolo
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+// THE SOFTWARE.
+//
+// =============================================================================
+// File        : dispatch.cpp
+// Description : ws_protocol request dispatcher — see dispatch.hpp.
+// Author      : Diego Perazzolo
+// Created     : 2026
+// =============================================================================
+
+#include "dispatch.hpp"
+
+#include <cstdio>
+#include <cstring>
+
+#include "ext_comm.hpp"
+#include "ws_protocol.hpp"
+
+using namespace ws_proto;
+
+/* Static functions */
+
+/* Copy a wire request into its typed struct, returns true on size mismatch */
+template <typename Req>
+static bool _parse(const std::vector<uint8_t>& msg, Req& req)
+{
+    if(msg.size() != sizeof(Req))
+    {
+        // Err: malformed request
+        return true;
+    }
+    memcpy(&req, msg.data(), sizeof(Req));
+    return false;
+}
+
+template <typename Resp>
+static std::vector<uint8_t> _serialize(const Resp& resp)
+{
+    std::vector<uint8_t> out(sizeof(Resp));
+    memcpy(out.data(), &resp, sizeof(Resp));
+    return out;
+}
+
+static std::vector<uint8_t> _respBool(const header_t& h, bool isError)
+{
+    respBool_t resp = {};
+    resp.h = h;
+    resp.isError = isError ? 1 : 0;
+    return _serialize(resp);
+}
+
+/* Dispatch one request to the ext communication layer */
+std::vector<uint8_t> server_dispatch(const std::vector<uint8_t>& msg)
+{
+    if(msg.size() < sizeof(header_t))
+    {
+        // Err: too short to carry a header, no way to answer meaningfully
+        return {};
+    }
+
+    header_t h = {};
+    memcpy(&h, msg.data(), sizeof(header_t));
+
+    switch(h.type)
+    {
+        case WS_MSG_INIT_ROCKET:
+        {
+            reqInitRocket_t req = {};
+            if(_parse(msg, req)) return _respBool(h, true);
+
+            ext_initRocketParams par = {};
+            par.params = req.params;
+            par.actuatorLimits = req.actuatorLimits;
+
+            printf("[cds-server] init rocket\n");
+            return _respBool(h, ext_initRocket_FFLQR01(par));
+        }
+
+        case WS_MSG_INIT_QUADROTOR:
+        {
+            reqInitQuadRotor_t req = {};
+            if(_parse(msg, req)) return _respBool(h, true);
+
+            ext_initQuadRotorParams par = {};
+            par.params = req.params;
+            par.actuatorLimits = req.actuatorLimits;
+
+            printf("[cds-server] init quadrotor\n");
+            return _respBool(h, ext_initQuadRotor_FFLQR01(par));
+        }
+
+        case WS_MSG_STEP:
+        {
+            reqStep_t req = {};
+            if(_parse(msg, req)) return _respBool(h, true);
+
+            ext_stepParams par = {};
+            par.timeStep_s = req.timeStep_s;
+            par.userForce = req.userForce;
+
+            ext_stepRet stepRet = ext_step(par);
+
+            respStep_t resp = {};
+            resp.h = h;
+            resp.isError = stepRet.isError ? 1 : 0;
+            resp.state = stepRet.state;
+            resp.err = stepRet.err;
+            return _serialize(resp);
+        }
+
+        case WS_MSG_TRAJ_GET_POINT:
+        {
+            reqTrajGetPoint_t req = {};
+            if(_parse(msg, req)) return _respBool(h, true);
+
+            respPoint_t resp = {};
+            resp.h = h;
+            resp.point = ext_trajectory_get_point(req.t);
+            return _serialize(resp);
+        }
+
+        case WS_MSG_TRAJ_APPEND_POLY4:
+        {
+            reqTrajAppendPoly4_t req = {};
+            if(_parse(msg, req)) return _respBool(h, true);
+
+            return _respBool(h, ext_trajectory_append_poly4(req.params));
+        }
+
+        case WS_MSG_TRAJ_APPEND_POINT:
+        {
+            reqTrajAppendPoint_t req = {};
+            if(_parse(msg, req)) return _respBool(h, true);
+
+            return _respBool(h, ext_trajectory_append_point(req.params));
+        }
+
+        case WS_MSG_TRAJ_REMOVE_LAST:
+        {
+            reqTrajRemoveLast_t req = {};
+            if(_parse(msg, req)) return _respBool(h, true);
+
+            return _respBool(h, ext_trajectory_remove_last_item());
+        }
+
+        default:
+            // Err: unknown message type
+            return _respBool(h, true);
+    }
+}

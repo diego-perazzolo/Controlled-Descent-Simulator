@@ -1,9 +1,12 @@
+# =============================================================================
+# core — the physics core as a static library (cds_core).
+# Toolchain-agnostic: compiled to WASM by apps/wasm-only, natively by
+# apps/ws-served/server. Never built standalone; apps add it with
+# add_subdirectory and link against cds_core.
+# =============================================================================
 cmake_minimum_required(VERSION 3.15)
-project(ControlledDescentSimulator)
 
-set(CMAKE_CXX_STANDARD 20)
-
-add_executable(simulator
+add_library(cds_core STATIC
     core.cpp
     Models/BaseModel.cpp
     Models/Rocket.cpp
@@ -12,45 +15,17 @@ add_executable(simulator
     Trajectory/TrajectoryManager.cpp
     Trajectory/Poly4.cpp
     Trajectory/Point.cpp
-    ext/ext_comm.cpp
-    ext/bindings.cpp
-    ../modeling/notebooks/exported_cpp/ROCKET_FF_LQR_01/dynamics_rocket_ff_lqr_01.cpp
-    ../modeling/notebooks/exported_cpp/QUADROTOR_FF_LQR_01/dynamics_quadrotor_ff_lqr_01.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../modeling/notebooks/exported_cpp/ROCKET_FF_LQR_01/dynamics_rocket_ff_lqr_01.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../modeling/notebooks/exported_cpp/QUADROTOR_FF_LQR_01/dynamics_quadrotor_ff_lqr_01.cpp
 )
 
-target_include_directories(simulator PRIVATE
+target_compile_features(cds_core PUBLIC cxx_std_20)
+
+target_include_directories(cds_core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
-    ${CMAKE_CURRENT_SOURCE_DIR}/ext
     ${CMAKE_CURRENT_SOURCE_DIR}/Models
     ${CMAKE_CURRENT_SOURCE_DIR}/Trajectory
     ${CMAKE_CURRENT_SOURCE_DIR}/../modeling/notebooks/exported_cpp/
     ${CMAKE_CURRENT_SOURCE_DIR}/../modeling/notebooks/exported_cpp/ROCKET_FF_LQR_01/
     ${CMAKE_CURRENT_SOURCE_DIR}/../modeling/notebooks/exported_cpp/QUADROTOR_FF_LQR_01/
 )
-
-# Emscripten-specific flags
-if (EMSCRIPTEN)
-    set_target_properties(simulator PROPERTIES
-        OUTPUT_NAME "simulator"
-        SUFFIX ".js"
-    )
-    target_link_options(simulator PRIVATE
-        -lembind
-        -sEXPORT_ES6=1
-        -sMODULARIZE=1
-        -sEXPORT_NAME=createSimulator
-        -sALLOW_MEMORY_GROWTH=1
-    )
-
-    # Debug: source maps + debug symbols
-    target_link_options(simulator PRIVATE
-        $<$<CONFIG:Debug>:-g>
-        $<$<CONFIG:Debug>:--source-map-base>
-        $<$<CONFIG:Debug>:http://localhost:8080/>
-    )
-
-    # Release: optimise for size
-    target_link_options(simulator PRIVATE
-        $<$<CONFIG:Release>:-O2>
-    )
-endif()
