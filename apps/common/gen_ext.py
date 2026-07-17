@@ -18,6 +18,7 @@
 # Usage       : python3 apps/common/gen_ext.py           regenerate all files
 #               python3 apps/common/gen_ext.py --check   verify files in sync
 # =============================================================================
+import hashlib
 import os
 import sys
 
@@ -27,6 +28,22 @@ from ext_api import DEFS, COMM, COMMANDS, Struct, Raw  # noqa: E402
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 STRUCTS = {s.name: s for s in DEFS + COMM if isinstance(s, Struct)}
+
+
+def protocol_version():
+    """8-bit fingerprint of everything that shapes the wire: command ids and
+    types, plus the layout of every struct. Two peers can only talk if they
+    were generated from the same description — any drift changes the byte
+    and the version check turns silent corruption into an explicit error."""
+    canon = []
+    for cmd in sorted(COMMANDS, key=lambda c: c.id):
+        req = "|".join(cmd.req) if isinstance(cmd.req, tuple) else str(cmd.req)
+        canon.append(f"cmd:{cmd.id}:{cmd.wire}:{req}:{cmd.resp}")
+    for name in sorted(STRUCTS):
+        fields = ",".join(f"{f.name}:{f.type}" for f in STRUCTS[name].fields)
+        canon.append(f"struct:{name}:{fields}")
+    digest = hashlib.sha256("\n".join(canon).encode()).digest()
+    return digest[0]
 
 # --------------------------------------------------------------------------- #
 # common text                                                                  #
@@ -81,7 +98,7 @@ def header(filename, description_lines):
 # helpers                                                                      #
 # --------------------------------------------------------------------------- #
 
-BASE_SIZES = {"ext_coord_t": 4, "bool": 1, "uint8_t": 1}
+BASE_SIZES = {"ext_coord_t": 4, "bool": 1, "uint8_t": 1, "header_t": 2}
 
 
 def size_of(type_name):
@@ -109,7 +126,7 @@ def enum_name(cmd):
 
 
 def req_size(cmd):
-    n = 1  # header_t
+    n = size_of("header_t")
     if cmd.req is None:
         return n
     if isinstance(cmd.req, tuple):
@@ -118,27 +135,28 @@ def req_size(cmd):
 
 
 def resp_size(cmd):
+    n = size_of("header_t")
     if cmd.resp == "bool":
-        return 2  # header_t + uint8_t
-    n = 1
+        return n + 1  # uint8_t isError
     for f in STRUCTS[cmd.resp].fields:
         n += 1 if f.type == "bool" else size_of(f.type)
     return n
 
 
 def req_breakdown(cmd):
+    h = size_of("header_t")
     if cmd.req is None:
         return ""
     if isinstance(cmd.req, tuple):
-        return f" // 1 + {size_of(cmd.req[1]) // 4}f"
+        return f" // {h} + {size_of(cmd.req[1]) // 4}f"
     if has_bool(cmd.req):
         return _field_breakdown(cmd.req)
-    return f" // 1 + {size_of(cmd.req) // 4}f"
+    return f" // {h} + {size_of(cmd.req) // 4}f"
 
 
 def resp_breakdown(cmd):
     if cmd.resp == "bool":
-        return " // 1 + u8"
+        return f" // {size_of('header_t')} + u8"
     return _field_breakdown(cmd.resp)
 
 
@@ -146,7 +164,7 @@ def _field_breakdown(struct_name):
     parts = []
     for f in STRUCTS[struct_name].fields:
         parts.append("u8" if f.type == "bool" else f"{size_of(f.type) // 4}f")
-    return " // 1 + " + " + ".join(parts)
+    return f" // {size_of('header_t')} + " + " + ".join(parts)
 
 
 def _check_no_nested_bool(struct_name):
@@ -314,6 +332,13 @@ def gen_ws_protocol():
     out += "#pragma once\n#include <cstdint>\n#include \"ext_comm.hpp\"\n\n"
     out += "namespace ws_proto {\n\n"
     out += "constexpr uint16_t WS_DEFAULT_PORT = 9002;\n\n"
+    out += ("/* 8-bit fingerprint of the API description (command ids/types and\n"
+            "   wire struct layouts), computed by the generator — not a\n"
+            "   hand-maintained number. Peers built from different descriptions\n"
+            "   carry different bytes, and both sides refuse to talk: a stale\n"
+            "   simulator.wasm against a newer cds_server fails loudly instead\n"
+            "   of corrupting the parsing. */\n")
+    out += f"constexpr uint8_t WS_PROTOCOL_VERSION = 0x{protocol_version():02X};\n\n"
 
     # enum
     out += "/* Message types: request and matching response carry the same type id */\n"
@@ -325,7 +350,10 @@ def gen_ws_protocol():
 
     out += "#pragma pack(push, 1)\n\n"
     out += "/* Common message header: every request/response starts with this */\n"
-    out += "typedef struct\n{\n    uint8_t type; // MsgType, echoed in the response\n} header_t;\n\n"
+    out += ("typedef struct\n{\n"
+            "    uint8_t version; // WS_PROTOCOL_VERSION of the sender\n"
+            "    uint8_t type;    // MsgType, echoed in the response\n"
+            "} header_t;\n\n")
 
     # validate wire-crossing structs before emitting anything
     for cmd in COMMANDS:
@@ -391,7 +419,7 @@ def gen_ws_protocol():
         seen_resp.add(name)
         rows.append((name, resp_size(cmd), resp_breakdown(cmd)))
     nw = max(len(r[0]) for r in rows)
-    out += f"static_assert(sizeof(header_t){' ' * (nw - len('header_t'))} ==  1, \"wire layout drift\");\n"
+    out += f"static_assert(sizeof(header_t){' ' * (nw - len('header_t'))} ==  2, \"wire layout drift\");\n"
     for name, size, note in rows:
         out += (f"static_assert(sizeof({name}){' ' * (nw - len(name))} == "
                 f"{size:>2}, \"wire layout drift\");{note}\n")
@@ -421,12 +449,20 @@ using namespace ws_proto;
 template <typename Req, typename Resp>
 static bool _rpc(Req& req, Resp& resp)
 {
+    req.h.version = WS_PROTOCOL_VERSION;
+
     int n = ws_rpc(reinterpret_cast<const uint8_t*>(&req), sizeof(Req),
                    reinterpret_cast<uint8_t*>(&resp), sizeof(Resp));
 
     if(n != (int)sizeof(Resp))
     {
         // Err: transport failure or unexpected response size
+        return true;
+    }
+
+    if(resp.h.version != WS_PROTOCOL_VERSION)
+    {
+        // Err: the server was generated from a different API description
         return true;
     }
 
@@ -566,6 +602,15 @@ std::vector<uint8_t> server_dispatch(const std::vector<uint8_t>& msg)
 
     header_t h = {};
     memcpy(&h, msg.data(), sizeof(header_t));
+
+    if(h.version != WS_PROTOCOL_VERSION)
+    {
+        // Err: client generated from a different API description
+        printf("[cds-server] protocol version mismatch: client 0x%02X, server 0x%02X\\n",
+               (unsigned)h.version, (unsigned)WS_PROTOCOL_VERSION);
+        h.version = WS_PROTOCOL_VERSION; // answer with ours, the client rejects it
+        return _respBool(h, true);
+    }
 
     switch(h.type)
     {

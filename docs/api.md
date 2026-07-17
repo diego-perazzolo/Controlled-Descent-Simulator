@@ -59,6 +59,17 @@ ext_fullState                  { x, y, z, x_dot, y_dot, z_dot,
 ext_setpointError              { xErr, yErr, zErr, yawErr }
 ```
 
+## Protocol version
+
+`WS_PROTOCOL_VERSION` (in the generated `ws_protocol.hpp`) is **not an
+incremental number and is never maintained by hand**: it is an 8-bit
+fingerprint of the API description, computed by the generator — a signature
+answering "were both peers generated from the same `ext_api.py`?" rather
+than "which version is this?". Change the description and the byte changes
+on both sides automatically; a client and a server carrying different bytes
+refuse to talk (explicit error + server log) instead of mis-parsing each
+other.
+
 ## Adding a command
 
 1. **Describe it in `apps/common/ext_api.py`**: declare any new structs, then

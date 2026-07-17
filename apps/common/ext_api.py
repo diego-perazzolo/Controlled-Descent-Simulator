@@ -84,7 +84,7 @@ class Cmd:
 
 DEFS = [
     Raw('/* Types */\n'
-        'typedef float ext_coord_t; // type for running coordinartes: position, pose, force'),
+        'typedef float ext_coord_t; // type for running coordinates: position, pose, force'),
 
     Struct("ext_vec3_t", doc=None, fields=[
         F("x"), F("y"), F("z"),

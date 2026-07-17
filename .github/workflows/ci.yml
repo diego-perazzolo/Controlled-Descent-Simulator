@@ -1,0 +1,48 @@
+name: CI
+
+on: [push, pull_request]
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generated files in sync with ext_api.py
+        run: python3 apps/common/gen_ext.py --check
+
+      - name: Frontend syntax check
+        run: cp frontend/main.js /tmp/main_check.mjs && node --check /tmp/main_check.mjs
+
+      - name: Codegen sanity (modeling)
+        run: |
+          python3 -c "import ast; [ast.parse(open('modeling/notebooks/'+f).read()) \
+            for f in ('base_codegen.py','rocket_codegen.py','quad_codegen.py')]"
+
+      - name: Build native core server
+        run: |
+          cmake -S apps/ws-served/server -B build-server -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-server
+
+      - name: Protocol end-to-end test
+        run: python3 apps/ws-served/test/test_protocol.py ./build-server/cds_server
+
+  build-wasm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Emscripten
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: 3.1.56
+
+      - name: Build wasm-only app
+        run: |
+          emcmake cmake -S apps/wasm-only -B build-wasm-only -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-wasm-only
+
+      - name: Build ws-served client (WASM proxy)
+        run: |
+          emcmake cmake -S apps/ws-served/client -B build-ws-client -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-ws-client

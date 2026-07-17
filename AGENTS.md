@@ -44,6 +44,8 @@ conventions, invariants, verification commands and the review procedure.
    `double`, `size_t`, `long` or pointers, whose width/padding is
    architecture-dependent. Request/response correlation is owned by the
    `libs/ws` transport (4-byte id framing) — never add ids to the protocol.
+   The protocol version byte is a generator-computed fingerprint of the
+   description — never hand-set or "fix" it.
 
 ## Naming
 
@@ -77,6 +79,9 @@ cp frontend/main.js /tmp/main_check.mjs && node --check /tmp/main_check.mjs
 
 # ext API generator: verify generated files match apps/common/ext_api.py
 python3 apps/common/gen_ext.py --check
+
+# ws protocol end-to-end test (builds nothing: needs build-server/cds_server)
+python3 apps/ws-served/test/test_protocol.py ./build-server/cds_server
 
 # Python codegen sanity
 python3 -c "import ast; [ast.parse(open('modeling/notebooks/'+f).read()) \

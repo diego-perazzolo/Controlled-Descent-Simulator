@@ -83,6 +83,15 @@ std::vector<uint8_t> server_dispatch(const std::vector<uint8_t>& msg)
     header_t h = {};
     memcpy(&h, msg.data(), sizeof(header_t));
 
+    if(h.version != WS_PROTOCOL_VERSION)
+    {
+        // Err: client generated from a different API description
+        printf("[cds-server] protocol version mismatch: client 0x%02X, server 0x%02X\n",
+               (unsigned)h.version, (unsigned)WS_PROTOCOL_VERSION);
+        h.version = WS_PROTOCOL_VERSION; // answer with ours, the client rejects it
+        return _respBool(h, true);
+    }
+
     switch(h.type)
     {
         case WS_MSG_INIT_ROCKET:

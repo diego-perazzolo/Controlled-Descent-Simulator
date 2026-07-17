@@ -49,12 +49,20 @@ using namespace ws_proto;
 template <typename Req, typename Resp>
 static bool _rpc(Req& req, Resp& resp)
 {
+    req.h.version = WS_PROTOCOL_VERSION;
+
     int n = ws_rpc(reinterpret_cast<const uint8_t*>(&req), sizeof(Req),
                    reinterpret_cast<uint8_t*>(&resp), sizeof(Resp));
 
     if(n != (int)sizeof(Resp))
     {
         // Err: transport failure or unexpected response size
+        return true;
+    }
+
+    if(resp.h.version != WS_PROTOCOL_VERSION)
+    {
+        // Err: the server was generated from a different API description
         return true;
     }
 

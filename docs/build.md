@@ -148,7 +148,8 @@ The repository includes a GitHub Actions workflow ([`.github/workflows/deploy.ym
 │       │   ├── dispatch.hpp
 │       │   └── main.cpp                        # cds_server entry point
 │       └── test/
-│           └── test_ws_e2e.html                # Manual end-to-end check of the ws-served app
+│           ├── test_protocol.py                # e2e protocol test against a real cds_server (runs in CI)
+│           └── test_ws_e2e.html                # Manual in-browser end-to-end check of the ws-served app
 │
 ├── libs/                                       # In-house infrastructure libraries (apps → libs, one way)
 │   └── ws/                                     # Dependency-free WebSocket RPC transport
@@ -184,7 +185,8 @@ The repository includes a GitHub Actions workflow ([`.github/workflows/deploy.ym
 │
 ├── .github/
 │   └── workflows/
-│       └── deploy.yml                          # GitHub Pages CI/CD
+│       ├── ci.yml                              # CI: generator sync, builds, protocol e2e test
+│       └── deploy.yml                          # GitHub Pages deployment
 │
 └── Readme.md
 ```

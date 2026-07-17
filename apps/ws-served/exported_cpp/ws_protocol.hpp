@@ -44,6 +44,14 @@ namespace ws_proto {
 
 constexpr uint16_t WS_DEFAULT_PORT = 9002;
 
+/* 8-bit fingerprint of the API description (command ids/types and
+   wire struct layouts), computed by the generator — not a
+   hand-maintained number. Peers built from different descriptions
+   carry different bytes, and both sides refuse to talk: a stale
+   simulator.wasm against a newer cds_server fails loudly instead
+   of corrupting the parsing. */
+constexpr uint8_t WS_PROTOCOL_VERSION = 0x1B;
+
 /* Message types: request and matching response carry the same type id */
 enum MsgType : uint8_t
 {
@@ -61,7 +69,8 @@ enum MsgType : uint8_t
 /* Common message header: every request/response starts with this */
 typedef struct
 {
-    uint8_t type; // MsgType, echoed in the response
+    uint8_t version; // WS_PROTOCOL_VERSION of the sender
+    uint8_t type;    // MsgType, echoed in the response
 } header_t;
 
 /* ------------------------------- requests ------------------------------- */
@@ -139,17 +148,17 @@ constexpr uint32_t WS_MAX_MSG_SIZE = 256;
    each peer checks them against its own ABI at compile time, so any layout
    drift (padding from mixed-size fields, architecture-dependent type widths)
    breaks the build instead of silently corrupting the parsing. */
-static_assert(sizeof(header_t)             ==  1, "wire layout drift");
-static_assert(sizeof(reqInitRocket_t)      == 57, "wire layout drift"); // 1 + 14f
-static_assert(sizeof(reqInitQuadRotor_t)   == 49, "wire layout drift"); // 1 + 12f
-static_assert(sizeof(reqStep_t)            == 17, "wire layout drift"); // 1 + 4f
-static_assert(sizeof(reqTrajGetPoint_t)    ==  5, "wire layout drift"); // 1 + 1f
-static_assert(sizeof(reqTrajAppendPoly4_t) == 85, "wire layout drift"); // 1 + 21f
-static_assert(sizeof(reqTrajAppendPoint_t) == 21, "wire layout drift"); // 1 + 5f
-static_assert(sizeof(reqTrajRemoveLast_t)  ==  1, "wire layout drift");
-static_assert(sizeof(respBool_t)           ==  2, "wire layout drift"); // 1 + u8
-static_assert(sizeof(respStep_t)           == 66, "wire layout drift"); // 1 + u8 + 12f + 4f
-static_assert(sizeof(respTrajGetPoint_t)   == 13, "wire layout drift"); // 1 + 1f + 1f + 1f
+static_assert(sizeof(header_t)             ==  2, "wire layout drift");
+static_assert(sizeof(reqInitRocket_t)      == 58, "wire layout drift"); // 2 + 14f
+static_assert(sizeof(reqInitQuadRotor_t)   == 50, "wire layout drift"); // 2 + 12f
+static_assert(sizeof(reqStep_t)            == 18, "wire layout drift"); // 2 + 4f
+static_assert(sizeof(reqTrajGetPoint_t)    ==  6, "wire layout drift"); // 2 + 1f
+static_assert(sizeof(reqTrajAppendPoly4_t) == 86, "wire layout drift"); // 2 + 21f
+static_assert(sizeof(reqTrajAppendPoint_t) == 22, "wire layout drift"); // 2 + 5f
+static_assert(sizeof(reqTrajRemoveLast_t)  ==  2, "wire layout drift");
+static_assert(sizeof(respBool_t)           ==  3, "wire layout drift"); // 2 + u8
+static_assert(sizeof(respStep_t)           == 67, "wire layout drift"); // 2 + u8 + 12f + 4f
+static_assert(sizeof(respTrajGetPoint_t)   == 14, "wire layout drift"); // 2 + 1f + 1f + 1f
 
 static_assert(sizeof(reqTrajAppendPoly4_t) < WS_MAX_MSG_SIZE, "wire msg too big");
 static_assert(sizeof(respStep_t) < WS_MAX_MSG_SIZE, "wire msg too big");

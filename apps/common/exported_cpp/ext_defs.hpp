@@ -33,7 +33,7 @@
 
 #pragma once
 /* Types */
-typedef float ext_coord_t; // type for running coordinartes: position, pose, force
+typedef float ext_coord_t; // type for running coordinates: position, pose, force
 
 typedef struct
 {
