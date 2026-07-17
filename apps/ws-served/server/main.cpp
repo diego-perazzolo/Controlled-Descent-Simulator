@@ -71,18 +71,40 @@ static void _tick_generator(void)
         _lastTime = Clock::now();
     }
 
-    auto t1 = Clock::now();
-    auto us_elapsed = std::chrono::duration_cast<std::chrono::microseconds>(t1 - _lastTime);
+    /* Elapsed measured as floating-point seconds: an integer duration_cast
+       would truncate to zero once an iteration gets faster than its unit,
+       silently freezing the simulation */
+    using FpSeconds = std::chrono::duration<double>;
 
-    std::this_thread::sleep_for(std::chrono::microseconds((long long)(tickPeriodSeconds * 1e6) - us_elapsed.count()));
+    auto t1 = Clock::now();
+    double elapsed_seconds = FpSeconds(t1 - _lastTime).count();
+
+    /* Sleeping costs microseconds (syscall + late wakeup): worth it only when
+       the remaining wait is much larger than that overhead. Below the margin,
+       busy-wait on the clock instead — nanosecond-precise, and cheaper than a
+       nap that oversleeps past the whole tick period */
+    constexpr double SLEEP_MARGIN_SECONDS = 100e-6;
+
+    const double remaining_seconds = tickPeriodSeconds - elapsed_seconds;
+    if (remaining_seconds > SLEEP_MARGIN_SECONDS)
+    {
+        std::this_thread::sleep_for(FpSeconds(remaining_seconds));
+    }
+    else
+    {
+        while (FpSeconds(Clock::now() - _lastTime).count() < tickPeriodSeconds)
+        {
+            /* spin until the tick deadline */
+        }
+    }
 
     t1 = Clock::now();
-    us_elapsed = std::chrono::duration_cast<std::chrono::microseconds>(t1 - _lastTime);
+    elapsed_seconds = FpSeconds(t1 - _lastTime).count();
     _lastTime = t1;
 
     /* A stall (e.g. a model re-init holding the core lock, scheduler hiccup)
        must not feed a huge dt into the integrator */
-    core_coord_t dt_seconds = static_cast<core_coord_t>(us_elapsed.count() / 1e6);
+    core_coord_t dt_seconds = static_cast<core_coord_t>(elapsed_seconds);
     const core_coord_t dtMax_seconds = 3 * tickPeriodSeconds;
     if (dt_seconds > dtMax_seconds)
     {

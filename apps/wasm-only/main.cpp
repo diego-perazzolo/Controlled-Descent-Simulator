@@ -62,16 +62,21 @@ static void _tick_generator(void)
         _lastTime = Clock::now();
     }
 
-    auto t1 = Clock::now();
-    auto us_elapsed = std::chrono::duration_cast<std::chrono::microseconds>(t1 - _lastTime);
+    /* Elapsed measured as floating-point seconds: an integer duration_cast
+       would truncate to zero once a frame gets faster than its unit,
+       silently freezing the simulation */
+    using FpSeconds = std::chrono::duration<double>;
 
-    if (us_elapsed.count() >= tickPeriodSeconds * 1e6)
+    auto t1 = Clock::now();
+    double elapsed_seconds = FpSeconds(t1 - _lastTime).count();
+
+    if (elapsed_seconds >= tickPeriodSeconds)
     {
         _lastTime = t1;
 
         /* A stall (e.g. the tab left in background) must not feed a huge dt
            into the integrator */
-        core_coord_t dt_seconds = static_cast<core_coord_t>(us_elapsed.count() / 1e6);
+        core_coord_t dt_seconds = static_cast<core_coord_t>(elapsed_seconds);
         const core_coord_t dtMax_seconds = 3 * tickPeriodSeconds;
         if (dt_seconds > dtMax_seconds)
         {
