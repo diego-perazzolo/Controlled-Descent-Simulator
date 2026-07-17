@@ -33,6 +33,8 @@
 // =============================================================================
 #pragma once
 #include <array>
+#include <map>
+#include <string>
 #include "Trajectory.hpp"
 
 namespace CDS

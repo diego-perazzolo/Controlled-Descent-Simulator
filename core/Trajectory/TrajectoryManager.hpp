@@ -30,6 +30,7 @@
 // =============================================================================
 #pragma once
 #include <memory>
+#include <vector>
 #include "core_defs.hpp"
 #include "Trajectory.hpp"
 

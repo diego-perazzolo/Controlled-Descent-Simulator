@@ -29,6 +29,8 @@
 // Created     : 2026
 // =============================================================================
 #pragma once
+#include <map>
+#include <string>
 #include "Trajectory.hpp"
 
 namespace CDS

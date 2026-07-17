@@ -32,6 +32,7 @@
 
 #include <array>
 #include <map>
+#include <string>
 #include <vector>
 #include "core_defs.hpp"
 
