@@ -153,7 +153,7 @@ typedef struct
 
 
 // System's state (position, velocity, ...)
-typedef struct 
+typedef struct
 {
     /* velocities */
     core_coord_t x_dot;
@@ -182,3 +182,29 @@ typedef struct
     core_coord_t z;
     core_coord_t yaw;
 } core_trackingErrors_t;
+
+// System parameters
+typedef struct
+{
+    // Timestep of simulation / plant loop
+    core_coord_t timestep_seconds;
+    
+    // User forces
+    core_coord_t user_fX;
+    core_coord_t user_fY;
+    core_coord_t user_fZ;
+} core_systemParams_t;
+
+// Snapshot data
+typedef struct
+{
+    // Elapsed time of simulation
+    core_coord_t time_seconds;
+    
+    // System's state
+    core_state_t state;
+
+    // System's tracking errors
+    core_trackingErrors_t errors;
+
+} core_snapshotData_t;

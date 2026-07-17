@@ -109,28 +109,6 @@ bool ext_initQuadRotor_FFLQR01(ext_initQuadRotorParams params)
     return resp.isError != 0;
 }
 
-ext_stepRet ext_step(ext_stepParams params)
-{
-    ext_stepRet ret = {};
-    reqStep_t req = {};
-    respStep_t resp = {};
-
-    req.h.type = WS_MSG_STEP;
-    req.p = params;
-
-    if(_rpc(req, resp))
-    {
-        ret.isError = true;
-        return ret;
-    }
-
-    ret.isError = resp.isError != 0;
-    ret.state = resp.state;
-    ret.err = resp.err;
-
-    return ret;
-}
-
 ext_trajectoryPoint ext_trajectory_get_point(ext_coord_t t)
 {
     reqTrajGetPoint_t req = {};
@@ -186,6 +164,74 @@ bool ext_trajectory_remove_last_item(void)
     respBool_t resp = {};
 
     req.h.type = WS_MSG_TRAJ_REMOVE_LAST;
+
+    if(_rpc(req, resp))
+    {
+        return true;
+    }
+
+    return resp.isError != 0;
+}
+
+bool ext_setSystemParams(ext_systemParams params)
+{
+    reqSetSystemParams_t req = {};
+    respBool_t resp = {};
+
+    req.h.type = WS_MSG_SET_SYSTEM_PARAMS;
+    req.p = params;
+
+    if(_rpc(req, resp))
+    {
+        return true;
+    }
+
+    return resp.isError != 0;
+}
+
+ext_snapshotData ext_getSnapshot(void)
+{
+    ext_snapshotData ret = {};
+    reqGetSnapshot_t req = {};
+    respGetSnapshot_t resp = {};
+
+    req.h.type = WS_MSG_GET_SNAPSHOT;
+
+    if(_rpc(req, resp))
+    {
+        ret.isError = true;
+        return ret;
+    }
+
+    ret.time_seconds = resp.time_seconds;
+    ret.state = resp.state;
+    ret.err = resp.err;
+    ret.isError = resp.isError != 0;
+
+    return ret;
+}
+
+bool ext_run(void)
+{
+    reqRun_t req = {};
+    respBool_t resp = {};
+
+    req.h.type = WS_MSG_RUN;
+
+    if(_rpc(req, resp))
+    {
+        return true;
+    }
+
+    return resp.isError != 0;
+}
+
+bool ext_stop(void)
+{
+    reqStop_t req = {};
+    respBool_t resp = {};
+
+    req.h.type = WS_MSG_STOP;
 
     if(_rpc(req, resp))
     {

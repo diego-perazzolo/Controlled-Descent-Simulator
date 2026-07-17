@@ -18,6 +18,7 @@ get_filename_component(CDS_EXT_COMMON_DIR ${CMAKE_CURRENT_LIST_DIR} ABSOLUTE)
 get_filename_component(CDS_EXT_WS_DIR ${CDS_EXT_COMMON_DIR}/../ws-served ABSOLUTE)
 
 set(CDS_EXT_COMMON_GEN_DIR ${CDS_EXT_COMMON_DIR}/exported_cpp)
+set(CDS_EXT_WASMONLY_DIR ${CDS_EXT_COMMON_DIR}/../wasm-only)
 set(CDS_EXT_WS_GEN_DIR ${CDS_EXT_WS_DIR}/exported_cpp)
 
 set(CDS_EXT_COMMON_GEN

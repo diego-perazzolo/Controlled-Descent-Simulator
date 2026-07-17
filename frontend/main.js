@@ -6,11 +6,11 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 // Config
 // =============================================================================
 const DEFAULT_TIMESTEP_S = 0.01;
-const TIMESTEP_MIN_S     = 0.0001;
+const TIMESTEP_MIN_S     = 0.0000001;
 const TIMESTEP_MAX_S     = 0.5;
 
 // Available dynamic models. The backend exposes a separate init entry point
-// per model; the trajectory / step API is shared between them.
+// per model; the trajectory / run / snapshot API is shared between them.
 const MODEL_ROCKET    = 'rocket';
 const MODEL_QUADROTOR = 'quadrotor';
 
@@ -156,6 +156,16 @@ const ui = {
 // =============================================================================
 const userForce = { fX: 0, fY: 0, fZ: 0 };
 
+// Push the current tick period and user forces to the backend. Integration
+// runs on the backend tick thread, so these take effect from the next tick.
+// Returns the backend error code (truthy = failure).
+function sendSystemParams() {
+    return sim.ext_setSystemParams({
+        timestep_seconds: timestep_s,
+        user_forces: { fX: userForce.fX, fY: userForce.fY, fZ: userForce.fZ },
+    });
+}
+
 function setupForceButtons() {
     document.querySelectorAll('.btn-force').forEach(btn => {
         const axis = btn.dataset.axis;          // 'fX' | 'fY' | 'fZ'
@@ -165,10 +175,12 @@ function setupForceButtons() {
             const mag = parseFloat($('forceMag').value) || 0;
             userForce[axis] = sign * mag;
             btn.classList.add('pressing');
+            if (sim) sendSystemParams();
         };
         const release = () => {
             userForce[axis] = 0;
             btn.classList.remove('pressing');
+            if (sim) sendSystemParams();
         };
 
         btn.addEventListener('mousedown',   press);
@@ -293,12 +305,15 @@ function setError(msg)  { ui.error.textContent  = msg; }
 // already be in the shape expected by that model's init entry point:
 //   rocket    -> ext_initRocketParams    { rocketPar, rocketActuatorLimits }
 //   quadrotor -> ext_initQuadRotorParams { quadRotorPar, quadRotorActuatorLimits }
+// Init leaves the backend stopped; the tick period is pushed right after so
+// the tick thread is configured before the first Run.
 // Returns the backend error code (truthy = failure), matching the old ext_init.
 function initBackend(params) {
-    if (currentModel === MODEL_QUADROTOR) {
-        return sim.ext_quadRotorInit(params);
-    }
-    return sim.ext_rocketInit(params);
+    const err = (currentModel === MODEL_QUADROTOR)
+        ? sim.ext_quadRotorInit(params)
+        : sim.ext_rocketInit(params);
+    if (err) return err;
+    return sendSystemParams();
 }
 
 // =============================================================================
@@ -654,14 +669,15 @@ function make3DRenderer() {
 function makeUplotRenderer() {
     const MAX_PTS = 3000;
 
-    const bufs = { x: [], y: [], z: [], e: [] };
+    const bufs = { x: [], y: [], z: [], yaw: [], e: [] };
 
     // One chart per canvas id
     const charts = [
-        { id: 'chartX',   key: 'x', color: '#f80', label: 'x (m)'    },
-        { id: 'chartY',   key: 'y', color: '#0f8', label: 'y (m)'    },
-        { id: 'chartZ',   key: 'z', color: '#0cf', label: 'z (m)'    },
-        { id: 'chartErr', key: 'e', color: '#fa0', label: '|err| (m)' },
+        { id: 'chartX',   key: 'x',   color: '#f80', label: 'x (m)'     },
+        { id: 'chartY',   key: 'y',   color: '#0f8', label: 'y (m)'     },
+        { id: 'chartZ',   key: 'z',   color: '#0cf', label: 'z (m)'     },
+        { id: 'chartYaw', key: 'yaw', color: '#c8f', label: 'yaw (rad)' },
+        { id: 'chartErr', key: 'e',   color: '#fa0', label: '|err| (m)' },
     ];
 
     function drawChart({ id, key, color }) {
@@ -704,14 +720,15 @@ function makeUplotRenderer() {
             bufs.x.push(state.x);
             bufs.y.push(state.y);
             bufs.z.push(state.z);
+            bufs.yaw.push(state.yaw);
             bufs.e.push(eMag);
-            for (const k of ['x', 'y', 'z', 'e'])
+            for (const k of ['x', 'y', 'z', 'yaw', 'e'])
                 if (bufs[k].length > MAX_PTS) bufs[k].shift();
 
             charts.forEach(drawChart);
         },
         reset() {
-            for (const k of ['x', 'y', 'z', 'e']) bufs[k] = [];
+            for (const k of ['x', 'y', 'z', 'yaw', 'e']) bufs[k] = [];
             charts.forEach(({ id }) => {
                 const c = $(id);
                 if (c) c.getContext('2d').clearRect(0, 0, c.width, c.height);
@@ -1053,29 +1070,25 @@ function updatePanels(state, err, t, step) {
 }
 
 // =============================================================================
-// Simulation loop
+// Display loop — integration runs on the backend tick thread; here we only
+// poll a snapshot per animation frame and refresh the panels/renderers.
 // =============================================================================
 function loop() {
     if (!running) return;
 
-    const stepParams = {
-        timeStep_s: timestep_s,
-        userForce: { fX: userForce.fX, fY: userForce.fY, fZ: userForce.fZ },
-    };
+    const snap = sim.ext_getSnapshot();
 
-    const result = sim.ext_step(stepParams);
-
-    if (result.isError) {
-        setError('ext_step returned error — simulation stopped');
+    if (snap.isError) {
+        setError('ext_getSnapshot returned error — simulation stopped');
         stop();
         return;
     }
 
-    simTime += timestep_s;
-    stepCount++;
+    simTime   = snap.time_seconds;
+    stepCount = Math.round(simTime / timestep_s);   // estimated backend ticks
 
-    updatePanels(result.state, result.err, simTime, stepCount);
-    renderers.forEach(r => r.update(result.state, result.err, simTime, stepCount));
+    updatePanels(snap.state, snap.err, simTime, stepCount);
+    renderers.forEach(r => r.update(snap.state, snap.err, simTime, stepCount));
 
     frameId = requestAnimationFrame(loop);
 }
@@ -1100,6 +1113,14 @@ function start() {
         setError('Cannot start: trajectory sequence is empty.');
         return;
     }
+    if (sendSystemParams()) {
+        setError('ext_setSystemParams failed — is a model initialized?');
+        return;
+    }
+    if (sim.ext_run()) {
+        setError('ext_run failed — is a model initialized?');
+        return;
+    }
     running = true;
     ui.btnStart.disabled = true;
     ui.btnStop.disabled  = false;
@@ -1112,6 +1133,7 @@ function start() {
 function stop() {
     running = false;
     if (frameId) cancelAnimationFrame(frameId);
+    if (sim) sim.ext_stop();
     ui.btnStop.disabled  = true;
     ui.btnReset.disabled = false;
     setStatus('Stopped.');

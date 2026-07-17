@@ -112,21 +112,6 @@ std::vector<uint8_t> server_dispatch(const std::vector<uint8_t>& msg)
             return _respBool(h, ext_initQuadRotor_FFLQR01(req.p));
         }
 
-        case WS_MSG_STEP:
-        {
-            reqStep_t req = {};
-            if(_parse(msg, req)) return _respBool(h, true);
-
-            ext_stepRet ret = ext_step(req.p);
-
-            respStep_t resp = {};
-            resp.h = h;
-            resp.isError = ret.isError ? 1 : 0;
-            resp.state = ret.state;
-            resp.err = ret.err;
-            return _serialize(resp);
-        }
-
         case WS_MSG_TRAJ_GET_POINT:
         {
             reqTrajGetPoint_t req = {};
@@ -160,6 +145,46 @@ std::vector<uint8_t> server_dispatch(const std::vector<uint8_t>& msg)
             if(_parse(msg, req)) return _respBool(h, true);
 
             return _respBool(h, ext_trajectory_remove_last_item());
+        }
+
+        case WS_MSG_SET_SYSTEM_PARAMS:
+        {
+            reqSetSystemParams_t req = {};
+            if(_parse(msg, req)) return _respBool(h, true);
+
+            return _respBool(h, ext_setSystemParams(req.p));
+        }
+
+        case WS_MSG_GET_SNAPSHOT:
+        {
+            reqGetSnapshot_t req = {};
+            if(_parse(msg, req)) return _respBool(h, true);
+
+            ext_snapshotData ret = ext_getSnapshot();
+
+            respGetSnapshot_t resp = {};
+            resp.h = h;
+            resp.time_seconds = ret.time_seconds;
+            resp.state = ret.state;
+            resp.err = ret.err;
+            resp.isError = ret.isError ? 1 : 0;
+            return _serialize(resp);
+        }
+
+        case WS_MSG_RUN:
+        {
+            reqRun_t req = {};
+            if(_parse(msg, req)) return _respBool(h, true);
+
+            return _respBool(h, ext_run());
+        }
+
+        case WS_MSG_STOP:
+        {
+            reqStop_t req = {};
+            if(_parse(msg, req)) return _respBool(h, true);
+
+            return _respBool(h, ext_stop());
         }
 
         default:

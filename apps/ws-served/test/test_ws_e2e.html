@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- Manual end-to-end check of the ws-served app.
+<!-- Manual end-to-end check of the ws-served app (run / stop / snapshot flow).
      1. build the proxy: emcmake cmake -S apps/ws-served/client -B build-ws-client
                          cmake --build build-ws-client   (lands in build/)
      2. build and run the native core server:
@@ -16,6 +16,7 @@
 import createSimulator from '../../../build/simulator.js';
 
 const out = document.getElementById('out');
+const sleep = ms => new Promise(r => setTimeout(r, ms));
 try {
     const sim = await createSimulator();
 
@@ -37,19 +38,39 @@ try {
 
     const p = sim.ext_trajectory_get_point(10.0);
 
-    let step = null;
-    for (let i = 0; i < 50; i++) {
-        step = sim.ext_step({ timeStep_s: 0.01, userForce: { fX: 0, fY: 0, fZ: 0 } });
-    }
+    /* configure the tick thread, then run / snapshot / stop */
+    const parErr = sim.ext_setSystemParams({
+        timestep_seconds: 0.01,
+        user_forces: { fX: 0, fY: 0, fZ: 0 },
+    });
 
-    out.textContent = 'TESTRESULT initErr=' + initErr + ' polyErr=' + polyErr +
+    const snap0  = sim.ext_getSnapshot();   // at rest: t must still be 0
+    const runErr = sim.ext_run();
+    await sleep(1000);                      // let the server tick ~1 s
+    const snap1  = sim.ext_getSnapshot();   // t must have advanced
+    const stopErr = sim.ext_stop();
+    const snapA  = sim.ext_getSnapshot();
+    await sleep(300);
+    const snapB  = sim.ext_getSnapshot();   // t must be frozen after stop
+
+    const ok = !initErr && !polyErr && !parErr && !runErr && !stopErr &&
+        !snap0.isError && !snap1.isError && !snapA.isError && !snapB.isError &&
+        snap0.time_seconds === 0 &&
+        snap1.time_seconds > 0.05 && snap1.time_seconds < 2.0 &&
+        snapA.time_seconds === snapB.time_seconds;
+
+    out.textContent = (ok ? 'TESTRESULT' : 'TESTFAIL') +
+        ' initErr=' + initErr + ' polyErr=' + polyErr + ' parErr=' + parErr +
+        ' runErr=' + runErr + ' stopErr=' + stopErr +
         ' point=(' + p.x.toFixed(2) + ',' + p.y.toFixed(2) + ',' + p.z.toFixed(2) + ')' +
-        ' stepErr=' + step.isError + ' z=' + step.state.z.toFixed(2);
+        ' t0=' + snap0.time_seconds.toFixed(3) +
+        ' tRun=' + snap1.time_seconds.toFixed(3) +
+        ' tFrozen=' + snapB.time_seconds.toFixed(3) +
+        ' z=' + snap1.state.z.toFixed(2);
 } catch (e) {
     out.textContent = 'TESTFAIL ' + e;
 }
 /* report the outcome to the HTTP server log so it can be read from the CLI */
-fetch('/__result__' + encodeURIComponent(out.textContent)).catch(() => {});
 fetch('/__result__' + encodeURIComponent(out.textContent)).catch(() => {});
 </script>
 </body>

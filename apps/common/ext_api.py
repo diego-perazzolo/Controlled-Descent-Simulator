@@ -205,20 +205,21 @@ COMM = [
                F("actuatorLimits", type="ext_quadRotorActuatorLimits", js="quadRotorActuatorLimits"),
            ]),
 
-    Struct("ext_stepParams", file="comm",
-           doc="struct of the arguments of step function",
+    Struct("ext_systemParams", file="comm",
+           doc="struct of the argument of setSystemParams",
            fields=[
-               F("timeStep_s"),
-               F("userForce", type="ext_userForce"),
+               F("timestep_seconds"),
+               F("user_forces", type="ext_userForce"),
            ]),
 
-    Struct("ext_stepRet", file="comm",
-           doc="struct of the return data of the step function",
-           fields=[
-               F("isError", type="bool"),
-               F("state", type="ext_fullState"),
-               F("err", type="ext_setpointError"),
-           ]),
+    Struct("ext_snapshotData", file="comm",
+        doc="struct of the returned data from getSnapshot",
+        fields=[
+            F("time_seconds", pre="elapsed simulation time"),
+            F("state", type="ext_fullState"),
+            F("err", type="ext_setpointError"),
+            F("isError", type="bool"),
+        ]),
 ]
 
 # --------------------------------------------------------------------------- #
@@ -236,23 +237,35 @@ COMMANDS = [
         doc="Initialize QuadRotor model: FF_LQR_01, returns true on error",
         log="init quadrotor"),
 
-    Cmd(3, "Step", "ext_step", "ext_step",
-        req="ext_stepParams", resp="ext_stepRet",
-        doc="Advance one integration step"),
-
-    Cmd(4, "TrajGetPoint", "ext_trajectory_get_point", "ext_trajectory_get_point",
+    Cmd(3, "TrajGetPoint", "ext_trajectory_get_point", "ext_trajectory_get_point",
         req=("scalar", "ext_coord_t", "t"), resp="ext_trajectoryPoint",
         doc="Get a point at time instant t along the trajectory"),
 
-    Cmd(5, "TrajAppendPoly4", "ext_trajectory_append_poly4", "ext_trajectory_append_poly4",
+    Cmd(4, "TrajAppendPoly4", "ext_trajectory_append_poly4", "ext_trajectory_append_poly4",
         req="ext_trajectoryPoly4Params_t", resp="bool",
         doc="Add a trajectory Polynomial 4th order, returns true on error"),
 
-    Cmd(6, "TrajAppendPoint", "ext_trajectory_append_point", "ext_trajectory_append_point",
+    Cmd(5, "TrajAppendPoint", "ext_trajectory_append_point", "ext_trajectory_append_point",
         req="ext_trajectoryPointParams_t", resp="bool",
         doc="Add a trajectory Point, returns true on error"),
 
-    Cmd(7, "TrajRemoveLast", "ext_trajectory_remove_last_item", "ext_trajectory_remove_last_item",
+    Cmd(6, "TrajRemoveLast", "ext_trajectory_remove_last_item", "ext_trajectory_remove_last_item",
         req=None, resp="bool",
         doc="Remove last trajectory item, returns true on error"),
+
+    Cmd(7, "SetSystemParams", "ext_setSystemParams", "ext_setSystemParams",
+        req="ext_systemParams", resp="bool",
+        doc="Set timestep and user forces"),
+
+    Cmd(8, "GetSnapshot", "ext_getSnapshot", "ext_getSnapshot",
+        req=None, resp="ext_snapshotData",
+        doc="Get simulation's time, model's state and tracking error"),
+
+    Cmd(9, "Run", "ext_run", "ext_run",
+        req=None, resp="bool",
+        doc="Run simulation / plant ticking"),
+
+    Cmd(10, "Stop", "ext_stop", "ext_stop",
+        req=None, resp="bool",
+        doc="Stop simulation / plant ticking"),
 ]

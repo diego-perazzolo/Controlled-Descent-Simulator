@@ -31,29 +31,104 @@
 // Created     : 2026
 // =============================================================================
 
+#include <atomic>
 #include <cstdio>
 #include <cstdlib>
+#include <chrono>
+#include <thread>
 
+#include "core_defs.hpp"
 #include "dispatch.hpp"
 #include "ws_protocol.hpp"
 #include "ws_server.hpp"
 
-int main(int argc, char** argv)
+using Clock = std::chrono::steady_clock;
+
+static Clock::time_point _lastTime;
+static int _is_sys_init = 0;
+static std::atomic<bool> _run_rt_thread{true};
+
+extern bool g_core_tick(core_coord_t dt_seconds);                  // global function from core.cpp
+extern bool g_core_getTickPeriod(core_coord_t &tickPeriod_second); // global function from core.cpp
+
+/* tick the system at rate 1/tickPeriodSeconds, unless ticking system takes too much (> tickPeriodSeconds) */
+static void _tick_generator(void)
+{
+    core_coord_t tickPeriodSeconds;
+    if (g_core_getTickPeriod(tickPeriodSeconds) || tickPeriodSeconds <= 0)
+    {
+        /* No model yet, or tick period not configured: idle without spinning,
+           and re-anchor the time base on the next valid pass */
+        _is_sys_init = 0;
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        return;
+    }
+
+    /* Only the first time */
+    if (!_is_sys_init)
+    {
+        _is_sys_init = 1;
+        _lastTime = Clock::now();
+    }
+
+    auto t1 = Clock::now();
+    auto us_elapsed = std::chrono::duration_cast<std::chrono::microseconds>(t1 - _lastTime);
+
+    std::this_thread::sleep_for(std::chrono::microseconds((long long)(tickPeriodSeconds * 1e6) - us_elapsed.count()));
+
+    t1 = Clock::now();
+    us_elapsed = std::chrono::duration_cast<std::chrono::microseconds>(t1 - _lastTime);
+    _lastTime = t1;
+
+    /* A stall (e.g. a model re-init holding the core lock, scheduler hiccup)
+       must not feed a huge dt into the integrator */
+    core_coord_t dt_seconds = static_cast<core_coord_t>(us_elapsed.count() / 1e6);
+    const core_coord_t dtMax_seconds = 3 * tickPeriodSeconds;
+    if (dt_seconds > dtMax_seconds)
+    {
+        dt_seconds = dtMax_seconds;
+    }
+
+    /* Actually tick the system */
+    g_core_tick(dt_seconds);
+}
+
+int main(int argc, char **argv)
 {
     /* line-buffered logs even when stdout is redirected to a file */
     setvbuf(stdout, nullptr, _IOLBF, 0);
 
     uint16_t port = ws_proto::WS_DEFAULT_PORT;
-    if(argc > 1)
+    if (argc > 1)
     {
         port = (uint16_t)atoi(argv[1]);
     }
 
+    /* Thread "Real-time", used for providing ticks to the System */
+    std::thread rt([]
+                   {
+                    while (_run_rt_thread) 
+                    { 
+                        _tick_generator();
+                    } 
+                });
+
     WsServer server(port, server_dispatch);
-    if(server.Run())
+    if (server.Run())
     {
         // Err
+        _run_rt_thread = false;
+        if (rt.joinable())
+        {
+            rt.join();
+        }
         return 1;
+    }
+
+    _run_rt_thread = false;
+    if (rt.joinable())
+    {
+        rt.join();
     }
 
     return 0;

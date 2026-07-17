@@ -316,4 +316,10 @@ bool Rocket::GetTrackingErrors(core_trackingErrors_t& tErrors)
     return false;
 }
 
+bool Rocket::GetCurrentTimeSeconds(core_coord_t& currentTimeSeconds)
+{
+    currentTimeSeconds = m_time;
+    return false;
+}
+
 } // namespace CDS

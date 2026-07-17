@@ -24,8 +24,17 @@ bool ext_initRocket_FFLQR01(ext_initRocketParams params);       /* JS: ext_rocke
 /* Initialize the QuadRotor model (FF_LQR_01), returns true on error */
 bool ext_initQuadRotor_FFLQR01(ext_initQuadRotorParams params); /* JS: ext_quadRotorInit */
 
-/* Advance one integration step */
-ext_stepRet ext_step(ext_stepParams params);
+/* Set system parameters (tick period, user forces), returns true on error */
+bool ext_setSystemParams(ext_systemParams params);
+
+/* Get a snapshot of the simulation: elapsed time, state, tracking errors */
+ext_snapshotData ext_getSnapshot(void);
+
+/* Start the simulation / plant ticking, returns true on error */
+bool ext_run(void);
+
+/* Stop the simulation / plant ticking, returns true on error */
+bool ext_stop(void);
 
 /* Get a point at time instant t along the trajectory */
 ext_trajectoryPoint ext_trajectory_get_point(ext_coord_t t);
@@ -57,6 +66,9 @@ ext_userForce                  { fX, fY, fZ }
 ext_fullState                  { x, y, z, x_dot, y_dot, z_dot,
                                 roll, pitch, yaw, roll_dot, pitch_dot, yaw_dot }
 ext_setpointError              { xErr, yErr, zErr, yawErr }
+ext_systemParams               { timestep_seconds, user_forces (ext_userForce) }
+ext_snapshotData               { time_seconds, state (ext_fullState),
+                                err (ext_setpointError), isError (bool) }
 ```
 
 ## Protocol version
@@ -75,7 +87,7 @@ other.
 1. **Describe it in `apps/common/ext_api.py`**: declare any new structs, then
    add a `Cmd` entry. Mind the meaning of the naming fields:
    - `wire` (2nd arg) — PascalCase stem for the wire-level names only
-     (`Step` → `reqStep_t`, `WS_MSG_STEP`);
+     (`Run` → `reqRun_t`, `WS_MSG_RUN`);
    - `cfn` (3rd arg) — the C++ function name: this is the symbol you will
      implement in `ext_comm.cpp`;
    - `js` (4th arg) — the name the frontend calls (`sim.<js>(...)`).
@@ -98,7 +110,10 @@ import createSimulator from '../build/simulator.js';
 
 const sim = await createSimulator();
 sim.ext_rocketInit({ rocketPar: {...}, rocketActuatorLimits: {...} });
-const { isError, state, err } = sim.ext_step({ timeStep_s: 0.01, userForce: { fX: 0, fY: 0, fZ: 0 } });
+sim.ext_setSystemParams({ timestep_seconds: 0.01, user_forces: { fX: 0, fY: 0, fZ: 0 } });
+sim.ext_run();
+const { isError, time_seconds, state, err } = sim.ext_getSnapshot();
+sim.ext_stop();
 ```
 
 In the ws-served app the same calls are transparently forwarded to

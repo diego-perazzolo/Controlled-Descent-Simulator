@@ -81,42 +81,6 @@ static core_quadRotorParams_t _convertExtToCore_quadRotorParams(ext_quadRotorPar
     return coreParam;
 }
 
-static core_stepParams_t _convertExtToCore_stepParams(ext_stepParams sPar)
-{
-    core_stepParams_t coreParam = {};
-    coreParam.timestep = sPar.timeStep_s;
-    coreParam.user_fX = sPar.userForce.fX;
-    coreParam.user_fY = sPar.userForce.fY;
-    coreParam.user_fZ = sPar.userForce.fZ;
-
-    return coreParam;
-}
-
-static ext_stepRet _convertCoreToExt_stepRetParams(core_state_t state, core_trackingErrors_t tErr)
-{
-    ext_stepRet extParam = {};
-
-    extParam.state.x_dot = state.x_dot; 
-    extParam.state.y_dot = state.y_dot; 
-    extParam.state.z_dot = state.z_dot; 
-    extParam.state.x = state.x; 
-    extParam.state.y = state.y; 
-    extParam.state.z = state.z; 
-    extParam.state.roll_dot = state.roll_dot; 
-    extParam.state.pitch_dot = state.pitch_dot; 
-    extParam.state.yaw_dot = state.yaw_dot; 
-    extParam.state.roll = state.roll; 
-    extParam.state.pitch = state.pitch; 
-    extParam.state.yaw = state.yaw; 
-
-    extParam.err.xErr = tErr.x;
-    extParam.err.yErr = tErr.y;
-    extParam.err.zErr = tErr.z;
-    extParam.err.yawErr = tErr.yaw;
-
-    return extParam;
-}
-
 static core_trajectoryPoly4Params_t _convertExtToCore_trajectoryPoly4Params(ext_trajectoryPoly4Params_t ext)
 {
     core_trajectoryPoly4Params_t coreParam = {
@@ -152,6 +116,44 @@ static ext_trajectoryPoint _convertExtToCore_trajectoryPoint(Vec3& point)
     ext_trajectoryPoint extParam = {.x = (ext_coord_t) point[0], .y = (ext_coord_t) point[1], .z = (ext_coord_t) point[2]};
 
     return extParam;
+}
+
+static core_systemParams_t _convertExtToCore_systemParams(ext_systemParams& ext)
+{
+    core_systemParams_t coreParam = {
+        .timestep_seconds = ext.timestep_seconds,
+        .user_fX = ext.user_forces.fX,
+        .user_fY = ext.user_forces.fY,
+        .user_fZ = ext.user_forces.fZ,
+    };
+
+    return coreParam; 
+}
+
+static ext_snapshotData _convertCoreToExt_snapshotParams(core_snapshotData_t& core)
+{
+    ext_snapshotData ext = {};
+
+    ext.time_seconds = core.time_seconds;
+    ext.state.x_dot = core.state.x_dot; 
+    ext.state.y_dot = core.state.y_dot; 
+    ext.state.z_dot = core.state.z_dot; 
+    ext.state.x = core.state.x; 
+    ext.state.y = core.state.y; 
+    ext.state.z = core.state.z; 
+    ext.state.roll_dot = core.state.roll_dot; 
+    ext.state.pitch_dot = core.state.pitch_dot; 
+    ext.state.yaw_dot = core.state.yaw_dot; 
+    ext.state.roll = core.state.roll; 
+    ext.state.pitch = core.state.pitch; 
+    ext.state.yaw = core.state.yaw; 
+
+    ext.err.xErr = core.errors.x;
+    ext.err.yErr = core.errors.y;
+    ext.err.zErr = core.errors.z;
+    ext.err.yawErr = core.errors.yaw;
+
+    return ext;
 }
 
 /* ext functions */
@@ -198,35 +200,6 @@ bool ext_initQuadRotor_FFLQR01(ext_initQuadRotorParams params)
     // Trajectory initialization
     ret = core_trajectoryInit();
     ASSERT_FALSE(ret);
-
-    return ret;
-}
-
-ext_stepRet ext_step(ext_stepParams stepParams)
-{
-    /* Executes one integration step with the simulation, returns system state, tracking errors */
-    ext_stepRet ret = {};
-    core_state_t coreState;
-    core_trackingErrors_t coreTrackingErr;
-
-    // Struct conversion
-    core_stepParams_t corePar = _convertExtToCore_stepParams(stepParams);
-
-    // Integration step
-    ret.isError = core_performSimulationStep(corePar);
-
-    // Get system data
-    ret.isError |= core_getState(&coreState);
-    ret.isError |= core_getTrackingError(&coreTrackingErr);
-
-    // Return if error
-    if(ret.isError)
-    {
-        return ret;
-    }
-
-    // Struct conversion
-    ret = _convertCoreToExt_stepRetParams(coreState, coreTrackingErr);
 
     return ret;
 }
@@ -287,4 +260,34 @@ ext_trajectoryPoint ext_trajectory_get_point(ext_coord_t t)
     }
 
     return _convertExtToCore_trajectoryPoint(p);
+}
+
+bool ext_setSystemParams(ext_systemParams params)
+{
+    // Struct conversion
+    core_systemParams_t corePar = _convertExtToCore_systemParams(params);
+
+    return core_setSystemParams(corePar);
+}
+
+ext_snapshotData ext_getSnapshot(void)
+{
+    core_snapshotData_t corePar = {};
+    bool ret = core_getSnapshot(corePar);
+
+    ext_snapshotData extPar = _convertCoreToExt_snapshotParams(corePar);
+    extPar.isError = ret;
+
+    return extPar;
+}
+
+
+bool ext_run(void)
+{
+    return core_run();
+}
+
+bool ext_stop(void)
+{
+    return core_stop();
 }

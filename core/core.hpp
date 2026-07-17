@@ -54,16 +54,17 @@ bool core_trajectoryAppendPoint(const core_trajectoryPointParams_t tPar);
 // Remove last trajectory item, returns true on error
 bool core_trajectoryRemoveLastItem(void);
 
-// Performs one simulation (integration) step
-bool core_performSimulationStep(const core_stepParams_t sPar);
-
-// Get system's state, returns true on error
-bool core_getState(core_state_t *pState);
-
-// Get tracking error, returns true on error
-bool core_getTrackingError(core_trackingErrors_t *pTrackingErr);
-
 // Get Trajectory point at a certain time instant, returns true on error
 bool core_getTrajectoryPoint(core_coord_t time, Vec3& point);
-    
-    
+
+// Set systems parameters (timestep, user forces). Returns true on error 
+bool core_setSystemParams(const core_systemParams_t& par);
+
+// Get system snapshot (time, state, tracking errors). Returns true on error
+bool core_getSnapshot(core_snapshotData_t& par);
+
+// Run simulation / plant ticking. Returns true on error
+bool core_run(void);
+
+// Stop simulation / plant ticking. Returns true on error
+bool core_stop(void);

@@ -425,8 +425,10 @@ def gen_ws_protocol():
                 f"{size:>2}, \"wire layout drift\");{note}\n")
     for cmd in COMMANDS:
         assert req_size(cmd) < 256 and resp_size(cmd) < 256, "grow WS_MAX_MSG_SIZE"
-    out += "\nstatic_assert(sizeof(reqTrajAppendPoly4_t) < WS_MAX_MSG_SIZE, \"wire msg too big\");\n"
-    out += "static_assert(sizeof(respStep_t) < WS_MAX_MSG_SIZE, \"wire msg too big\");\n"
+    biggest_req = max(COMMANDS, key=req_size)
+    biggest_resp = max(COMMANDS, key=resp_size)
+    out += f"\nstatic_assert(sizeof({wire_req_name(biggest_req)}) < WS_MAX_MSG_SIZE, \"wire msg too big\");\n"
+    out += f"static_assert(sizeof({wire_resp_name(biggest_resp)}) < WS_MAX_MSG_SIZE, \"wire msg too big\");\n"
     out += "\n} // namespace ws_proto\n"
     return out
 

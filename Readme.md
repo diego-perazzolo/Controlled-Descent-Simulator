@@ -29,10 +29,10 @@ Simulate the controlled 3D flight of a rocket booster and of a quadrotor, with:
 ### Frontend
 
 - **Model selector** — switch between Rocket and QuadRotor at runtime; each model has its own parameter panel
-- **Charts view** — real-time strip charts for x, y, z position, yaw error and position error magnitude
+- **Charts view** — real-time strip charts for x, y, z position, yaw attitude and position error magnitude
 - **3D view** — Three.js scene with vehicle mesh (rocket: body + nose cone + landing legs; quadrotor: frame + rotors), trajectory trail, orbital camera (orbit / pan / zoom)
 - **Params tab** — edit all physical and trajectory parameters at runtime; Apply & Reset re-initializes the core without reloading the page
-- **User force buttons** — six hold-to-apply buttons (±X, ±Y, ±Z) inject external perturbation forces into the simulation at every step; force magnitude is configurable
+- **User force buttons** — six hold-to-apply buttons (±X, ±Y, ±Z) inject external perturbation forces, pushed to the backend tick thread in real time on press / release; force magnitude is configurable
 - **Simulation controls** — Start / Stop / Reset
 - **Live simulation time** display
 
@@ -41,7 +41,9 @@ Simulate the controlled 3D flight of a rocket booster and of a quadrotor, with:
 #### Communication Layer (`apps/common`)
 - `ext_rocketInit(params)` — initializes the Rocket model with parameters and actuator limits
 - `ext_quadRotorInit(params)` — initializes the QuadRotor model with parameters and actuator limits
-- `ext_step(stepParams)` — advances one integration step; returns full state and tracking errors (position + yaw)
+- `ext_setSystemParams(params)` — sets the tick period and user forces used by the backend tick thread
+- `ext_run()` / `ext_stop()` — start / stop the simulation; integration advances on a backend tick thread
+- `ext_getSnapshot()` — returns the simulated time, full state and tracking errors (position + yaw)
 - `ext_trajectory_get_point(timeInstant)` - provides a point along the reference trajectory, used for trajectory preview
 - `ext_trajectory_append_poly4(params)` - appends a trajectory of type polynomial 4th order, configured with total time for the maneuver, initial/final position, velocity, acceleration and yaw
 - `ext_trajectory_append_point(params)` - appends a trajectory of type point, configured with a final position, a final yaw and the total time needed for the maneuver
@@ -79,7 +81,8 @@ Simulate the controlled 3D flight of a rocket booster and of a quadrotor, with:
 │              renderers[].update(state, err)             │
 └───────────────────────────┬─────────────────────────────┘
                             │  ext_rocketInit() / ext_quadRotorInit(),
-                            │  ext_step(), ext_trajectory_...()
+                            │  ext_setSystemParams(), ext_run() / ext_stop(),
+                            │  ext_getSnapshot(), ext_trajectory_...()
                             ▼
 ┌─────────────────────────────────────────────────────────┐
 │                   SIMULATOR (.wasm)                     │
@@ -144,7 +147,8 @@ IntX, IntY, IntZ, IntPsi  — tracking-error integrators
 - External perturbations: user-injected force vector `(fX, fY, fZ)`
 
 ### Integration
-Runge-Kutta 4 (RK4), fixed step `dt`.
+Runge-Kutta 4 (RK4); the step `dt` is provided by the backend tick thread
+(wall-clock paced at the configured tick period, clamped after stalls).
 
 ### Controller
 LQR on tracking error (position + yaw, with error integrators), feedforward on all actuators (differential flatness for the QuadRotor), actuator saturation; all derived in the Jupyter notebooks and exported as C++
@@ -153,9 +157,9 @@ LQR on tracking error (position + yaw, with error integrators), feedforward on a
 
 ## Core API
 
-The frontend talks to the core through a small C-style API (init, step,
-trajectory composition), identical for every app and exposed to JavaScript
-via embind. Functions, types and JS usage are documented in
+The frontend talks to the core through a small C-style API (init, system
+params, run / stop, snapshot, trajectory composition), identical for every
+app and exposed to JavaScript via embind. Functions, types and JS usage are documented in
 **[docs/api.md](docs/api.md)**.
 
 ---

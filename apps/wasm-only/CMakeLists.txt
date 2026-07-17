@@ -25,6 +25,7 @@ include(${CMAKE_CURRENT_SOURCE_DIR}/../common/gen_ext.cmake)
 add_executable(simulator
     ${CMAKE_CURRENT_SOURCE_DIR}/../common/ext_comm.cpp
     ${CDS_EXT_COMMON_GEN_DIR}/bindings.cpp
+    ${CDS_EXT_WASMONLY_DIR}/main.cpp
 )
 
 target_include_directories(simulator PRIVATE

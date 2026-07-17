@@ -51,29 +51,28 @@ typedef struct
     ext_quadRotorActuatorLimits actuatorLimits;
 } ext_initQuadRotorParams;
 
-/* struct of the arguments of step function */
+/* struct of the argument of setSystemParams */
 typedef struct
 {
-    ext_coord_t timeStep_s;
-    ext_userForce userForce;
-} ext_stepParams;
+    ext_coord_t timestep_seconds;
+    ext_userForce user_forces;
+} ext_systemParams;
 
-/* struct of the return data of the step function */
+/* struct of the returned data from getSnapshot */
 typedef struct
 {
-    bool isError;
+    /* elapsed simulation time */
+    ext_coord_t time_seconds;
     ext_fullState state;
     ext_setpointError err;
-} ext_stepRet;
+    bool isError;
+} ext_snapshotData;
 
 /* Initialize Rocket model: FF_LQR_01, returns true on error */
 bool ext_initRocket_FFLQR01(ext_initRocketParams params);
 
 /* Initialize QuadRotor model: FF_LQR_01, returns true on error */
 bool ext_initQuadRotor_FFLQR01(ext_initQuadRotorParams params);
-
-/* Advance one integration step */
-ext_stepRet ext_step(ext_stepParams params);
 
 /* Get a point at time instant t along the trajectory */
 ext_trajectoryPoint ext_trajectory_get_point(ext_coord_t t);
@@ -86,3 +85,15 @@ bool ext_trajectory_append_point(ext_trajectoryPointParams_t params);
 
 /* Remove last trajectory item, returns true on error */
 bool ext_trajectory_remove_last_item(void);
+
+/* Set timestep and user forces */
+bool ext_setSystemParams(ext_systemParams params);
+
+/* Get simulation's time, model's state and tracking error */
+ext_snapshotData ext_getSnapshot(void);
+
+/* Run simulation / plant ticking */
+bool ext_run(void);
+
+/* Stop simulation / plant ticking */
+bool ext_stop(void);
