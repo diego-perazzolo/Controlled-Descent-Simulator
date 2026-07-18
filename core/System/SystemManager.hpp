@@ -38,6 +38,7 @@
 #include <mutex>
 
 #include "BaseModel.hpp"
+#include "BasePlant.hpp"
 #include "TrajectoryManager.hpp"
 
 namespace CDS
@@ -49,6 +50,7 @@ namespace CDS
 
         typedef double sm_coord_t; // floating point type
         typedef std::unique_ptr<BaseModel> modelPtr_t;
+        typedef std::unique_ptr<BasePlant> plantPtr_t;
         typedef std::unique_ptr<TrajectoryManager> trajectoryManagerPtr_t;
         typedef std::array<sm_coord_t, 3> userForces_t;
         typedef std::mutex mutex_t;
@@ -69,6 +71,16 @@ namespace CDS
         /* Create a fresh empty trajectory, system must be stopped.
            Returns true on error */
         bool InitTrajectory(void);
+
+        /* Attach a plant (ownership transferred), system must be stopped.
+           The plant must arrive already configured (SetPlantParams done by
+           the app); its communication is started/stopped by Run()/Stop().
+           Returns true on error */
+        bool AttachPlant(plantPtr_t&& pPlant);
+
+        /* Stop and destroy the attached plant, system must be stopped.
+           Returns true on error */
+        bool DetachPlant(void);
 
         /* Run a function on the model under the system lock. The reference is
            valid only for the duration of the call — do not store it.
@@ -98,6 +110,7 @@ namespace CDS
         bool GetParameters(systemManagerParams_t& params);
         inline bool IsRunning(void) { /* do not guard with mutex */ return m_isRunning; };
         inline bool IsModelOk(void) { /* do not guard with mutex */ return m_pModel != nullptr; };
+        inline bool IsPlantOk(void) { /* do not guard with mutex */ return m_pPlant != nullptr; };
 
         private:
 
@@ -106,12 +119,13 @@ namespace CDS
         bool _attachTrajectoryToModel(void);
 
         modelPtr_t m_pModel;
+        plantPtr_t m_pPlant;
         trajectoryManagerPtr_t m_pTrajectoryManager;
 
-        systemManagerParams_t m_params = {0};
+        systemManagerParams_t m_params;
         mutex_t m_mutex;
-        bool m_isRunning = false;
-        userForces_t m_userForces = {0};
+        bool m_isRunning;
+        userForces_t m_userForces;
     };
 
 } // namespace CDS

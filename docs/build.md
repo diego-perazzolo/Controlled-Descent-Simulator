@@ -114,6 +114,10 @@ The repository includes a GitHub Actions workflow ([`.github/workflows/deploy.ym
 │   ├── CMakeLists.txt
 │   ├── core.hpp / core.cpp                     # C-style public interface (stubs → impl)
 │   ├── core_defs.hpp                           # Internal type definitions
+│   ├── System/
+│   │   └── SystemManager.hpp / .cpp            # System owner: model, trajectory, lock boundary
+│   ├── Plant/
+│   │   └── BasePlant.hpp / BasePlant.cpp       # Base plant class + mailbox exchange (impls live outside core)
 │   ├── Models/
 │   │   ├── BaseModel.hpp / BaseModel.cpp       # Abstract model base
 │   │   ├── Rocket.hpp / Rocket.cpp             # 6 DOF rocket model (Euler angles)
@@ -123,6 +127,14 @@ The repository includes a GitHub Actions workflow ([`.github/workflows/deploy.ym
 │       ├── Trajectory.hpp / Trajectory.cpp     # base trajectory class
 │       ├── Point.hpp / Point.cpp               # waypoint-like
 │       └── Poly4.hpp / Poly4.cpp               # 4th order polynomial trajectory
+│
+├── plants/                                     # Concrete plant implementations (plants → core, one way)
+│   ├── CMakeLists.txt                          # cds_plants static library
+│   ├── loopback/
+│   │   └── LoopbackPlant.hpp / .cpp            # SITL loopback: echoes the reference with period/latency/dropouts
+│   └── test/
+│       ├── CMakeLists.txt                      # Native integration test project
+│       └── driver.cpp                          # Plant machinery test (standalone + SystemManager)
 │
 ├── apps/                                       # Deployments of the core; each app has its own CMakeLists
 │   ├── common/                                 # Shared by all apps: the ext API "factory"
@@ -151,7 +163,9 @@ The repository includes a GitHub Actions workflow ([`.github/workflows/deploy.ym
 │           ├── test_protocol.py                # e2e protocol test against a real cds_server (runs in CI)
 │           └── test_ws_e2e.html                # Manual in-browser end-to-end check of the ws-served app
 │
-├── libs/                                       # In-house infrastructure libraries (apps → libs, one way)
+├── libs/                                       # In-house infrastructure libraries (apps/core → libs, one way)
+│   ├── sync/
+│   │   └── TripleBuffer.hpp                    # Wait-free SPSC latest-wins mailbox
 │   └── ws/                                     # Dependency-free WebSocket RPC transport
 │       ├── CMakeLists.txt                      # cds_ws_client (emscripten) / cds_ws_server (native)
 │       ├── ws_server.hpp / ws_server.cpp       # Minimal RFC 6455 WebSocket RPC server

@@ -60,11 +60,21 @@
     {                                  \
         if (!IsModelOk()) return true; \
     } while (0)
+#define RETURN_ERR_IF_NO_PLANT         \
+    do                                 \
+    {                                  \
+        if (!IsPlantOk()) return true; \
+    } while (0)
 
 namespace CDS
 {
 
-SystemManager::SystemManager(void)
+SystemManager::SystemManager(void) : m_pModel(nullptr),
+                                     m_pPlant(nullptr),
+                                     m_pTrajectoryManager(nullptr),
+                                     m_params({0}),
+                                     m_isRunning(false),
+                                     m_userForces({0})
 {
     TRACE("Created");
 }
@@ -100,6 +110,40 @@ bool SystemManager::InitTrajectory(void)
     RETURN_ERR_IF_NO_MODEL;
 
     m_pTrajectoryManager = std::make_unique<TrajectoryManager>();
+
+    TRACE("OK");
+
+    return false;
+}
+
+bool SystemManager::AttachPlant(plantPtr_t &&pPlant)
+{
+    lockGuard_t lock(m_mutex);
+
+    RETURN_ERR_IF_RUNNING;
+
+    if (!pPlant)
+    {
+        // Invalid plant, error
+        return true;
+    }
+
+    m_pPlant = std::move(pPlant);
+
+    TRACE("OK");
+
+    return false;
+}
+
+bool SystemManager::DetachPlant(void)
+{
+    lockGuard_t lock(m_mutex);
+
+    RETURN_ERR_IF_RUNNING;
+    RETURN_ERR_IF_NO_PLANT;
+
+    m_pPlant->Stop();
+    m_pPlant.reset();
 
     TRACE("OK");
 
@@ -204,6 +248,17 @@ bool SystemManager::Run(void)
 
     RETURN_ERR_IF_NO_MODEL;
 
+    /* The plant is OPTIONAL: the system runs with the model alone. When a
+       plant is attached, its communication lives while the system runs */
+    if (IsPlantOk())
+    {
+        if (m_pPlant->Start())
+        {
+            // Plant failed to start, do not run
+            return true;
+        }
+    }
+
     m_isRunning = true;
 
     TRACE("OK");
@@ -221,9 +276,28 @@ bool SystemManager::ExecuteTick(sm_coord_t timestep_seconds)
 
     // Compute safety considerations
 
+    /* NOTE: a lagging or erroring plant must not kill the integration — the
+       exchange below is best-effort, its failures are not propagated */
+
     // Drive the plant, using past control data
+    if (m_pPlant && m_pTrajectoryManager)
+    {
+        BasePlant::plantCommands_t commands = {};
+        if (!m_pModel->GetCurrentTimeSeconds(commands.time_seconds) &&
+            !m_pTrajectoryManager->GetReference(commands.time_seconds, commands.reference))
+        {
+            m_pPlant->PushCommands(commands);
+        }
+    }
 
     // Collect data from the plant
+    if (m_pPlant)
+    {
+        BasePlant::plantMeasurements_t measurements = {};
+        /* failure tolerated before the first published sample; measurements
+           will feed filtering and control (future) */
+        m_pPlant->PullMeasurements(measurements);
+    }
 
     // Perform filtering
 
@@ -246,12 +320,21 @@ bool SystemManager::ExecuteTick(sm_coord_t timestep_seconds)
 bool SystemManager::Stop(void)
 {
     lockGuard_t lock(m_mutex);
+    bool ret = false;
 
     m_isRunning = false;
 
-    TRACE("OK");
+    if (m_pPlant)
+    {
+        ret |= m_pPlant->Stop();
+    }
 
-    return false;
+    if (!ret)
+    {
+        TRACE("OK");
+    }
+
+    return ret;
 }
 
 bool SystemManager::SetParameters(const systemManagerParams_t &params)

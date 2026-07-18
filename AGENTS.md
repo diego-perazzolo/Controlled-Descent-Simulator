@@ -21,8 +21,8 @@ conventions, invariants, verification commands and the review procedure.
    boundary and the per-app adapters); `core_*` types never cross into the
    frontend; the frontend talks exclusively through the embind API. Structs
    at the ext boundary are POD — no STL containers in bound structs.
-   Dependencies flow one way: `apps/* → apps/common → core` and
-   `apps/* → libs/*`, never back. `libs/` is protocol-agnostic
+   Dependencies flow one way: `apps/* → apps/common → core → libs/*` and
+   `apps/* → libs/*`, never back. `libs/` is protocol- and domain-agnostic
    infrastructure: nothing under `libs/` may include app or core headers.
 4. **Codegen ↔ C++ coupling:** `state_enum_names`, `param_*` tuples and the
    dims in the `*_codegen.py` configs must match the generated C++ enums and
@@ -46,12 +46,31 @@ conventions, invariants, verification commands and the review procedure.
    `libs/ws` transport (4-byte id framing) — never add ids to the protocol.
    The protocol version byte is a generator-computed fingerprint of the
    description — never hand-set or "fix" it.
+   Command ids stay contiguous — renumber the survivors when removing one.
+   Never hardcode ids or wire sizes in tests: parse them from the generated
+   `ws_protocol.hpp`, as `test_protocol.py` does.
+9. **Concurrency and tick semantics:** shared simulation state (model, plant,
+   trajectory) lives behind the SystemManager mutex — every public entry
+   point takes the lock. The tick path never blocks: no I/O, no unbounded
+   waits; the plant exchange goes exclusively through the wait-free mailboxes
+   (`PushCommands` / `PullMeasurements` are non-virtual by design — do not
+   bypass or override them). The dt passed to `ExecuteTick` is the *measured*
+   wall-clock elapsed, clamped by the tick generator: simulation time is
+   wall-anchored by design — do not replace it with the nominal tick period,
+   and do not reintroduce integer `duration_cast` in the elapsed measurement
+   (sub-unit iterations truncate to zero and silently freeze the simulation).
 
 ## Naming
 
 - Prefixes by layer: `core_` (core C-style API), `ext_` (communication layer).
 - C-style boundary APIs: `snake_case` functions, `*_t` suffixed typedefs.
-- C++ classes: `PascalCase` types and methods, `m_` prefixed members.
+- C++ classes: `PascalCase` types and methods, `m_` prefixed members; core
+  classes live in `namespace CDS`.
+- Every file starts with the standard license/description header block;
+  headers use `#pragma once`.
+- Members are initialized in the constructor initializer list (declaration
+  order), not with in-class default initializers in the `.hpp`.
+- Document *behaviour* contracts on functions, *data* layout on structs.
 - Python: PEP 8.
 
 ## Verification commands
@@ -63,14 +82,15 @@ Run from the repo root. Prefer these over inventing new ones.
 emcmake cmake -S apps/wasm-only -B build-wasm-only -DCMAKE_BUILD_TYPE=Debug && cmake --build build-wasm-only
 
 # ws-served app: WASM proxy (emsdk; output lands in build/) + native core server
+# (always pass a build type: an empty CMAKE_BUILD_TYPE silently builds at -O0)
 emcmake cmake -S apps/ws-served/client -B build-ws-client -DCMAKE_BUILD_TYPE=Debug && cmake --build build-ws-client
-cmake -S apps/ws-served/server -B build-server && cmake --build build-server
+cmake -S apps/ws-served/server -B build-server -DCMAKE_BUILD_TYPE=Release && cmake --build build-server
 
 # Fast C++ syntax check without emsdk (per file)
 clang++ -std=c++20 -fsyntax-only \
-  -Icore -Icore/Models -Icore/Trajectory \
+  -Icore -Icore/System -Icore/Plant -Icore/Models -Icore/Trajectory \
   -Iapps/common/exported_cpp -Iapps/ws-served/exported_cpp \
-  -Iapps/ws-served/server -Ilibs/ws \
+  -Iapps/ws-served/server -Ilibs/ws -Ilibs/sync \
   -Imodeling/notebooks/exported_cpp/ROCKET_FF_LQR_01 \
   -Imodeling/notebooks/exported_cpp/QUADROTOR_FF_LQR_01 <file.cpp>
 
@@ -82,6 +102,10 @@ python3 apps/common/gen_ext.py --check
 
 # ws protocol end-to-end test (builds nothing: needs build-server/cds_server)
 python3 apps/ws-served/test/test_protocol.py ./build-server/cds_server
+
+# plant machinery integration test (native)
+cmake -S plants/test -B build-plants-test -DCMAKE_BUILD_TYPE=Release
+cmake --build build-plants-test && ./build-plants-test/driver
 
 # Python codegen sanity
 python3 -c "import ast; [ast.parse(open('modeling/notebooks/'+f).read()) \
@@ -109,6 +133,14 @@ python3 -c "import json; json.load(open('modeling/notebooks/<nb>.ipynb'))"
 5. Report findings as: `[SEVERITY] file:line — problem — suggested fix`.
    Severities: HIGH (bugs, UB, broken build), MEDIUM (stale/incorrect docs
    or comments), LOW (typos, style).
+
+## Collaboration
+
+- Design questions get discussed before code changes: when asked a question
+  or an opinion, propose — do not modify files until explicitly told to
+  proceed.
+- Do not "normalize" odd-looking tuning values (e.g. a very small
+  `TIMESTEP_MIN_S`): they may be deliberate experimentation — ask first.
 
 ## Documentation
 
