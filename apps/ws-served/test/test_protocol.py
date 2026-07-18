@@ -218,12 +218,14 @@ def run_tests(s):
     assert t1 == t2, f"time still advancing after stop: {t1} -> {t2}"
     print(f"stop OK (t frozen at {t2:.3f}s)")
 
-    # plant after stop: communication halted, sequence frozen on re-reads
+    # plant after stop: STOP ends the mission, not the link. The plant stays
+    # connected (two-phase lifecycle: link lives from attach to detach), so a
+    # loopback keeps publishing its held state and the sequence keeps growing.
     s1 = struct.unpack("<BB14fBB", rpc(s, header(MSG["GET_PLANT_SNAPSHOT"])))[3]
-    time.sleep(0.1)
+    time.sleep(0.2)
     s2 = struct.unpack("<BB14fBB", rpc(s, header(MSG["GET_PLANT_SNAPSHOT"])))[3]
-    assert s1 == s2, f"plant sequence still advancing after stop: {s1} -> {s2}"
-    print(f"plant stop OK (seq frozen at {s2:.0f})")
+    assert s2 > s1, f"plant link died on mission stop: seq {s1} -> {s2}"
+    print(f"plant link alive after stop OK (seq {s1:.0f} -> {s2:.0f})")
 
     # remove last trajectory item
     p = rpc(s, header(MSG["TRAJ_REMOVE_LAST"]))

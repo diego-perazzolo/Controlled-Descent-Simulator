@@ -149,8 +149,8 @@ namespace CDS
 
         private:
 
-        sync::TripleBuffer<plantCommands_t> m_commandsBuffer;
-        sync::TripleBuffer<plantMeasurements_t> m_measurementsBuffer;
+        cds_sync::TripleBuffer<plantCommands_t> m_commandsBuffer;
+        cds_sync::TripleBuffer<plantMeasurements_t> m_measurementsBuffer;
         uint32_t m_publishSequence;   // communication-thread private
     };
 }

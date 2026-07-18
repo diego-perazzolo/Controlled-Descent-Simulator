@@ -37,7 +37,7 @@
 #include <atomic>
 #include <cstdint>
 
-namespace sync
+namespace cds_sync
 {
 
     // Latest-wins mailbox. Contract: exactly ONE writer thread and ONE reader
@@ -104,4 +104,4 @@ namespace sync
         std::atomic<uint32_t> m_latest;    // newest slot index (+ fresh flag)
     };
 
-} // namespace sync
+} // namespace cds_sync

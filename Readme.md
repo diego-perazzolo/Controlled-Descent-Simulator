@@ -54,7 +54,9 @@ Simulate the controlled 3D flight of a rocket booster and of a quadrotor, with:
 
 #### System orchestration
 - **SystemManager** — single owner of model, trajectory and plant behind one lock; every tick of the real-time thread drives, in order, the plant exchange and the physics integration. Model and plant are orchestrated symmetrically: the model is the simulated vehicle, the plant is an external one (SITL/HIL) observed through the same state interface
-- **Plant subsystem** — `BasePlant` exchanges commands/measurements with the tick through wait-free latest-wins mailboxes (`libs/sync` TripleBuffer); samples carry sequence numbers and plant-side timestamps, so staleness, dropouts and latency are observable. A SITL loopback plant (configurable sample period, latency, dropout rate) is included
+- **Plant subsystem** — `BasePlant` exchanges commands/measurements with the tick through wait-free latest-wins mailboxes (`libs/sync` TripleBuffer); samples carry sequence numbers and plant-side timestamps, so staleness, dropouts and latency are observable. The plant lifecycle is two-phase: the link lives from attach to detach (`Connect`/`Disconnect`), the mission runs between `Run` and `Stop` (`Start`/`Stop`). Two implementations ship under `plants/` (selected in the server, see [docs/build.md](docs/build.md)):
+  - **loopback** — echoes the commanded reference back as measured state, with configurable sample period, latency and dropout rate; the plumbing test double
+  - **SITL (ArduCopter)** — drives an ArduPilot Copter SITL over MAVLink 2 / UDP: telemetry (`LOCAL_POSITION_NED` + `ATTITUDE`) comes back as measurements, the trajectory reference streams out as `SET_POSITION_TARGET_LOCAL_NED` Guided-mode setpoints. The NED↔ENU frame conversion is confined to the plant, the MAVLink headers are vendored and version-pinned, and the frame is aligned to the trajectory start at mission Start. A readiness gate refuses Start until the vehicle is connected and held still
 
 #### Physics Engine
 - **6 DOF rigid body dynamics** (3 translational + 3 rotational) for both models
@@ -227,8 +229,9 @@ client), app switching, notebook setup and deployment are documented in
 - [x] Customizable trajectory composition (with yaw setpoints)
 - [x] Notebook-driven C++ code generation (shared codegen base, per-model generators)
 - [x] ws-served app: core on a native WebSocket server, browser as thin client
+- [x] SITL plant over MAVLink/UDP (ArduCopter): link, telemetry, Guided-mode setpoints — auto arm/takeoff staging still to come
 - [ ] Save / load of parameters and trajectories from the frontend
-- [ ] Real hardware interface (MAVLink-based, with supporting facilities)
+- [ ] Real hardware interface (MAVLink over serial to a Pixhawk): the SITL plant's link layer is the same, only the transport changes
 
 ---
 

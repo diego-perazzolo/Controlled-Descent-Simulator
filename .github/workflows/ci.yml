@@ -24,6 +24,13 @@ jobs:
           cmake -S apps/ws-served/server -B build-server -DCMAKE_BUILD_TYPE=Release
           cmake --build build-server
 
+      - name: Plant machinery tests (native)
+        run: |
+          cmake -S plants/test -B build-plants-test -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-plants-test
+          ./build-plants-test/driver
+          ./build-plants-test/sitl_driver
+
       - name: Protocol end-to-end test
         run: python3 apps/ws-served/test/test_protocol.py ./build-server/cds_server
 

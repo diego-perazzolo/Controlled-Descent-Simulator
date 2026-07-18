@@ -15,6 +15,12 @@ conventions, invariants, verification commands and the review procedure.
      change them, edit `apps/common/ext_api.py` and run
      `python3 apps/common/gen_ext.py` (the app builds also re-run it
      automatically when the description changes).
+   - `plants/sitl/mavlink/` is **vendored** third-party generated code — same
+     rule: never hand-edit it, re-vendor at a new upstream commit per
+     `plants/sitl/mavlink/VENDORED.md`. The wire contract is pinned in
+     `plants/sitl/mavlink_pin.hpp` (the only file that may include the
+     vendored headers); a re-vendor that drifts it must fail the build until
+     the pins are reviewed and updated together.
 2. **Error convention: functions returning `bool` return `true` on error.**
    A `return true;` after an error comment is correct — do not "fix" it.
 3. **Layer separation:** `ext_*` types live only under `apps/` (the `common/`
@@ -103,9 +109,11 @@ python3 apps/common/gen_ext.py --check
 # ws protocol end-to-end test (builds nothing: needs build-server/cds_server)
 python3 apps/ws-served/test/test_protocol.py ./build-server/cds_server
 
-# plant machinery integration test (native)
+# plant machinery integration tests (native)
 cmake -S plants/test -B build-plants-test -DCMAKE_BUILD_TYPE=Release
-cmake --build build-plants-test && ./build-plants-test/driver
+cmake --build build-plants-test
+./build-plants-test/driver        # mailboxes, freshness, lifecycle
+./build-plants-test/sitl_driver   # SITL plant vs in-process fake ArduCopter
 
 # Python codegen sanity
 python3 -c "import ast; [ast.parse(open('modeling/notebooks/'+f).read()) \

@@ -68,6 +68,14 @@ cmake --build build-server
 ./build-server/cds_server          # listens on ws://0.0.0.0:9002 (port as argv[1])
 ```
 
+The server attaches a plant, selected by an optional second argument —
+`loopback` (default) or `sitl`:
+
+```bash
+./build-server/cds_server 9002 loopback   # default: the echo test double
+./build-server/cds_server 9002 sitl       # ArduPilot SITL over MAVLink/UDP
+```
+
 **3. Serve the frontend with COOP/COEP headers** (required: the proxy uses
 `SharedArrayBuffer` to make the async WebSocket look synchronous to embind):
 
@@ -80,6 +88,39 @@ the `?ws=` query parameter, e.g. `http://localhost:8080/frontend/?ws=ws://192.16
 A quick end-to-end check is available at `http://localhost:8080/apps/ws-served/test/test_ws_e2e.html`.
 
 To go back to the fully in-browser app: `cmake --build build-wasm-only`.
+
+## Running against ArduPilot SITL
+
+The `sitl` plant speaks MAVLink 2 over UDP to an ArduPilot **Copter** SITL
+(use the QuadRotor model in the frontend). Start the server with the plant
+selected — it listens, GCS-style, on `0.0.0.0:14550` and learns the vehicle
+from the first valid datagram:
+
+```bash
+./build-server/cds_server 9002 sitl
+```
+
+Point the SITL's MAVLink output at that port. With the ArduPilot dev tools:
+
+```bash
+sim_vehicle.py -v ArduCopter -f quad --out=udp:127.0.0.1:14550
+```
+
+With the SITL running in Docker, publish its MAVLink out to the host and
+forward it to `127.0.0.1:14550` (the plant's listen port).
+
+Once telemetry flows, the plant ghost appears in the 3D view. **Bring the
+vehicle up to a stable hover before starting the mission** (manually, e.g.
+via MAVProxy / QGroundControl): this phase assumes the vehicle already
+airborne in GUIDED, and the readiness gate refuses Start until the vehicle
+has been held still long enough. At Start the plant frame is aligned to the
+trajectory's first point; before Start the vehicle's motion is shown zeroed
+at the CDS origin.
+
+> The MAVLink C headers under `plants/sitl/mavlink/` are vendored and pinned;
+> see [`plants/sitl/mavlink/VENDORED.md`](../plants/sitl/mavlink/VENDORED.md).
+> `plants/sitl/mavlink_pin.hpp` fails the build if a re-vendor drifts the wire
+> contract of the messages the plant uses.
 
 ## Run Jupyter notebooks in VS Code
 
@@ -132,9 +173,15 @@ The repository includes a GitHub Actions workflow ([`.github/workflows/deploy.ym
 │   ├── CMakeLists.txt                          # cds_plants static library
 │   ├── loopback/
 │   │   └── LoopbackPlant.hpp / .cpp            # SITL loopback: echoes the reference with period/latency/dropouts
+│   ├── sitl/                                   # ArduPilot SITL plant (MAVLink 2 / UDP)
+│   │   ├── SitlPlant.hpp / .cpp               # Link session, telemetry decode, Guided setpoints, frame alignment
+│   │   ├── UdpTransport.hpp / .cpp            # Minimal UDP endpoint (transport seam; serial link is its sibling)
+│   │   ├── mavlink_pin.hpp                    # Sole MAVLink entry point + wire-contract static_asserts (version pin)
+│   │   └── mavlink/                           # VENDORED MAVLink C headers — never hand-edit (see VENDORED.md)
 │   └── test/
 │       ├── CMakeLists.txt                      # Native integration test project
-│       └── driver.cpp                          # Plant machinery test (standalone + SystemManager)
+│       ├── driver.cpp                          # Plant machinery test (standalone + SystemManager)
+│       └── sitl_driver.cpp                     # SITL plant test vs in-process fake ArduCopter over UDP
 │
 ├── apps/                                       # Deployments of the core; each app has its own CMakeLists
 │   ├── common/                                 # Shared by all apps: the ext API "factory"
