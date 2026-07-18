@@ -74,12 +74,14 @@ namespace CDS
 
         /* Attach a plant (ownership transferred), system must be stopped.
            The plant must arrive already configured (SetPlantParams done by
-           the app); its communication is started/stopped by Run()/Stop().
+           the app). Attach connects the link (telemetry may flow while the
+           system is stopped); Run()/Stop() then start/stop the mission on
+           it. A plant whose link fails to connect is not attached.
            Returns true on error */
         bool AttachPlant(plantPtr_t&& pPlant);
 
-        /* Stop and destroy the attached plant, system must be stopped.
-           Returns true on error */
+        /* Stop the mission, disconnect the link and destroy the attached
+           plant, system must be stopped. Returns true on error */
         bool DetachPlant(void);
 
         /* Run a function on the model under the system lock. The reference is

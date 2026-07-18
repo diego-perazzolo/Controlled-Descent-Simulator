@@ -25,8 +25,9 @@
 // =============================================================================
 // File        : driver.cpp
 // Description : Integration test of the plant machinery: LoopbackPlant
-//               standalone (echo, sequence, staleness, dropouts) and attached
-//               to a SystemManager (lifecycle + tick exchange)
+//               standalone (echo, sequence, staleness, dropouts), attached
+//               to a SystemManager (lifecycle + tick exchange), and the
+//               SitlPlant skeleton (params validation + thread lifecycle)
 // Author      : Diego Perazzolo
 // Created     : 2026
 // =============================================================================
@@ -38,11 +39,13 @@
 #include <thread>
 
 #include "LoopbackPlant.hpp"
+#include "SitlPlant.hpp"
 #include "SystemManager.hpp"
 #include "Rocket.hpp"
 
 using namespace CDS;
 using plants::LoopbackPlant;
+using plants::SitlPlant;
 
 static int _failures = 0;
 
@@ -82,11 +85,22 @@ static void testStandalone(void)
     CHECK(plant.SetPlantParams(LoopbackPlant::loopbackParams_t{-1, 0, 0}) == true);
     CHECK(plant.SetPlantParams(LoopbackPlant::loopbackParams_t{0.005, 0.02, 0.0}) == false);
 
-    /* nothing published before start */
+    /* nothing published while disconnected; mission on a disconnected link
+       must fail */
     BasePlant::plantMeasurements_t meas = {};
     CHECK(plant.PullMeasurements(meas) == true);
+    CHECK(plant.Start() == true);
 
-    /* push a command, start, wait for the echo (latency 20 ms) */
+    /* connect: idle telemetry of the held state (origin, no rates) must
+       flow while the mission is still stopped */
+    CHECK(plant.Connect() == false);
+    CHECK(plant.Connect() == true);   // double connect is an error
+
+    CHECK(waitFor([&] { return plant.PullMeasurements(meas) == false; }, 2.0));
+    CHECK(std::abs(meas.state.x) < 1e-9);
+    CHECK(std::abs(meas.state.x_dot) < 1e-9);
+
+    /* push a command, start the mission, wait for the echo (latency 20 ms) */
     BasePlant::plantCommands_t cmd = {};
     cmd.time_seconds = 1.5;
     cmd.reference.pos = {10, 20, 30};
@@ -97,10 +111,12 @@ static void testStandalone(void)
     CHECK(plant.Start() == false);
     CHECK(plant.Start() == true);   // double start is an error
 
-    CHECK(waitFor([&] { return plant.PullMeasurements(meas) == false; }, 2.0));
+    CHECK(waitFor([&] {
+        return plant.PullMeasurements(meas) == false &&
+               std::abs(meas.state.x - 10) < 1e-9;
+    }, 2.0));
 
     /* echo correctness: measured state == commanded reference */
-    CHECK(std::abs(meas.state.x - 10) < 1e-9);
     CHECK(std::abs(meas.state.y - 20) < 1e-9);
     CHECK(std::abs(meas.state.z - 30) < 1e-9);
     CHECK(std::abs(meas.state.x_dot - 1) < 1e-9);
@@ -114,14 +130,25 @@ static void testStandalone(void)
         return plant.PullMeasurements(m2) == false && m2.sequence > seqEarly;
     }, 2.0));
 
-    /* staleness: once stopped, re-reads return the same sequence */
+    /* mission stop: the vehicle holds the last echoed position and the
+       telemetry keeps flowing on the live link, with no residual rates */
     CHECK(plant.Stop() == false);
+    CHECK(plant.Stop() == false);   // idempotent
     BasePlant::plantMeasurements_t a = {}, b = {};
+    CHECK(plant.PullMeasurements(a) == false);
+    CHECK(waitFor([&] {
+        return plant.PullMeasurements(b) == false && b.sequence > a.sequence &&
+               std::abs(b.state.x - 10) < 1e-9 &&
+               std::abs(b.state.x_dot) < 1e-9;
+    }, 2.0));
+
+    /* staleness: once disconnected, re-reads return the same sequence */
+    CHECK(plant.Disconnect() == false);
     CHECK(plant.PullMeasurements(a) == false);
     CHECK(plant.PullMeasurements(b) == false);
     CHECK(a.sequence == b.sequence);
 
-    CHECK(plant.Stop() == false);   // idempotent
+    CHECK(plant.Disconnect() == false);   // idempotent
 
     std::printf("standalone OK (last seq=%u, plantTime=%.3f)\n",
                 a.sequence, a.plantTime_seconds);
@@ -181,10 +208,61 @@ static void testWithSystemManager(void)
     std::printf("system manager OK\n");
 }
 
+/* --- phase 3: SitlPlant skeleton --------------------------------------- */
+static void testSitlSkeleton(void)
+{
+    SitlPlant plant;
+
+    /* valid parameter set, mutated per-case below */
+    const SitlPlant::sitlParams_t good = {.host = "127.0.0.1",
+                                          .port = 14550,
+                                          .setpointPeriod_seconds = 0.05,
+                                          .telemetryPeriod_seconds = 0.02,
+                                          .linkTimeout_seconds = 2.0};
+
+    /* invalid params must be rejected */
+    CHECK(plant.SetPlantParams(std::any(42)) == true);
+
+    SitlPlant::sitlParams_t bad = good;
+    bad.host = "";
+    CHECK(plant.SetPlantParams(bad) == true);
+
+    bad = good;
+    bad.port = 0;
+    CHECK(plant.SetPlantParams(bad) == true);
+
+    bad = good;
+    bad.setpointPeriod_seconds = -0.05;
+    CHECK(plant.SetPlantParams(bad) == true);
+
+    CHECK(plant.SetPlantParams(good) == false);
+
+    /* lifecycle: mission requires a connected link, double connect/start
+       are errors, no reconfigure while connected, stop and disconnect are
+       idempotent */
+    CHECK(plant.Start() == true);
+    CHECK(plant.Connect() == false);
+    CHECK(plant.Connect() == true);
+    CHECK(plant.SetPlantParams(good) == true);
+    CHECK(plant.Start() == false);
+    CHECK(plant.Start() == true);
+    CHECK(plant.Stop() == false);
+    CHECK(plant.Stop() == false);
+    CHECK(plant.Disconnect() == false);
+    CHECK(plant.Disconnect() == false);
+
+    /* the skeleton publishes nothing */
+    BasePlant::plantMeasurements_t meas = {};
+    CHECK(plant.PullMeasurements(meas) == true);
+
+    std::printf("sitl skeleton OK\n");
+}
+
 int main(void)
 {
     testStandalone();
     testWithSystemManager();
+    testSitlSkeleton();
 
     if (_failures)
     {

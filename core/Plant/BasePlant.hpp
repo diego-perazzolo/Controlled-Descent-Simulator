@@ -29,9 +29,13 @@
 //               (triple buffers, sequence numbering) is implemented here once
 //               for every plant (NVI); implementations (SITL, HIL links with
 //               their communication threads and third-party libraries) live
-//               OUTSIDE the core and only provide Start/Stop/params plus
-//               their communication thread, which talks to the tick solely
-//               through the protected Fetch/Publish methods.
+//               OUTSIDE the core and only provide the link lifecycle
+//               (Connect/Disconnect), the mission toggles (Start/Stop) and
+//               params, plus their communication thread, which talks to the
+//               tick solely through the protected Fetch/Publish methods.
+//               Lifecycle: the LINK lives from attach to detach (telemetry
+//               flows and the vehicle can be staged while the simulation is
+//               still stopped); the MISSION runs between Run() and Stop().
 // Author      : Diego Perazzolo
 // Created     : 2026
 // =============================================================================
@@ -84,12 +88,25 @@ namespace CDS
 
         virtual ~BasePlant();
 
-        /* Set plant parameters (implementation-specific). Returns true on error */
+        /* Set plant parameters (implementation-specific), only while
+           disconnected. Returns true on error */
         virtual bool SetPlantParams(const std::any& params) = 0;
 
-        /* Start / stop the plant (communication threads, links). Owned by the
-           implementation: no thread of the plant may ever call back into the
-           core. Returns true on error */
+        /* Link lifecycle, driven by attach/detach. Connect brings up the
+           implementation's communication (thread, socket): telemetry may
+           already flow and the vehicle be staged while the simulation is
+           stopped. Disconnect tears it down and is idempotent; every
+           implementation must ensure it in its destructor. Both are called
+           under the SystemManager lock and must not block on I/O — link
+           bring-up belongs to the communication thread, which may never
+           call back into the core. Returns true on error */
+        virtual bool Connect(void) = 0;
+        virtual bool Disconnect(void) = 0;
+
+        /* Mission toggles, driven by Run()/Stop(): enable / disable the
+           tracking of commands on an already-connected link. Non-blocking
+           (called under the SystemManager lock); Start on a disconnected
+           plant is an error, Stop is idempotent. Returns true on error */
         virtual bool Start(void) = 0;
         virtual bool Stop(void) = 0;
 

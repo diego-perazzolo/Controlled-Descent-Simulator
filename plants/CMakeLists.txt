@@ -11,6 +11,7 @@ endif()
 
 add_library(cds_plants STATIC
     loopback/LoopbackPlant.cpp
+    sitl/SitlPlant.cpp
 )
 
 target_compile_features(cds_plants PUBLIC cxx_std_20)
@@ -18,6 +19,7 @@ target_compile_features(cds_plants PUBLIC cxx_std_20)
 target_include_directories(cds_plants PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}          # for the explicit "loopback/…" style
     ${CMAKE_CURRENT_SOURCE_DIR}/loopback
+    ${CMAKE_CURRENT_SOURCE_DIR}/sitl
 )
 
 target_link_libraries(cds_plants PUBLIC cds_core)

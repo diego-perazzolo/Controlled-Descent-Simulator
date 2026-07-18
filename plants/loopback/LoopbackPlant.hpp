@@ -27,9 +27,12 @@
 // Description : SITL loopback plant: echoes the commanded reference back as
 //               measured state, with configurable sample period, latency and
 //               dropout rate. Serves as the plumbing test double AND as the
-//               reference implementation pattern for real plants (thread in
-//               Start/Stop, loop of FetchCommands → transform →
-//               PublishMeasurements).
+//               reference implementation pattern for real plants (link
+//               thread in Connect/Disconnect, mission flag in Start/Stop,
+//               loop of FetchCommands → transform → PublishMeasurements).
+//               While connected with the mission stopped it publishes the
+//               held state (the vehicle hovering in place); once started it
+//               tracks the commanded reference.
 // Author      : Diego Perazzolo
 // Created     : 2026
 // =============================================================================
@@ -66,11 +69,17 @@ namespace plants
         LoopbackPlant();
         virtual ~LoopbackPlant();
 
-        /* Set parameters (loopbackParams_t), only while stopped.
+        /* Set parameters (loopbackParams_t), only while disconnected.
            Returns true on error */
         virtual bool SetPlantParams(const std::any& params) override;
 
-        /* Start / stop the communication thread. Stop is idempotent.
+        /* Bring up / tear down the communication thread. Disconnect is
+           idempotent. Returns true on error */
+        virtual bool Connect(void) override;
+        virtual bool Disconnect(void) override;
+
+        /* Mission toggles: enable / disable the echo of commands. Start
+           requires a connected link; Stop is idempotent.
            Returns true on error */
         virtual bool Start(void) override;
         virtual bool Stop(void) override;
@@ -90,6 +99,7 @@ namespace plants
         loopbackParams_t m_params;
         std::thread m_thread;
         std::atomic<bool> m_threadRun;
+        std::atomic<bool> m_missionRun;
 
         /* communication-thread private */
         std::deque<delayEntry_t> m_delayLine;

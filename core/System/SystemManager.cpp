@@ -128,6 +128,14 @@ bool SystemManager::AttachPlant(plantPtr_t &&pPlant)
         return true;
     }
 
+    /* the link lives from attach to detach: bring it up now, so telemetry
+       flows and the vehicle can be staged before any mission starts */
+    if (pPlant->Connect())
+    {
+        // Link bring-up failed, do not attach
+        return true;
+    }
+
     m_pPlant = std::move(pPlant);
 
     TRACE("OK");
@@ -143,6 +151,7 @@ bool SystemManager::DetachPlant(void)
     RETURN_ERR_IF_NO_PLANT;
 
     m_pPlant->Stop();
+    m_pPlant->Disconnect();
     m_pPlant.reset();
 
     TRACE("OK");
@@ -271,7 +280,8 @@ bool SystemManager::Run(void)
     RETURN_ERR_IF_NO_MODEL;
 
     /* The plant is OPTIONAL: the system runs with the model alone. When a
-       plant is attached, its communication lives while the system runs */
+       plant is attached its link is already up (since attach): Start only
+       begins the mission on the warm link */
     if (IsPlantOk())
     {
         if (m_pPlant->Start())

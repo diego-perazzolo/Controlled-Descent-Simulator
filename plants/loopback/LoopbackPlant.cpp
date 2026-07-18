@@ -39,8 +39,11 @@ using namespace plants;
 using Clock = std::chrono::steady_clock;
 using FpSeconds = std::chrono::duration<double>;
 
-LoopbackPlant::LoopbackPlant() : m_params({0.01, 0.0, 0.0}),
+LoopbackPlant::LoopbackPlant() : m_params({.samplePeriod_seconds = 0.01,
+                                           .latency_seconds = 0.0,
+                                           .dropRate = 0.0}),
                                  m_threadRun(false),
+                                 m_missionRun(false),
                                  m_rng(std::random_device{}()),
                                  m_dist(0.0, 1.0)
 {
@@ -50,13 +53,14 @@ LoopbackPlant::LoopbackPlant() : m_params({0.01, 0.0, 0.0}),
 LoopbackPlant::~LoopbackPlant()
 {
     Stop();
+    Disconnect();
 }
 
 bool LoopbackPlant::SetPlantParams(const std::any& params)
 {
     if (m_thread.joinable())
     {
-        // Cannot reconfigure while running, error
+        // Cannot reconfigure while connected, error
         return true;
     }
 
@@ -79,11 +83,11 @@ bool LoopbackPlant::SetPlantParams(const std::any& params)
     return false;
 }
 
-bool LoopbackPlant::Start(void)
+bool LoopbackPlant::Connect(void)
 {
     if (m_thread.joinable())
     {
-        // Already started, error
+        // Already connected, error
         return true;
     }
 
@@ -93,28 +97,80 @@ bool LoopbackPlant::Start(void)
     return false;
 }
 
-bool LoopbackPlant::Stop(void)
+bool LoopbackPlant::Disconnect(void)
 {
-    /* idempotent: stopping a stopped plant is not an error */
+    /* idempotent: disconnecting a disconnected plant is not an error */
     if (!m_thread.joinable())
     {
         return false;
     }
 
+    m_missionRun = false;
     m_threadRun = false;
     m_thread.join();
 
     return false;
 }
 
+bool LoopbackPlant::Start(void)
+{
+    if (!m_thread.joinable())
+    {
+        // Mission on a disconnected link, error
+        return true;
+    }
+
+    if (m_missionRun)
+    {
+        // Already started, error
+        return true;
+    }
+
+    m_missionRun = true;
+    return false;
+}
+
+bool LoopbackPlant::Stop(void)
+{
+    /* idempotent: stopping a stopped mission is not an error */
+    m_missionRun = false;
+    return false;
+}
+
 void LoopbackPlant::_commLoop(void)
 {
     const auto start = Clock::now();
+
+    /* last echoed state: what the idle "vehicle" holds while the mission is
+       stopped (initially at the origin) */
+    core_state_t held = {};
+
     m_delayLine.clear();
 
     while (m_threadRun)
     {
         std::this_thread::sleep_for(FpSeconds(m_params.samplePeriod_seconds));
+        const double tNow = FpSeconds(Clock::now() - start).count();
+
+        if (!m_missionRun)
+        {
+            /* connected, mission stopped: hover in place. Telemetry keeps
+               flowing (that is what a live link does), commands are not
+               tracked and stale ones must not leak into the next mission */
+            m_delayLine.clear();
+
+            if (!(m_dist(m_rng) < m_params.dropRate))
+            {
+                /* holding position: no residual rates */
+                core_state_t idle = held;
+                idle.x_dot = 0;
+                idle.y_dot = 0;
+                idle.z_dot = 0;
+                idle.yaw_dot = 0;
+                PublishMeasurements(idle, tNow);
+            }
+            continue;
+        }
 
         plantCommands_t cmd;
         if (FetchCommands(cmd))
@@ -123,7 +179,6 @@ void LoopbackPlant::_commLoop(void)
             continue;
         }
 
-        const double tNow = FpSeconds(Clock::now() - start).count();
         m_delayLine.push_back({tNow, cmd});
 
         /* keep only the newest entry that already aged past the latency:
@@ -159,6 +214,7 @@ void LoopbackPlant::_commLoop(void)
         state.yaw = observed.cmd.reference.yaw;
         state.yaw_dot = observed.cmd.reference.yawRate;
 
+        held = state;
         PublishMeasurements(state, observed.t_seconds);
     }
 }
