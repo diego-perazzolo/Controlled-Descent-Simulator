@@ -48,8 +48,11 @@ using FpSeconds = std::chrono::duration<double>;
 
 namespace
 {
-    /* our identity on the wire: a ground-control-station peer */
-    constexpr uint8_t OUR_SYSTEM_ID = 255;
+    /* our identity on the wire: a ground-control-station peer. System id is
+       254, NOT the 255 default that ground stations (QGroundControl, MAVProxy)
+       use — sharing 255/190 with a co-connected GCS makes the flight
+       controller see one conflated node and arbitrate commands erratically. */
+    constexpr uint8_t OUR_SYSTEM_ID = 254;
     constexpr uint8_t OUR_COMPONENT_ID = MAV_COMP_ID_MISSIONPLANNER;
 
     constexpr double HEARTBEAT_PERIOD_S = 1.0;

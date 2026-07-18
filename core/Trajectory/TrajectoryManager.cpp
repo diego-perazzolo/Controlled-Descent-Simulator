@@ -126,8 +126,22 @@ bool TrajectoryManager::GetReference(const core_coord_t& time, Reference_t& ref)
         // Try to switch to trajectory in the proper time range
         if(GoNextItem())
         {
-            // there is no next item, returning final reference of current trajectory item
-            return m_trajectoryItems[m_currentItemIndex]->GetReference(endTime, ref);
+            // There is no next item: the trajectory is over. Hold the final
+            // POSITION as a stationary reference — zero the velocity and the
+            // higher derivatives. The raw end-of-trajectory sample can carry a
+            // non-zero terminal velocity (a Poly4 with finalVel != 0), which is
+            // physically inconsistent with a hold and makes a velocity-honoring
+            // plant (ArduCopter Guided) coast off along it.
+            bool err = m_trajectoryItems[m_currentItemIndex]->GetReference(endTime, ref);
+            ref.vel = {0.0, 0.0, 0.0};
+            ref.acc = {0.0, 0.0, 0.0};
+            ref.jerk = {0.0, 0.0, 0.0};
+            ref.snap = {0.0, 0.0, 0.0};
+            ref.yawRate = 0.0;
+            ref.yawAcc = 0.0;
+            ref.yawJerk = 0.0;
+            ref.yawSnap = 0.0;
+            return err;
         }
 
         m_trajectoryItems[m_currentItemIndex]->GetEndTime(endTime);
