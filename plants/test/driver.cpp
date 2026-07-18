@@ -219,7 +219,9 @@ static void testSitlSkeleton(void)
                                           .port = 14560,
                                           .setpointPeriod_seconds = 0.05,
                                           .telemetryPeriod_seconds = 0.02,
-                                          .linkTimeout_seconds = 2.0};
+                                          .linkTimeout_seconds = 2.0,
+                                          .stabilityVelThreshold_ms = 0.3,
+                                          .stabilityHoldTime_seconds = 3.0};
 
     /* invalid params must be rejected */
     CHECK(plant.SetPlantParams(std::any(42)) == true);
@@ -238,27 +240,26 @@ static void testSitlSkeleton(void)
 
     CHECK(plant.SetPlantParams(good) == false);
 
-    /* lifecycle: mission requires a connected link, double connect/start
-       are errors, no reconfigure while connected, stop and disconnect are
-       idempotent */
+    /* lifecycle: mission requires a connected link, double connect is an
+       error, no reconfigure while connected, disconnect is idempotent */
     CHECK(plant.Start() == true);
     CHECK(plant.GetLinkState() == SitlPlant::linkState_t::DISCONNECTED);
     CHECK(plant.Connect() == false);
     CHECK(plant.Connect() == true);
     CHECK(plant.SetPlantParams(good) == true);
-    CHECK(plant.Start() == false);
+
+    /* nobody is talking on the test port: the session stays down, the
+       vehicle is never ready, so Start is refused */
+    CHECK(plant.GetLinkState() == SitlPlant::linkState_t::DISCONNECTED);
+    CHECK(plant.IsReadyToStart() == false);
     CHECK(plant.Start() == true);
 
-    /* nobody is talking on the test port: the session must stay down */
-    CHECK(plant.GetLinkState() == SitlPlant::linkState_t::DISCONNECTED);
-
-    CHECK(plant.Stop() == false);
     CHECK(plant.Stop() == false);
     CHECK(plant.Disconnect() == false);
     CHECK(plant.Disconnect() == false);
     CHECK(plant.GetLinkState() == SitlPlant::linkState_t::DISCONNECTED);
 
-    /* no telemetry decoding yet: nothing published */
+    /* nothing published: no telemetry ever arrived */
     BasePlant::plantMeasurements_t meas = {};
     CHECK(plant.PullMeasurements(meas) == true);
 

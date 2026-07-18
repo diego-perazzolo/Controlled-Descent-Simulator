@@ -34,12 +34,15 @@
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <chrono>
+#include <memory>
 #include <thread>
 
 #include "core_defs.hpp"
 #include "BasePlant.hpp"
 #include "loopback/LoopbackPlant.hpp"
+#include "sitl/SitlPlant.hpp"
 #include "dispatch.hpp"
 #include "ws_protocol.hpp"
 #include "ws_server.hpp"
@@ -53,6 +56,46 @@ static std::atomic<bool> _run_rt_thread{true};
 extern bool g_core_tick(core_coord_t dt_seconds);                  // global function from core.cpp
 extern bool g_core_getTickPeriod(core_coord_t &tickPeriod_second); // global function from core.cpp
 extern bool g_core_attachPlant(std::unique_ptr<CDS::BasePlant> plant); // global function from core.cpp
+
+/* Build the plant selected on the command line (default: loopback). The
+   composition lives here for now; a future ext command will let the frontend
+   pick and configure the plant. Returns nullptr on unknown kind or on a
+   parameter error. */
+static std::unique_ptr<CDS::BasePlant> _makePlant(const char *kind)
+{
+    if (std::strcmp(kind, "loopback") == 0)
+    {
+        auto plant = std::make_unique<plants::LoopbackPlant>();
+        if (plant->SetPlantParams((plants::LoopbackPlant::loopbackParams_t){
+                .samplePeriod_seconds = 0.05,
+                .latency_seconds = 0.05,
+                .dropRate = 0.3}))
+        {
+            return nullptr;
+        }
+        return plant;
+    }
+
+    if (std::strcmp(kind, "sitl") == 0)
+    {
+        auto plant = std::make_unique<plants::SitlPlant>();
+        if (plant->SetPlantParams((plants::SitlPlant::sitlParams_t){
+                .host = "0.0.0.0",
+                .port = 14550,
+                .setpointPeriod_seconds = 0.05,
+                .telemetryPeriod_seconds = 0.02,
+                .linkTimeout_seconds = 2.0,
+                .stabilityVelThreshold_ms = 0.3,
+                .stabilityHoldTime_seconds = 3.0}))
+        {
+            return nullptr;
+        }
+        return plant;
+    }
+
+    // Unknown plant kind
+    return nullptr;
+}
 
 /* tick the system at rate 1/tickPeriodSeconds, unless ticking system takes too much (> tickPeriodSeconds) */
 static void _tick_generator(void)
@@ -129,6 +172,9 @@ int main(int argc, char **argv)
         port = (uint16_t)atoi(argv[1]);
     }
 
+    /* optional second arg selects the plant: "loopback" (default) or "sitl" */
+    const char *plantKind = (argc > 2) ? argv[2] : "loopback";
+
     /* Thread "Real-time", used for providing ticks to the System */
     std::thread rt([]
                    {
@@ -140,12 +186,12 @@ int main(int argc, char **argv)
 
     WsServer server(port, server_dispatch);
 
-    auto plant = std::make_unique<plants::LoopbackPlant>();
+    auto plant = _makePlant(plantKind);
 
-    if(plant->SetPlantParams((plants::LoopbackPlant::loopbackParams_t){0.05, 0.05, 0.3}) ||
-        g_core_attachPlant(std::move(plant)))
+    if (!plant || g_core_attachPlant(std::move(plant)))
     {
-        // Err
+        // Unknown/misconfigured plant, or attach failed
+        std::fprintf(stderr, "cds_server: cannot create plant '%s'\n", plantKind);
         _run_rt_thread = false;
         if (rt.joinable())
         {

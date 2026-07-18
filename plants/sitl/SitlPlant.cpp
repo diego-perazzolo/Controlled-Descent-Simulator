@@ -58,6 +58,15 @@ namespace
     /* UDP is lossy: keep asking for the telemetry streams until they flow */
     constexpr double TELEMETRY_REREQUEST_PERIOD_S = 2.0;
 
+    /* setpoints command position + velocity + yaw; acceleration and yaw rate
+       are ignored (yaw rate is left out for ArduCopter GUIDED compatibility,
+       which does not accept a combined yaw + yaw-rate target) */
+    constexpr uint16_t SETPOINT_TYPE_MASK =
+        POSITION_TARGET_TYPEMASK_AX_IGNORE |
+        POSITION_TARGET_TYPEMASK_AY_IGNORE |
+        POSITION_TARGET_TYPEMASK_AZ_IGNORE |
+        POSITION_TARGET_TYPEMASK_YAW_RATE_IGNORE;
+
     constexpr double PI = 3.14159265358979323846;
 
     /* wrap an angle to (-pi, pi] */
@@ -91,14 +100,30 @@ struct SitlPlant::Link
     double lastValidRx_seconds;
     double lastHeartbeatTx_seconds;
     double lastTelemetryReq_seconds;
+    double lastSetpointTx_seconds;
 
     /* telemetry assembly: LOCAL_POSITION_NED (position + velocity) and
        ATTITUDE (angles + rates) arrive as separate messages; they are
-       merged, already converted to CDS/ENU, into this running sample and
-       published on every fresh LOCAL_POSITION_NED */
+       merged, already converted to CDS/ENU (but before any frame offset),
+       into this running raw sample */
     core_state_t assembled;
     bool havePosition;
     double lastPositionRx_seconds;
+
+    /* mission-readiness: instant the vehicle last became "still"; negative
+       means it is currently moving */
+    double stableSince_seconds;
+
+    /* frame alignment, two regimes (see file header). Offsets are the raw
+       CDS/ENU pose value that maps to the CDS reference of the regime:
+       subtracted from measurements, added to outbound setpoints. */
+    bool haveStagingRef;   /* staging: raw pose that maps to the CDS origin */
+    double stagingRefX, stagingRefY, stagingRefZ, stagingRefYaw;
+    bool haveMissionOffset;/* mission: raw pose that maps to the trajectory t0 */
+    double missionOffX, missionOffY, missionOffZ, missionOffYaw;
+
+    /* edge detector on the mission toggle, to re-anchor on transitions */
+    bool missionWasRunning;
 
     Link() : peerKnown(false),
              peer({}),
@@ -107,10 +132,20 @@ struct SitlPlant::Link
              epoch(Clock::now()),
              lastValidRx_seconds(0.0),
              lastHeartbeatTx_seconds(0.0),
-             lastTelemetryReq_seconds(0.0),
+             /* negative: the first stream request fires as soon as READY */
+             lastTelemetryReq_seconds(-TELEMETRY_REREQUEST_PERIOD_S),
+             lastSetpointTx_seconds(0.0),
              assembled({}),
              havePosition(false),
-             lastPositionRx_seconds(0.0)
+             lastPositionRx_seconds(0.0),
+             stableSince_seconds(-1.0),
+             haveStagingRef(false),
+             stagingRefX(0.0), stagingRefY(0.0), stagingRefZ(0.0),
+             stagingRefYaw(0.0),
+             haveMissionOffset(false),
+             missionOffX(0.0), missionOffY(0.0), missionOffZ(0.0),
+             missionOffYaw(0.0),
+             missionWasRunning(false)
     {
     }
 
@@ -125,10 +160,13 @@ SitlPlant::SitlPlant() : m_params({.host = "0.0.0.0",
                                    .port = 14550,
                                    .setpointPeriod_seconds = 0.05,
                                    .telemetryPeriod_seconds = 0.02,
-                                   .linkTimeout_seconds = 2.0}),
+                                   .linkTimeout_seconds = 2.0,
+                                   .stabilityVelThreshold_ms = 0.3,
+                                   .stabilityHoldTime_seconds = 3.0}),
                          m_threadRun(false),
                          m_missionRun(false),
-                         m_linkState(linkState_t::DISCONNECTED)
+                         m_linkState(linkState_t::DISCONNECTED),
+                         m_readyToStart(false)
 {
 
 }
@@ -157,7 +195,8 @@ bool SitlPlant::SetPlantParams(const std::any& params)
 
     if (p.host.empty() || p.port == 0 ||
         p.setpointPeriod_seconds <= 0 || p.telemetryPeriod_seconds <= 0 ||
-        p.linkTimeout_seconds <= 0)
+        p.linkTimeout_seconds <= 0 ||
+        p.stabilityVelThreshold_ms <= 0 || p.stabilityHoldTime_seconds <= 0)
     {
         // Invalid parameters, error
         return true;
@@ -193,6 +232,7 @@ bool SitlPlant::Disconnect(void)
     m_threadRun = false;
     m_thread.join();
     m_linkState = linkState_t::DISCONNECTED;
+    m_readyToStart = false;
 
     return false;
 }
@@ -211,6 +251,12 @@ bool SitlPlant::Start(void)
         return true;
     }
 
+    if (!m_readyToStart)
+    {
+        // Vehicle not ready (link not READY, or not held still long enough)
+        return true;
+    }
+
     m_missionRun = true;
     return false;
 }
@@ -225,6 +271,11 @@ bool SitlPlant::Stop(void)
 SitlPlant::linkState_t SitlPlant::GetLinkState(void) const
 {
     return m_linkState;
+}
+
+bool SitlPlant::IsReadyToStart(void) const
+{
+    return m_readyToStart;
 }
 
 void SitlPlant::_commLoop(void)
@@ -258,8 +309,34 @@ void SitlPlant::_commLoop(void)
         {
             link.peerKnown = false;
             link.havePosition = false;
+            link.stableSince_seconds = -1.0;
+            link.haveStagingRef = false;
+            link.haveMissionOffset = false;
+            m_readyToStart = false;
             m_linkState = linkState_t::DISCONNECTED;
         }
+
+        /* mission-toggle edges re-anchor the frame: on Start, drop the
+           mission offset so the first command re-captures it; on Stop,
+           re-zero to the CDS origin (staging regime) */
+        const bool missionNow = m_missionRun;
+        if (missionNow != link.missionWasRunning)
+        {
+            link.haveMissionOffset = false;
+            if (!missionNow)
+            {
+                link.haveStagingRef = false;
+            }
+            link.missionWasRunning = missionNow;
+        }
+
+        /* readiness gate: link identified and the vehicle held still long
+           enough. Only meaningful before a mission starts */
+        m_readyToStart = (m_linkState == linkState_t::READY) &&
+                         link.havePosition &&
+                         link.stableSince_seconds >= 0.0 &&
+                         (tNow - link.stableSince_seconds >=
+                          m_params.stabilityHoldTime_seconds);
 
         if (link.peerKnown &&
             tNow - link.lastHeartbeatTx_seconds >= HEARTBEAT_PERIOD_S)
@@ -269,16 +346,46 @@ void SitlPlant::_commLoop(void)
         }
 
         /* once the flight controller is identified, ask for the telemetry
-           streams and keep re-asking until they actually flow (UDP loss) */
-        if (m_linkState == linkState_t::READY &&
-            tNow - link.lastPositionRx_seconds > TELEMETRY_REREQUEST_PERIOD_S &&
+           streams (ArduPilot does not stream LOCAL_POSITION_NED until asked)
+           promptly, then keep re-asking until they actually flow (UDP loss) */
+        const bool positionFlowing =
+            link.havePosition &&
+            (tNow - link.lastPositionRx_seconds <= TELEMETRY_REREQUEST_PERIOD_S);
+        if (m_linkState == linkState_t::READY && !positionFlowing &&
             tNow - link.lastTelemetryReq_seconds >= TELEMETRY_REREQUEST_PERIOD_S)
         {
             _requestTelemetryStreams(link);
             link.lastTelemetryReq_seconds = tNow;
         }
 
-        /* m_missionRun gates the setpoint streaming (next phases) */
+        /* mission running: capture the mission offset from the first command
+           (frame alignment), then stream setpoints at the configured rate */
+        if (missionNow && link.havePosition)
+        {
+            plantCommands_t commands = {};
+            if (!FetchCommands(commands))
+            {
+                if (!link.haveMissionOffset)
+                {
+                    /* offset = current raw pose − trajectory t0 reference:
+                       makes the ghost coincide with the trajectory start and
+                       maps setpoints back into the vehicle's frame */
+                    link.missionOffX = link.assembled.x - commands.reference.pos[0];
+                    link.missionOffY = link.assembled.y - commands.reference.pos[1];
+                    link.missionOffZ = link.assembled.z - commands.reference.pos[2];
+                    link.missionOffYaw =
+                        wrapPi(link.assembled.yaw - commands.reference.yaw);
+                    link.haveMissionOffset = true;
+                }
+
+                if (tNow - link.lastSetpointTx_seconds >=
+                    m_params.setpointPeriod_seconds)
+                {
+                    _sendSetpoint(link, commands);
+                    link.lastSetpointTx_seconds = tNow;
+                }
+            }
+        }
     }
 
     m_linkState = linkState_t::DISCONNECTED;
@@ -382,11 +489,56 @@ void SitlPlant::_processInbound(Link& link)
                     link.havePosition = true;
                     link.lastPositionRx_seconds = link.Now();
 
+                    /* stability tracking for the readiness gate: speed
+                       magnitude is invariant under the axis permutation */
+                    const double speed = std::sqrt(lpos.vx * lpos.vx +
+                                                   lpos.vy * lpos.vy +
+                                                   lpos.vz * lpos.vz);
+                    if (speed <= m_params.stabilityVelThreshold_ms)
+                    {
+                        if (link.stableSince_seconds < 0.0)
+                        {
+                            link.stableSince_seconds = link.Now();
+                        }
+                    }
+                    else
+                    {
+                        link.stableSince_seconds = -1.0;
+                    }
+
+                    /* staging regime: capture, once, the raw pose that maps
+                       to the CDS origin, so the ghost drifts near it */
+                    if (!link.haveStagingRef && !m_missionRun)
+                    {
+                        link.stagingRefX = link.assembled.x;
+                        link.stagingRefY = link.assembled.y;
+                        link.stagingRefZ = link.assembled.z;
+                        link.stagingRefYaw = link.assembled.yaw;
+                        link.haveStagingRef = true;
+                    }
+
+                    /* publish the raw pose minus the active frame offset
+                       (mission offset once captured, else staging ref) */
+                    core_state_t out = link.assembled;
+                    if (m_missionRun && link.haveMissionOffset)
+                    {
+                        out.x -= link.missionOffX;
+                        out.y -= link.missionOffY;
+                        out.z -= link.missionOffZ;
+                        out.yaw = wrapPi(link.assembled.yaw - link.missionOffYaw);
+                    }
+                    else if (link.haveStagingRef)
+                    {
+                        out.x -= link.stagingRefX;
+                        out.y -= link.stagingRefY;
+                        out.z -= link.stagingRefZ;
+                        out.yaw = wrapPi(link.assembled.yaw - link.stagingRefYaw);
+                    }
+
                     /* the vehicle's own boot time is the moment the sample
                        was TAKEN: publishing it makes the link latency
                        observable, exactly as the BasePlant contract wants */
-                    PublishMeasurements(link.assembled,
-                                        lpos.time_boot_ms / 1000.0);
+                    PublishMeasurements(out, lpos.time_boot_ms / 1000.0);
                     break;
                 }
 
@@ -434,4 +586,39 @@ void SitlPlant::_requestTelemetryStreams(Link& link)
         const uint16_t length = mavlink_msg_to_send_buffer(buffer, &message);
         link.transport.Send(buffer, length, link.peer);
     }
+}
+
+void SitlPlant::_sendSetpoint(Link& link, const plantCommands_t& commands)
+{
+    /* target pose in CDS/ENU: reference plus the mission offset, so the
+       trajectory frame maps onto the vehicle's frame. Velocity and yaw rate
+       are frame-rotated only (a translation offset has no derivative) */
+    const double targetX = commands.reference.pos[0] + link.missionOffX;
+    const double targetY = commands.reference.pos[1] + link.missionOffY;
+    const double targetZ = commands.reference.pos[2] + link.missionOffZ;
+    const double targetYaw = wrapPi(commands.reference.yaw + link.missionOffYaw);
+
+    /* CDS/ENU → NED: North=E_y, East=E_x, Down=-E_z; heading measured from
+       North instead of East (inverse of the inbound conversion) */
+    const float nedX = static_cast<float>(targetY);
+    const float nedY = static_cast<float>(targetX);
+    const float nedZ = static_cast<float>(-targetZ);
+    const float nedVx = static_cast<float>(commands.reference.vel[1]);
+    const float nedVy = static_cast<float>(commands.reference.vel[0]);
+    const float nedVz = static_cast<float>(-commands.reference.vel[2]);
+    const float nedYaw = static_cast<float>(wrapPi(PI / 2.0 - targetYaw));
+
+    mavlink_message_t message;
+    mavlink_msg_set_position_target_local_ned_pack(
+        OUR_SYSTEM_ID, OUR_COMPONENT_ID, &message,
+        0 /* time_boot_ms: unused by the setpoint consumer */,
+        link.fcSystemId, link.fcComponentId, MAV_FRAME_LOCAL_NED,
+        SETPOINT_TYPE_MASK,
+        nedX, nedY, nedZ, nedVx, nedVy, nedVz,
+        0, 0, 0 /* acceleration: ignored */,
+        nedYaw, 0 /* yaw rate: ignored */);
+
+    uint8_t buffer[MAVLINK_MAX_PACKET_LEN];
+    const uint16_t length = mavlink_msg_to_send_buffer(buffer, &message);
+    link.transport.Send(buffer, length, link.peer);
 }

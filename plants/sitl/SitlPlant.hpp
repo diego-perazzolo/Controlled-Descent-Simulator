@@ -43,8 +43,16 @@
 //               On READY it requests LOCAL_POSITION_NED + ATTITUDE streams
 //               (SET_MESSAGE_INTERVAL), decodes them into a measurement
 //               (NED → CDS/ENU conversion confined here) and publishes it
-//               timestamped with the vehicle's on-board time. Setpoint
-//               streaming lands next.
+//               timestamped with the vehicle's on-board time.
+//               Frame alignment is two-regime (pose = position + yaw):
+//               while staging (mission off) the pose is zeroed at the CDS
+//               origin, so the ghost drifts near the origin; at mission
+//               Start the first command captures a mission offset that makes
+//               the ghost coincide with the trajectory's first point and
+//               maps outbound setpoints back into the vehicle's frame.
+//               Start is gated: the vehicle must be READY and held still
+//               (stability params) long enough. This phase (4a) assumes the
+//               vehicle already airborne in GUIDED; auto-staging is 4b.
 // Author      : Diego Perazzolo
 // Created     : 2026
 // =============================================================================
@@ -85,6 +93,14 @@ namespace plants
             /* link watchdog: no valid inbound traffic for longer than this
                means the link is lost, in seconds. Must be > 0 */
             double linkTimeout_seconds;
+
+            /* mission-readiness gate: the vehicle counts as "still" while its
+               measured speed stays at or below this threshold (m/s), and is
+               ready to start only after it has stayed still continuously for
+               stabilityHoldTime_seconds. Start is refused otherwise. Both
+               must be > 0 */
+            double stabilityVelThreshold_ms;
+            double stabilityHoldTime_seconds;
         } sitlParams_t;
 
         /* Link session state, observable from any thread */
@@ -109,13 +125,19 @@ namespace plants
         virtual bool Disconnect(void) override;
 
         /* Mission toggles: enable / disable the setpoint streaming on the
-           connected link. Start requires a connected link; Stop is
-           idempotent. Returns true on error */
+           connected link. Start requires a connected link AND a ready
+           vehicle (see IsReadyToStart); Stop is idempotent.
+           Returns true on error */
         virtual bool Start(void) override;
         virtual bool Stop(void) override;
 
         /* Current link session state (any thread) */
         linkState_t GetLinkState(void) const;
+
+        /* True when the vehicle may begin a mission: link READY and the
+           vehicle held still (per the stability params) long enough. Any
+           thread */
+        bool IsReadyToStart(void) const;
 
         private:
 
@@ -139,11 +161,16 @@ namespace plants
            ATTITUDE) at the configured rate, via SET_MESSAGE_INTERVAL */
         void _requestTelemetryStreams(Link& link);
 
+        /* send one SET_POSITION_TARGET_LOCAL_NED for the given command,
+           applying the mission offset and the CDS/ENU → NED conversion */
+        void _sendSetpoint(Link& link, const plantCommands_t& commands);
+
         sitlParams_t m_params;
         std::thread m_thread;
         std::atomic<bool> m_threadRun;
         std::atomic<bool> m_missionRun;
         std::atomic<linkState_t> m_linkState;
+        std::atomic<bool> m_readyToStart;
     };
 
 } // namespace plants
