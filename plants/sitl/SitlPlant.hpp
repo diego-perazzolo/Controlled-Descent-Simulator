@@ -165,6 +165,11 @@ namespace plants
            applying the mission offset and the CDS/ENU → NED conversion */
         void _sendSetpoint(Link& link, const plantCommands_t& commands);
 
+        /* safety brake: command the vehicle's current NED pose with zero
+           velocity, so it holds in place on mission stop / disconnect
+           instead of coasting to the last commanded target */
+        void _sendHold(Link& link);
+
         sitlParams_t m_params;
         std::thread m_thread;
         std::atomic<bool> m_threadRun;

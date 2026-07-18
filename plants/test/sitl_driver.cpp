@@ -412,9 +412,20 @@ int main(void)
                    POSITION_TARGET_TYPEMASK_YAW_RATE_IGNORE));
     CHECK(frame == MAV_FRAME_LOCAL_NED);
 
+    /* mission stop must brake the vehicle: a zero-velocity hold at its
+       current NED pose (P1 = 0,0,-30), not leave it coasting on the last
+       commanded velocity */
+    plant.Stop();
+    CHECK(waitFor([&] {
+        double hx, hy, hz, hvx, hvy, hvz, hyaw;
+        uint16_t hm; uint8_t hf;
+        return fake.LastSetpoint(hx, hy, hz, hvx, hvy, hvz, hyaw, hm, hf) &&
+               std::abs(hvx) < 1e-3 && std::abs(hvy) < 1e-3 &&
+               std::abs(hvz) < 1e-3 && std::abs(hz + 30) < 1e-3;
+    }, 2.0));
+
     /* silence watchdog: once the fake goes quiet the session must fall back
        to DISCONNECTED within the link timeout */
-    plant.Stop();
     fake.Stop();
     CHECK(waitFor([&] {
         return plant.GetLinkState() == SitlPlant::linkState_t::DISCONNECTED;

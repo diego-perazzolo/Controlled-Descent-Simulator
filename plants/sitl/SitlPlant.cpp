@@ -128,6 +128,15 @@ struct SitlPlant::Link
     /* edge detector on the mission toggle, to re-anchor on transitions */
     bool missionWasRunning;
 
+    /* last raw pose the vehicle reported, in its own NED frame (straight
+       from LOCAL_POSITION_NED / ATTITUDE, no conversion): the target of the
+       safety hold "stay exactly here" on mission stop / disconnect */
+    double lastNedX, lastNedY, lastNedZ, lastNedYaw;
+
+    /* true while we are actively streaming setpoints: gates the one-shot
+       safety hold so it is sent only when we were really driving */
+    bool commanding;
+
     Link() : peerKnown(false),
              peer({}),
              fcSystemId(0),
@@ -148,7 +157,9 @@ struct SitlPlant::Link
              haveMissionOffset(false),
              missionOffX(0.0), missionOffY(0.0), missionOffZ(0.0),
              missionOffYaw(0.0),
-             missionWasRunning(false)
+             missionWasRunning(false),
+             lastNedX(0.0), lastNedY(0.0), lastNedZ(0.0), lastNedYaw(0.0),
+             commanding(false)
     {
     }
 
@@ -321,13 +332,20 @@ void SitlPlant::_commLoop(void)
 
         /* mission-toggle edges re-anchor the frame: on Start, drop the
            mission offset so the first command re-captures it; on Stop,
-           re-zero to the CDS origin (staging regime) */
+           re-zero to the CDS origin (staging regime) and, if we were driving,
+           command the safety hold so the vehicle brakes instead of coasting
+           to the last commanded target */
         const bool missionNow = m_missionRun;
         if (missionNow != link.missionWasRunning)
         {
             link.haveMissionOffset = false;
             if (!missionNow)
             {
+                if (link.commanding && link.peerKnown)
+                {
+                    _sendHold(link);
+                    link.commanding = false;
+                }
                 link.haveStagingRef = false;
             }
             link.missionWasRunning = missionNow;
@@ -386,9 +404,19 @@ void SitlPlant::_commLoop(void)
                 {
                     _sendSetpoint(link, commands);
                     link.lastSetpointTx_seconds = tNow;
+                    link.commanding = true;
                 }
             }
         }
+    }
+
+    /* dying act of the communication thread (covers Disconnect, where the
+       mission-stop edge above is never processed): brake the vehicle while
+       the socket is still open, so a detach never leaves it coasting */
+    if (link.commanding && link.peerKnown)
+    {
+        _sendHold(link);
+        link.commanding = false;
     }
 
     m_linkState = linkState_t::DISCONNECTED;
@@ -472,6 +500,9 @@ void SitlPlant::_processInbound(Link& link)
                     link.assembled.roll_dot = attitude.rollspeed;
                     link.assembled.pitch_dot = -attitude.pitchspeed;
                     link.assembled.yaw_dot = -attitude.yawspeed;
+
+                    /* raw NED heading, kept for the safety hold */
+                    link.lastNedYaw = attitude.yaw;
                     break;
                 }
 
@@ -488,6 +519,11 @@ void SitlPlant::_processInbound(Link& link)
                     link.assembled.x_dot = lpos.vy;
                     link.assembled.y_dot = lpos.vx;
                     link.assembled.z_dot = -lpos.vz;
+
+                    /* raw NED position, kept for the safety hold */
+                    link.lastNedX = lpos.x;
+                    link.lastNedY = lpos.y;
+                    link.lastNedZ = lpos.z;
 
                     link.havePosition = true;
                     link.lastPositionRx_seconds = link.Now();
@@ -620,6 +656,29 @@ void SitlPlant::_sendSetpoint(Link& link, const plantCommands_t& commands)
         nedX, nedY, nedZ, nedVx, nedVy, nedVz,
         0, 0, 0 /* acceleration: ignored */,
         nedYaw, 0 /* yaw rate: ignored */);
+
+    uint8_t buffer[MAVLINK_MAX_PACKET_LEN];
+    const uint16_t length = mavlink_msg_to_send_buffer(buffer, &message);
+    link.transport.Send(buffer, length, link.peer);
+}
+
+void SitlPlant::_sendHold(Link& link)
+{
+    /* "stay exactly here": the vehicle's last reported NED pose with zero
+       velocity. Offset-independent (a hold at the current position is the
+       same in any frame origin), so it is safe even mid-mission */
+    mavlink_message_t message;
+    mavlink_msg_set_position_target_local_ned_pack(
+        OUR_SYSTEM_ID, OUR_COMPONENT_ID, &message,
+        0 /* time_boot_ms: unused by the setpoint consumer */,
+        link.fcSystemId, link.fcComponentId, MAV_FRAME_LOCAL_NED,
+        SETPOINT_TYPE_MASK,
+        static_cast<float>(link.lastNedX),
+        static_cast<float>(link.lastNedY),
+        static_cast<float>(link.lastNedZ),
+        0, 0, 0 /* velocity: zero — brake and hold */,
+        0, 0, 0 /* acceleration: ignored */,
+        static_cast<float>(link.lastNedYaw), 0 /* yaw rate: ignored */);
 
     uint8_t buffer[MAVLINK_MAX_PACKET_LEN];
     const uint16_t length = mavlink_msg_to_send_buffer(buffer, &message);
