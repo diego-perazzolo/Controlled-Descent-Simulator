@@ -39,6 +39,7 @@
 #include "UdpTransport.hpp"
 
 #include <chrono>
+#include <cmath>
 
 using namespace plants;
 
@@ -53,6 +54,23 @@ namespace
 
     constexpr double HEARTBEAT_PERIOD_S = 1.0;
     constexpr double BIND_RETRY_PERIOD_S = 1.0;
+
+    /* UDP is lossy: keep asking for the telemetry streams until they flow */
+    constexpr double TELEMETRY_REREQUEST_PERIOD_S = 2.0;
+
+    constexpr double PI = 3.14159265358979323846;
+
+    /* wrap an angle to (-pi, pi] */
+    double wrapPi(double angle)
+    {
+        constexpr double TWO_PI = 2.0 * PI;
+        angle = std::fmod(angle + PI, TWO_PI);
+        if (angle <= 0.0)
+        {
+            angle += TWO_PI;
+        }
+        return angle - PI;
+    }
 }
 
 /* communication-thread context: everything the loop needs, on its stack */
@@ -72,6 +90,15 @@ struct SitlPlant::Link
     Clock::time_point epoch;
     double lastValidRx_seconds;
     double lastHeartbeatTx_seconds;
+    double lastTelemetryReq_seconds;
+
+    /* telemetry assembly: LOCAL_POSITION_NED (position + velocity) and
+       ATTITUDE (angles + rates) arrive as separate messages; they are
+       merged, already converted to CDS/ENU, into this running sample and
+       published on every fresh LOCAL_POSITION_NED */
+    core_state_t assembled;
+    bool havePosition;
+    double lastPositionRx_seconds;
 
     Link() : peerKnown(false),
              peer({}),
@@ -79,7 +106,11 @@ struct SitlPlant::Link
              fcComponentId(0),
              epoch(Clock::now()),
              lastValidRx_seconds(0.0),
-             lastHeartbeatTx_seconds(0.0)
+             lastHeartbeatTx_seconds(0.0),
+             lastTelemetryReq_seconds(0.0),
+             assembled({}),
+             havePosition(false),
+             lastPositionRx_seconds(0.0)
     {
     }
 
@@ -226,6 +257,7 @@ void SitlPlant::_commLoop(void)
             tNow - link.lastValidRx_seconds > m_params.linkTimeout_seconds)
         {
             link.peerKnown = false;
+            link.havePosition = false;
             m_linkState = linkState_t::DISCONNECTED;
         }
 
@@ -234,6 +266,16 @@ void SitlPlant::_commLoop(void)
         {
             _sendHeartbeat(link);
             link.lastHeartbeatTx_seconds = tNow;
+        }
+
+        /* once the flight controller is identified, ask for the telemetry
+           streams and keep re-asking until they actually flow (UDP loss) */
+        if (m_linkState == linkState_t::READY &&
+            tNow - link.lastPositionRx_seconds > TELEMETRY_REREQUEST_PERIOD_S &&
+            tNow - link.lastTelemetryReq_seconds >= TELEMETRY_REREQUEST_PERIOD_S)
+        {
+            _requestTelemetryStreams(link);
+            link.lastTelemetryReq_seconds = tNow;
         }
 
         /* m_missionRun gates the setpoint streaming (next phases) */
@@ -259,8 +301,11 @@ void SitlPlant::_processInbound(Link& link)
             mavlink_status_t status;
 
             if (mavlink_parse_char(MAVLINK_COMM_0, buffer[i],
-                                   &message, &status) == 0)
+                                   &message, &status) != MAVLINK_FRAMING_OK)
             {
+                /* incomplete, or a frame that failed CRC / signature: an
+                   incompatible peer ends up here and is thus never counted
+                   as valid traffic */
                 continue;
             }
 
@@ -281,22 +326,72 @@ void SitlPlant::_processInbound(Link& link)
                 m_linkState = linkState_t::CONNECTED;
             }
 
-            if (message.msgid == MAVLINK_MSG_ID_HEARTBEAT)
+            switch (message.msgid)
             {
-                mavlink_heartbeat_t heartbeat;
-                mavlink_msg_heartbeat_decode(&message, &heartbeat);
-
-                /* the flight controller is identified by the heartbeat of
-                   its autopilot component; a peer declaring a different
-                   protocol generation is refused */
-                if (message.compid == MAV_COMP_ID_AUTOPILOT1 &&
-                    heartbeat.autopilot != MAV_AUTOPILOT_INVALID &&
-                    heartbeat.mavlink_version == MAVLINK_VERSION)
+                case MAVLINK_MSG_ID_HEARTBEAT:
                 {
-                    link.fcSystemId = message.sysid;
-                    link.fcComponentId = message.compid;
-                    m_linkState = linkState_t::READY;
+                    mavlink_heartbeat_t heartbeat;
+                    mavlink_msg_heartbeat_decode(&message, &heartbeat);
+
+                    /* the flight controller is identified by the heartbeat
+                       of its autopilot component; a peer declaring a
+                       different protocol generation is refused */
+                    if (message.compid == MAV_COMP_ID_AUTOPILOT1 &&
+                        heartbeat.autopilot != MAV_AUTOPILOT_INVALID &&
+                        heartbeat.mavlink_version == MAVLINK_VERSION)
+                    {
+                        link.fcSystemId = message.sysid;
+                        link.fcComponentId = message.compid;
+                        m_linkState = linkState_t::READY;
+                    }
+                    break;
                 }
+
+                case MAVLINK_MSG_ID_ATTITUDE:
+                {
+                    mavlink_attitude_t attitude;
+                    mavlink_msg_attitude_decode(&message, &attitude);
+
+                    /* NED aircraft body → CDS/ENU: roll unchanged, pitch and
+                       yaw negated (Y and Z axes flip), heading measured from
+                       East instead of North. Body rates follow the same axis
+                       flip */
+                    link.assembled.roll = attitude.roll;
+                    link.assembled.pitch = -attitude.pitch;
+                    link.assembled.yaw = wrapPi(PI / 2.0 - attitude.yaw);
+                    link.assembled.roll_dot = attitude.rollspeed;
+                    link.assembled.pitch_dot = -attitude.pitchspeed;
+                    link.assembled.yaw_dot = -attitude.yawspeed;
+                    break;
+                }
+
+                case MAVLINK_MSG_ID_LOCAL_POSITION_NED:
+                {
+                    mavlink_local_position_ned_t lpos;
+                    mavlink_msg_local_position_ned_decode(&message, &lpos);
+
+                    /* NED → CDS/ENU: East=N_y, North=N_x, Up=-N_z, same for
+                       the velocity components */
+                    link.assembled.x = lpos.y;
+                    link.assembled.y = lpos.x;
+                    link.assembled.z = -lpos.z;
+                    link.assembled.x_dot = lpos.vy;
+                    link.assembled.y_dot = lpos.vx;
+                    link.assembled.z_dot = -lpos.vz;
+
+                    link.havePosition = true;
+                    link.lastPositionRx_seconds = link.Now();
+
+                    /* the vehicle's own boot time is the moment the sample
+                       was TAKEN: publishing it makes the link latency
+                       observable, exactly as the BasePlant contract wants */
+                    PublishMeasurements(link.assembled,
+                                        lpos.time_boot_ms / 1000.0);
+                    break;
+                }
+
+                default:
+                    break;
             }
         }
 
@@ -315,4 +410,28 @@ void SitlPlant::_sendHeartbeat(Link& link)
     const uint16_t length = mavlink_msg_to_send_buffer(buffer, &message);
 
     link.transport.Send(buffer, length, link.peer);
+}
+
+void SitlPlant::_requestTelemetryStreams(Link& link)
+{
+    const float interval_us =
+        static_cast<float>(m_params.telemetryPeriod_seconds * 1e6);
+
+    const uint32_t messageIds[] = {MAVLINK_MSG_ID_LOCAL_POSITION_NED,
+                                   MAVLINK_MSG_ID_ATTITUDE};
+
+    for (uint32_t messageId : messageIds)
+    {
+        mavlink_message_t message;
+        mavlink_msg_command_long_pack(
+            OUR_SYSTEM_ID, OUR_COMPONENT_ID, &message,
+            link.fcSystemId, link.fcComponentId,
+            MAV_CMD_SET_MESSAGE_INTERVAL, 0 /* confirmation */,
+            static_cast<float>(messageId), interval_us,
+            0, 0, 0, 0, 0);
+
+        uint8_t buffer[MAVLINK_MAX_PACKET_LEN];
+        const uint16_t length = mavlink_msg_to_send_buffer(buffer, &message);
+        link.transport.Send(buffer, length, link.peer);
+    }
 }

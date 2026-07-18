@@ -40,7 +40,11 @@
 //               CONNECTED → READY with a silence watchdog: an incompatible
 //               peer (MAVLink 1, or diverged message definitions failing
 //               CRC) produces no valid traffic and is torn down explicitly.
-//               Telemetry decoding and setpoint streaming land next.
+//               On READY it requests LOCAL_POSITION_NED + ATTITUDE streams
+//               (SET_MESSAGE_INTERVAL), decodes them into a measurement
+//               (NED → CDS/ENU conversion confined here) and publishes it
+//               timestamped with the vehicle's on-board time. Setpoint
+//               streaming lands next.
 // Author      : Diego Perazzolo
 // Created     : 2026
 // =============================================================================
@@ -124,11 +128,16 @@ namespace plants
         void _commLoop(void);
 
         /* one bounded blocking receive (the loop pacing) + drain, parsing
-           every byte and driving the session state machine */
+           every byte and driving the session state machine; decoded
+           telemetry is converted and published from here */
         void _processInbound(Link& link);
 
         /* our 1 Hz GCS heartbeat towards the learned peer */
         void _sendHeartbeat(Link& link);
+
+        /* request the telemetry streams we consume (LOCAL_POSITION_NED and
+           ATTITUDE) at the configured rate, via SET_MESSAGE_INTERVAL */
+        void _requestTelemetryStreams(Link& link);
 
         sitlParams_t m_params;
         std::thread m_thread;
