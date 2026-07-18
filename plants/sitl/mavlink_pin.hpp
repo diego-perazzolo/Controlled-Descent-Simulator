@@ -98,3 +98,10 @@ static_assert(MAV_CMD_NAV_TAKEOFF == 22 &&
 
 static_assert(MAV_FRAME_LOCAL_NED == 1,
               "MAVLink pin: MAV_FRAME_LOCAL_NED value drifted");
+
+static_assert(MAV_TYPE_GCS == 6 &&
+              MAV_AUTOPILOT_INVALID == 8 &&
+              MAV_STATE_ACTIVE == 4 &&
+              MAV_COMP_ID_AUTOPILOT1 == 1 &&
+              MAV_COMP_ID_MISSIONPLANNER == 190,
+              "MAVLink pin: heartbeat/component enum value drifted");

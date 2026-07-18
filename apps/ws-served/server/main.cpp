@@ -142,7 +142,7 @@ int main(int argc, char **argv)
 
     auto plant = std::make_unique<plants::LoopbackPlant>();
 
-    if(plant->SetPlantParams((plants::LoopbackPlant::loopbackParams_t){0.02, 0.05, 0.1}) ||
+    if(plant->SetPlantParams((plants::LoopbackPlant::loopbackParams_t){0.05, 0.05, 0.3}) ||
         g_core_attachPlant(std::move(plant)))
     {
         // Err

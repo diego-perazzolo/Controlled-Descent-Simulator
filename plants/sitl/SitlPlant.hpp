@@ -34,8 +34,13 @@
 //               vehicle is expected connected, staged and hovering before
 //               any mission; Start/Stop (from Run/Stop) only toggle the
 //               setpoint streaming on the warm link.
-//               Skeleton phase: params + communication-thread lifecycle;
-//               the link layer (socket, heartbeat, parser) lands next.
+//               Link layer: UDP listener (GCS-style, the peer is learned
+//               from the source of the first valid MAVLink 2 datagram),
+//               1 Hz heartbeat out, session state machine DISCONNECTED →
+//               CONNECTED → READY with a silence watchdog: an incompatible
+//               peer (MAVLink 1, or diverged message definitions failing
+//               CRC) produces no valid traffic and is torn down explicitly.
+//               Telemetry decoding and setpoint streaming land next.
 // Author      : Diego Perazzolo
 // Created     : 2026
 // =============================================================================
@@ -58,8 +63,10 @@ namespace plants
 
         typedef struct
         {
-            /* MAVLink UDP endpoint of the SITL. Host must be non-empty,
-               port must be non-zero */
+            /* local UDP endpoint the plant listens on (the SITL streams
+               its MAVLink out to this address, e.g. --out udp:host:port;
+               the peer is learned from the first valid datagram). Host must
+               be a non-empty IPv4 literal, port must be non-zero */
             std::string host;
             uint16_t port;
 
@@ -75,6 +82,14 @@ namespace plants
                means the link is lost, in seconds. Must be > 0 */
             double linkTimeout_seconds;
         } sitlParams_t;
+
+        /* Link session state, observable from any thread */
+        enum class linkState_t : uint8_t
+        {
+            DISCONNECTED = 0,   /* no valid MAVLink 2 traffic */
+            CONNECTED,          /* valid traffic, flight controller not yet identified */
+            READY               /* flight controller heartbeat identified */
+        };
 
         SitlPlant();
         virtual ~SitlPlant();
@@ -95,15 +110,31 @@ namespace plants
         virtual bool Start(void) override;
         virtual bool Stop(void) override;
 
+        /* Current link session state (any thread) */
+        linkState_t GetLinkState(void) const;
+
         private:
+
+        /* communication-thread context (transport, parser, peer, timers):
+           lives on the thread stack, defined in the .cpp so that neither
+           MAVLink nor socket types leak out of this header */
+        struct Link;
 
         /* body of the communication thread */
         void _commLoop(void);
+
+        /* one bounded blocking receive (the loop pacing) + drain, parsing
+           every byte and driving the session state machine */
+        void _processInbound(Link& link);
+
+        /* our 1 Hz GCS heartbeat towards the learned peer */
+        void _sendHeartbeat(Link& link);
 
         sitlParams_t m_params;
         std::thread m_thread;
         std::atomic<bool> m_threadRun;
         std::atomic<bool> m_missionRun;
+        std::atomic<linkState_t> m_linkState;
     };
 
 } // namespace plants

@@ -213,9 +213,10 @@ static void testSitlSkeleton(void)
 {
     SitlPlant plant;
 
-    /* valid parameter set, mutated per-case below */
+    /* valid parameter set (port off the usual GCS range, to not collide
+       with a live SITL/GCS on the machine), mutated per-case below */
     const SitlPlant::sitlParams_t good = {.host = "127.0.0.1",
-                                          .port = 14550,
+                                          .port = 14560,
                                           .setpointPeriod_seconds = 0.05,
                                           .telemetryPeriod_seconds = 0.02,
                                           .linkTimeout_seconds = 2.0};
@@ -241,17 +242,23 @@ static void testSitlSkeleton(void)
        are errors, no reconfigure while connected, stop and disconnect are
        idempotent */
     CHECK(plant.Start() == true);
+    CHECK(plant.GetLinkState() == SitlPlant::linkState_t::DISCONNECTED);
     CHECK(plant.Connect() == false);
     CHECK(plant.Connect() == true);
     CHECK(plant.SetPlantParams(good) == true);
     CHECK(plant.Start() == false);
     CHECK(plant.Start() == true);
-    CHECK(plant.Stop() == false);
-    CHECK(plant.Stop() == false);
-    CHECK(plant.Disconnect() == false);
-    CHECK(plant.Disconnect() == false);
 
-    /* the skeleton publishes nothing */
+    /* nobody is talking on the test port: the session must stay down */
+    CHECK(plant.GetLinkState() == SitlPlant::linkState_t::DISCONNECTED);
+
+    CHECK(plant.Stop() == false);
+    CHECK(plant.Stop() == false);
+    CHECK(plant.Disconnect() == false);
+    CHECK(plant.Disconnect() == false);
+    CHECK(plant.GetLinkState() == SitlPlant::linkState_t::DISCONNECTED);
+
+    /* no telemetry decoding yet: nothing published */
     BasePlant::plantMeasurements_t meas = {};
     CHECK(plant.PullMeasurements(meas) == true);
 

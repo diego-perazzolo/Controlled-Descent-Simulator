@@ -12,6 +12,7 @@ endif()
 add_library(cds_plants STATIC
     loopback/LoopbackPlant.cpp
     sitl/SitlPlant.cpp
+    sitl/UdpTransport.cpp
 )
 
 target_compile_features(cds_plants PUBLIC cxx_std_20)
