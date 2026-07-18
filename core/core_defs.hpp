@@ -195,6 +195,22 @@ typedef struct
     core_coord_t user_fZ;
 } core_systemParams_t;
 
+// Plant snapshot data
+typedef struct
+{
+    // Plant-side time of the last sample
+    core_coord_t time_seconds;
+
+    // Sequence number of the last sample
+    unsigned int sequence;
+
+    // Last known plant state
+    core_state_t state;
+
+    // A plant is attached to the system
+    bool isAttached;
+} core_plantSnapshotData_t;
+
 // Snapshot data
 typedef struct
 {

@@ -282,6 +282,35 @@ ext_snapshotData ext_getSnapshot(void)
 }
 
 
+ext_plantSnapshotData ext_getPlantSnapshot(void)
+{
+    core_plantSnapshotData_t corePar = {};
+    bool ret = core_getPlantSnapshot(corePar);
+
+    ext_plantSnapshotData extPar = {};
+    extPar.time_seconds = corePar.time_seconds;
+    /* float carries the sequence exactly up to 2^24 samples */
+    extPar.sequence = (ext_coord_t)corePar.sequence;
+
+    extPar.state.x_dot = corePar.state.x_dot;
+    extPar.state.y_dot = corePar.state.y_dot;
+    extPar.state.z_dot = corePar.state.z_dot;
+    extPar.state.x = corePar.state.x;
+    extPar.state.y = corePar.state.y;
+    extPar.state.z = corePar.state.z;
+    extPar.state.roll_dot = corePar.state.roll_dot;
+    extPar.state.pitch_dot = corePar.state.pitch_dot;
+    extPar.state.yaw_dot = corePar.state.yaw_dot;
+    extPar.state.roll = corePar.state.roll;
+    extPar.state.pitch = corePar.state.pitch;
+    extPar.state.yaw = corePar.state.yaw;
+
+    extPar.isAttached = corePar.isAttached;
+    extPar.isError = ret;
+
+    return extPar;
+}
+
 bool ext_run(void)
 {
     return core_run();

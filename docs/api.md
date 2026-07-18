@@ -30,6 +30,11 @@ bool ext_setSystemParams(ext_systemParams params);
 /* Get a snapshot of the simulation: elapsed time, state, tracking errors */
 ext_snapshotData ext_getSnapshot(void);
 
+/* Get the plant's last sample: plant-side time, sequence number and state.
+   isAttached distinguishes "no plant" from "plant attached, no sample yet"
+   (both report isError) */
+ext_plantSnapshotData ext_getPlantSnapshot(void);
+
 /* Start the simulation / plant ticking, returns true on error */
 bool ext_run(void);
 
@@ -69,6 +74,8 @@ ext_setpointError              { xErr, yErr, zErr, yawErr }
 ext_systemParams               { timestep_seconds, user_forces (ext_userForce) }
 ext_snapshotData               { time_seconds, state (ext_fullState),
                                 err (ext_setpointError), isError (bool) }
+ext_plantSnapshotData          { time_seconds, sequence, state (ext_fullState),
+                                isAttached (bool), isError (bool) }
 ```
 
 ## Protocol version

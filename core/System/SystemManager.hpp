@@ -87,6 +87,12 @@ namespace CDS
            Returns true on error */
         bool ExecuteOnModel(const std::function<bool(BaseModel&)>& modelFcn);
 
+        /* Run a function on the plant under the system lock (this also makes
+           the snapshot path a legal mailbox reader: every reader is
+           serialized by the same mutex as the tick). The reference is valid
+           only for the duration of the call. Returns true on error */
+        bool ExecuteOnPlant(const std::function<bool(BasePlant&)>& plantFcn);
+
         /* Run a read-only function on the trajectory manager under the system
            lock (no side effect on the model): the const reference makes any
            mutation a compile error — use MutateTrajectoryManager for those.

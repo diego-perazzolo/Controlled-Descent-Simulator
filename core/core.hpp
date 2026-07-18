@@ -63,6 +63,11 @@ bool core_setSystemParams(const core_systemParams_t& par);
 // Get system snapshot (time, state, tracking errors). Returns true on error
 bool core_getSnapshot(core_snapshotData_t& par);
 
+// Get plant snapshot (last sample: plant time, sequence, state). Returns
+// true on error (no plant attached, or no sample published yet — the
+// isAttached field tells which)
+bool core_getPlantSnapshot(core_plantSnapshotData_t& par);
+
 // Run simulation / plant ticking. Returns true on error
 bool core_run(void);
 

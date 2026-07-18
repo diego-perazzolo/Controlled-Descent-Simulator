@@ -111,10 +111,15 @@ let fpsCounter = 0;
 let fpsDisplay = 0;
 let timestep_s = DEFAULT_TIMESTEP_S;
 let currentModel = MODEL_ROCKET;   // 'rocket' | 'quadrotor'
+let plantAvailable = false;        // plant attached AND publishing samples
+let plantBaselineSeq = 0;          // last sequence seen BEFORE this run: the
+                                   // mailbox keeps the final sample of the
+                                   // previous run, which must not be drawn
 
 // =============================================================================
 // Renderers registry — add a renderer here to hook into the sim loop
-// Each renderer is { update(state, err, simTime, stepCount), reset() }
+// Each renderer is { update(state, err, simTime, stepCount, plantState), reset() }
+// plantState is null when plant snapshots are unavailable.
 // =============================================================================
 const renderers = [];
 
@@ -136,6 +141,11 @@ const ui = {
     viewCharts: $('view-charts'), view3d: $('view-3d'), viewParams: $('view-params'),
     status:     $('statusBar'), error: $('errorMsg'),
     btnApply:   $('btnApply'),
+    // 3D view source toggles
+    chkViewTraj:  $('chkViewTraj'),
+    chkViewModel: $('chkViewModel'),
+    chkViewPlant: $('chkViewPlant'),
+    lblViewPlant: $('lblViewPlant'),
     modelSelect: $('modelSelect'),
     // Rocket params panel
     panelRocket: $('panel-rocket'),
@@ -322,14 +332,19 @@ function initBackend(params) {
 function make3DRenderer() {
     const TRAIL_MAX = 6000;
     const TRAJECTORY_MAX = 6000;
-    const trail     = [];
+    const trail      = [];
+    const plantTrail = [];
     const trajectory = [];
 
     let scene, camera, renderer, controls;
     let rocketGroup, trailLine, trajectoryLine;   // rocketGroup = active vehicle mesh
+    let plantGroup, plantTrailLine;               // plant ghost mesh + its trail
     let initialized = false;
     let animating   = false;
     let visible     = false;
+
+    // Which sources are drawn (driven by the view3d-sources checkboxes)
+    const sources = { traj: true, model: true, plant: false };
 
     function buildRocket() {
         const group = new THREE.Group();
@@ -447,6 +462,20 @@ function make3DRenderer() {
         return currentModel === MODEL_QUADROTOR ? buildQuadrotor() : buildRocket();
     }
 
+    // Ghost version of the vehicle for the plant: same shape, translucent green
+    function buildPlantVehicle() {
+        const group = buildVehicle();
+        group.traverse(obj => {
+            if (obj.isMesh) {
+                obj.material = obj.material.clone();
+                obj.material.color.set(0x33ff88);
+                obj.material.transparent = true;
+                obj.material.opacity = 0.45;
+            }
+        });
+        return group;
+    }
+
     // Camera preset per model: the quadrotor is real-size (~0.75 m tip-to-tip),
     // so it needs a much closer start and a smaller zoom-in limit than the rocket.
     function applyCameraForModel() {
@@ -503,12 +532,24 @@ function make3DRenderer() {
         rocketGroup = buildVehicle();
         scene.add(rocketGroup);
 
+        // Plant ghost vehicle (hidden until enabled and fed by snapshots)
+        plantGroup = buildPlantVehicle();
+        plantGroup.visible = false;
+        scene.add(plantGroup);
+
         // Trail line
         trailLine = new THREE.Line(
             new THREE.BufferGeometry(),
             new THREE.LineBasicMaterial({ color: 0x0099ff, transparent: true, opacity: 0.55 })
         );
         scene.add(trailLine);
+
+        // Plant trail line
+        plantTrailLine = new THREE.Line(
+            new THREE.BufferGeometry(),
+            new THREE.LineBasicMaterial({ color: 0x33ff88, transparent: true, opacity: 0.5 })
+        );
+        scene.add(plantTrailLine);
 
         // Trajectory preview
         trajectoryLine = new THREE.Line(
@@ -538,21 +579,21 @@ function make3DRenderer() {
         renderer?.render(scene, camera);
     }
 
-    function updateTrail(x, y, z) {
-        trail.push(new THREE.Vector3(x, y, z));
-        if (trail.length > TRAIL_MAX) trail.shift();
+    function updateTrail(points, line, x, y, z) {
+        points.push(new THREE.Vector3(x, y, z));
+        if (points.length > TRAIL_MAX) points.shift();
 
-        const pos = new Float32Array(trail.length * 3);
-        trail.forEach((v, i) => {
+        const pos = new Float32Array(points.length * 3);
+        points.forEach((v, i) => {
             pos[i * 3]     = v.x;
             pos[i * 3 + 1] = v.y;
             pos[i * 3 + 2] = v.z;
         });
-        trailLine.geometry.setAttribute(
+        line.geometry.setAttribute(
             'position', new THREE.BufferAttribute(pos, 3)
         );
-        trailLine.geometry.setDrawRange(0, trail.length);
-        trailLine.geometry.attributes.position.needsUpdate = true;
+        line.geometry.setDrawRange(0, points.length);
+        line.geometry.attributes.position.needsUpdate = true;
     }
 
     function pushTrajectoryPoint(x, y, z) {
@@ -594,8 +635,35 @@ function make3DRenderer() {
         if (trajectoryLine) trajectoryLine.geometry.setDrawRange(0, 0);
     }
 
+    // sim(x, y, z=up) → Three.js(x, z, y)  [Y is up in Three.js]
+    // The world→scene axis swap (y↔z) is a reflection: every world rotation
+    // maps to the permuted scene axis with negated angle (world X→scene X,
+    // world Y→scene Z, world Z→scene Y), and the composition order must
+    // match each model's Euler sequence.
+    function poseVehicle(group, state) {
+        group.position.set(state.x, state.z, state.y);
+        if (currentModel === MODEL_QUADROTOR) {
+            // Aerospace ZYX: roll about X, pitch about Y, yaw about Z
+            // R = Rz(yaw)·Ry(pitch)·Rx(roll) → scene 'YZX' with negated angles.
+            group.rotation.set(-state.roll, -state.yaw, -state.pitch, 'YZX');
+        } else {
+            // Rocket Rm = Ry(alpha)·Rx(beta)·Rz(psi), GetState maps
+            // roll=alpha, pitch=beta, yaw=psi → scene 'ZXY' with negated angles.
+            group.rotation.set(-state.pitch, -state.yaw, -state.roll, 'ZXY');
+        }
+    }
+
+    function applySources() {
+        if (!initialized) return;
+        trajectoryLine.visible = sources.traj;
+        rocketGroup.visible    = sources.model;
+        trailLine.visible      = sources.model;
+        plantTrailLine.visible = sources.plant;
+        if (!sources.plant) plantGroup.visible = false;
+    }
+
     return {
-        update(state) {
+        update(state, err, simTime, stepCount, plantState) {
             if (!initialized || !visible) return;
 
             // Generate preview lazily on first display, or after invalidation.
@@ -603,31 +671,37 @@ function make3DRenderer() {
                 generateTrajectoryPreview();
             }
 
-            // sim(x, y, z=up) → Three.js(x, z, y)  [Y is up in Three.js]
-            rocketGroup.position.set(state.x, state.z, state.y);
-            // The world→scene axis swap (y↔z) is a reflection: every world
-            // rotation maps to the permuted scene axis with negated angle
-            // (world X→scene X, world Y→scene Z, world Z→scene Y), and the
-            // composition order must match each model's Euler sequence.
-            if (currentModel === MODEL_QUADROTOR) {
-                // Aerospace ZYX: roll about X, pitch about Y, yaw about Z
-                // R = Rz(yaw)·Ry(pitch)·Rx(roll) → scene 'YZX' with negated angles.
-                rocketGroup.rotation.set(-state.roll, -state.yaw, -state.pitch, 'YZX');
-            } else {
-                // Rocket Rm = Ry(alpha)·Rx(beta)·Rz(psi), GetState maps
-                // roll=alpha, pitch=beta, yaw=psi → scene 'ZXY' with negated angles.
-                rocketGroup.rotation.set(-state.pitch, -state.yaw, -state.roll, 'ZXY');
+            poseVehicle(rocketGroup, state);
+            updateTrail(trail, trailLine, state.x, state.z, state.y);
+
+            // Plant ghost: only when snapshots are flowing
+            if (plantState) {
+                poseVehicle(plantGroup, plantState);
+                updateTrail(plantTrail, plantTrailLine,
+                            plantState.x, plantState.z, plantState.y);
             }
-            updateTrail(state.x, state.z, state.y);
+            plantGroup.visible = sources.plant && !!plantState;
+
+            applySources();
         },
         reset() {
             trail.length = 0;
+            plantTrail.length = 0;
             if (trailLine) trailLine.geometry.setDrawRange(0, 0);
+            if (plantTrailLine) plantTrailLine.geometry.setDrawRange(0, 0);
 
-            if (rocketGroup) {
-                rocketGroup.position.set(0, 0, 0);
-                rocketGroup.rotation.set(0, 0, 0);
+            for (const g of [rocketGroup, plantGroup]) {
+                if (g) {
+                    g.position.set(0, 0, 0);
+                    g.rotation.set(0, 0, 0);
+                }
             }
+            if (plantGroup) plantGroup.visible = false;
+        },
+        // Enable/disable the drawn sources (reference trajectory, model, plant)
+        setSources(s) {
+            Object.assign(sources, s);
+            applySources();
         },
         // Drop the cached trajectory line so the next frame regenerates it
         // from the current backend state. Called by the trajectory builder
@@ -641,10 +715,15 @@ function make3DRenderer() {
         rebuildVehicle() {
             if (!initialized || !scene) return;
             if (rocketGroup) scene.remove(rocketGroup);
+            if (plantGroup)  scene.remove(plantGroup);
             rocketGroup = buildVehicle();
             rocketGroup.position.set(0, 0, 0);
             rocketGroup.rotation.set(0, 0, 0);
             scene.add(rocketGroup);
+            plantGroup = buildPlantVehicle();
+            plantGroup.visible = false;
+            scene.add(plantGroup);
+            applySources();
             applyCameraForModel();
         },
         show() {
@@ -1087,8 +1166,16 @@ function loop() {
     simTime   = snap.time_seconds;
     stepCount = Math.round(simTime / timestep_s);   // estimated backend ticks
 
+    // Plant snapshot: optional — availability drives the "Plant" view toggle.
+    // Samples at or below the baseline sequence are leftovers of a previous
+    // run still sitting in the mailbox: not fresh, not drawn.
+    const psnap = sim.ext_getPlantSnapshot();
+    setPlantAvailable(psnap.isAttached && !psnap.isError &&
+                      psnap.sequence > plantBaselineSeq);
+    const plantState = plantAvailable ? psnap.state : null;
+
     updatePanels(snap.state, snap.err, simTime, stepCount);
-    renderers.forEach(r => r.update(snap.state, snap.err, simTime, stepCount));
+    renderers.forEach(r => r.update(snap.state, snap.err, simTime, stepCount, plantState));
 
     frameId = requestAnimationFrame(loop);
 }
@@ -1121,6 +1208,10 @@ function start() {
         setError('ext_run failed — is a model initialized?');
         return;
     }
+    // Baseline the plant sequence: only samples newer than this belong to
+    // the run that is starting now
+    const ps = sim.ext_getPlantSnapshot();
+    plantBaselineSeq = (ps.isAttached && !ps.isError) ? ps.sequence : 0;
     running = true;
     ui.btnStart.disabled = true;
     ui.btnStop.disabled  = false;
@@ -1166,6 +1257,35 @@ function reset() {
 ui.btnStart.addEventListener('click', start);
 ui.btnStop.addEventListener('click',  stop);
 ui.btnReset.addEventListener('click', reset);
+
+// =============================================================================
+// 3D view source toggles (reference trajectory / model / plant)
+// =============================================================================
+function readSourceToggles() {
+    return {
+        traj:  ui.chkViewTraj.checked,
+        model: ui.chkViewModel.checked,
+        plant: ui.chkViewPlant.checked && plantAvailable,
+    };
+}
+
+function applySourceToggles() {
+    renderer3d?.setSources?.(readSourceToggles());
+}
+
+// Enable/disable the "Plant" checkbox as snapshots (dis)appear. The checked
+// state is preserved, so a plant that comes back is shown again without a click.
+function setPlantAvailable(avail) {
+    if (avail === plantAvailable) return;
+    plantAvailable = avail;
+    ui.chkViewPlant.disabled = !avail;
+    ui.lblViewPlant.classList.toggle('disabled', !avail);
+    applySourceToggles();
+}
+
+ui.chkViewTraj.addEventListener('change',  applySourceToggles);
+ui.chkViewModel.addEventListener('change', applySourceToggles);
+ui.chkViewPlant.addEventListener('change', applySourceToggles);
 
 // View toggle helpers
 function showView(name) {
@@ -1267,6 +1387,10 @@ trajectoryBuilder.onChange(() => {
         // Reflect the default model in the selector and show its params panel.
         currentModel = ui.modelSelect ? ui.modelSelect.value : MODEL_ROCKET;
         applyModelPanelVisibility();
+
+        // The backend outlives page reloads (ws-served): a previous session
+        // may have left it running, and init is refused while running.
+        sim.ext_stop();
 
         const err = initBackend(DEFAULT_INIT_PARAMS[currentModel]);
         if (err) {

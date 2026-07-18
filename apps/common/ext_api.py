@@ -220,6 +220,17 @@ COMM = [
             F("err", type="ext_setpointError"),
             F("isError", type="bool"),
         ]),
+
+    Struct("ext_plantSnapshotData", file="comm",
+        doc="struct of the returned data from getPlantSnapshot",
+        fields=[
+            F("time_seconds", pre="plant-side time of the last sample"),
+            F("sequence", pre="sequence number of the last sample, exact as a\n"
+                              "   float up to 2^24 samples (~93 h at 50 Hz)"),
+            F("state", type="ext_fullState"),
+            F("isAttached", type="bool"),
+            F("isError", type="bool"),
+        ]),
 ]
 
 # --------------------------------------------------------------------------- #
@@ -268,4 +279,8 @@ COMMANDS = [
     Cmd(10, "Stop", "ext_stop", "ext_stop",
         req=None, resp="bool",
         doc="Stop simulation / plant ticking"),
+
+    Cmd(11, "GetPlantSnapshot", "ext_getPlantSnapshot", "ext_getPlantSnapshot",
+        req=None, resp="ext_plantSnapshotData",
+        doc="Get the plant's last sample: plant time, sequence and state"),
 ]

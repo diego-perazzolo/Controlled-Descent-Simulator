@@ -240,3 +240,27 @@ bool ext_stop(void)
 
     return resp.isError != 0;
 }
+
+ext_plantSnapshotData ext_getPlantSnapshot(void)
+{
+    ext_plantSnapshotData ret = {};
+    reqGetPlantSnapshot_t req = {};
+    respGetPlantSnapshot_t resp = {};
+
+    req.h.type = WS_MSG_GET_PLANT_SNAPSHOT;
+
+    if(_rpc(req, resp))
+    {
+        ret.isAttached = true;
+        ret.isError = true;
+        return ret;
+    }
+
+    ret.time_seconds = resp.time_seconds;
+    ret.sequence = resp.sequence;
+    ret.state = resp.state;
+    ret.isAttached = resp.isAttached != 0;
+    ret.isError = resp.isError != 0;
+
+    return ret;
+}

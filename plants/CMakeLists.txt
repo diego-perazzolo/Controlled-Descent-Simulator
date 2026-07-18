@@ -16,6 +16,7 @@ add_library(cds_plants STATIC
 target_compile_features(cds_plants PUBLIC cxx_std_20)
 
 target_include_directories(cds_plants PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}          # for the explicit "loopback/…" style
     ${CMAKE_CURRENT_SOURCE_DIR}/loopback
 )
 

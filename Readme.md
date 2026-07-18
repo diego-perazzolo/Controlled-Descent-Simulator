@@ -31,6 +31,7 @@ Simulate the controlled 3D flight of a rocket booster and of a quadrotor, with:
 - **Model selector** — switch between Rocket and QuadRotor at runtime; each model has its own parameter panel
 - **Charts view** — real-time strip charts for x, y, z position, yaw attitude and position error magnitude
 - **3D view** — Three.js scene with vehicle mesh (rocket: body + nose cone + landing legs; quadrotor: frame + rotors), trajectory trail, orbital camera (orbit / pan / zoom)
+- **3D view source toggles** — reference trajectory, model vehicle and plant ghost (translucent, with its own trail) can be shown in any combination; the plant toggle enables itself only while fresh plant snapshots are available
 - **Params tab** — edit all physical and trajectory parameters at runtime; Apply & Reset re-initializes the core without reloading the page
 - **User force buttons** — six hold-to-apply buttons (±X, ±Y, ±Z) inject external perturbation forces, pushed to the backend tick thread in real time on press / release; force magnitude is configurable
 - **Simulation controls** — Start / Stop / Reset
@@ -44,11 +45,16 @@ Simulate the controlled 3D flight of a rocket booster and of a quadrotor, with:
 - `ext_setSystemParams(params)` — sets the tick period and user forces used by the backend tick thread
 - `ext_run()` / `ext_stop()` — start / stop the simulation; integration advances on a backend tick thread
 - `ext_getSnapshot()` — returns the simulated time, full state and tracking errors (position + yaw)
+- `ext_getPlantSnapshot()` — returns the plant's last sample: plant-side time, sequence number and state (freshness is detected by comparing sequence numbers between polls)
 - `ext_trajectory_get_point(timeInstant)` - provides a point along the reference trajectory, used for trajectory preview
 - `ext_trajectory_append_poly4(params)` - appends a trajectory of type polynomial 4th order, configured with total time for the maneuver, initial/final position, velocity, acceleration and yaw
 - `ext_trajectory_append_point(params)` - appends a trajectory of type point, configured with a final position, a final yaw and the total time needed for the maneuver
 - `ext_trajectory_remove_last_item(void)` - removes the last trajectory item from the trajectory list
 - Emscripten `embind` bindings expose all structs and functions to JavaScript
+
+#### System orchestration
+- **SystemManager** — single owner of model, trajectory and plant behind one lock; every tick of the real-time thread drives, in order, the plant exchange and the physics integration. Model and plant are orchestrated symmetrically: the model is the simulated vehicle, the plant is an external one (SITL/HIL) observed through the same state interface
+- **Plant subsystem** — `BasePlant` exchanges commands/measurements with the tick through wait-free latest-wins mailboxes (`libs/sync` TripleBuffer); samples carry sequence numbers and plant-side timestamps, so staleness, dropouts and latency are observable. A SITL loopback plant (configurable sample period, latency, dropout rate) is included
 
 #### Physics Engine
 - **6 DOF rigid body dynamics** (3 translational + 3 rotational) for both models
@@ -82,7 +88,8 @@ Simulate the controlled 3D flight of a rocket booster and of a quadrotor, with:
 └───────────────────────────┬─────────────────────────────┘
                             │  ext_rocketInit() / ext_quadRotorInit(),
                             │  ext_setSystemParams(), ext_run() / ext_stop(),
-                            │  ext_getSnapshot(), ext_trajectory_...()
+                            │  ext_getSnapshot(), ext_getPlantSnapshot(),
+                            │  ext_trajectory_...()
                             ▼
 ┌─────────────────────────────────────────────────────────┐
 │                   SIMULATOR (.wasm)                     │
@@ -93,11 +100,11 @@ Simulate the controlled 3D flight of a rocket booster and of a quadrotor, with:
 │  └──────────────────────┬────────────────────────────┘  │
 │                         │                               │
 │  ┌──────────────────────▼────────────────────────────┐  │
-│  │              Core Physics (C++)                   │  │
-│  │  ┌──────────┐   ┌────────────┐   ┌────────────┐   │  │
-│  │  │  Models  │   │ Controller │   │ Trajectory │   │  │
-│  │  │ Rkt/Quad │   │  FF + LQR  │   │  Manager   │   │  │
-│  │  └──────────┘   └────────────┘   └────────────┘   │  │
+│  │             Core (C++) — SystemManager            │  │
+│  │ ┌────────┐  ┌───────┐  ┌──────────┐  ┌──────────┐ │  │
+│  │ │ Models │  │ Plant │  │Controller│  │Trajectory│ │  │
+│  │ │Rkt/Quad│  │mailbox│  │ FF + LQR │  │ Manager  │ │  │
+│  │ └────────┘  └───────┘  └──────────┘  └──────────┘ │  │
 │  └──────────────────────┬────────────────────────────┘  │
 │                         │                               │
 │  ┌──────────────────────▼────────────────────────────┐  │

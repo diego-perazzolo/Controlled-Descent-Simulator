@@ -187,6 +187,23 @@ std::vector<uint8_t> server_dispatch(const std::vector<uint8_t>& msg)
             return _respBool(h, ext_stop());
         }
 
+        case WS_MSG_GET_PLANT_SNAPSHOT:
+        {
+            reqGetPlantSnapshot_t req = {};
+            if(_parse(msg, req)) return _respBool(h, true);
+
+            ext_plantSnapshotData ret = ext_getPlantSnapshot();
+
+            respGetPlantSnapshot_t resp = {};
+            resp.h = h;
+            resp.time_seconds = ret.time_seconds;
+            resp.sequence = ret.sequence;
+            resp.state = ret.state;
+            resp.isAttached = ret.isAttached ? 1 : 0;
+            resp.isError = ret.isError ? 1 : 0;
+            return _serialize(resp);
+        }
+
         default:
             // Err: unknown message type
             return _respBool(h, true);

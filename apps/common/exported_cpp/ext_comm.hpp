@@ -68,6 +68,19 @@ typedef struct
     bool isError;
 } ext_snapshotData;
 
+/* struct of the returned data from getPlantSnapshot */
+typedef struct
+{
+    /* plant-side time of the last sample */
+    ext_coord_t time_seconds;
+    /* sequence number of the last sample, exact as a
+       float up to 2^24 samples (~93 h at 50 Hz) */
+    ext_coord_t sequence;
+    ext_fullState state;
+    bool isAttached;
+    bool isError;
+} ext_plantSnapshotData;
+
 /* Initialize Rocket model: FF_LQR_01, returns true on error */
 bool ext_initRocket_FFLQR01(ext_initRocketParams params);
 
@@ -97,3 +110,6 @@ bool ext_run(void);
 
 /* Stop simulation / plant ticking */
 bool ext_stop(void);
+
+/* Get the plant's last sample: plant time, sequence and state */
+ext_plantSnapshotData ext_getPlantSnapshot(void);

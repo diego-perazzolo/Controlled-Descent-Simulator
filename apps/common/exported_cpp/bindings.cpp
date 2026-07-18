@@ -144,6 +144,13 @@ EMSCRIPTEN_BINDINGS(simulator) {
         .field("err",          &ext_snapshotData::err)
         .field("isError",      &ext_snapshotData::isError);
 
+    value_object<ext_plantSnapshotData>("ext_plantSnapshotData")
+        .field("time_seconds", &ext_plantSnapshotData::time_seconds)
+        .field("sequence",     &ext_plantSnapshotData::sequence)
+        .field("state",        &ext_plantSnapshotData::state)
+        .field("isAttached",   &ext_plantSnapshotData::isAttached)
+        .field("isError",      &ext_plantSnapshotData::isError);
+
     // --- Functions exposed to JS ---
     function("ext_rocketInit", &ext_initRocket_FFLQR01);
     function("ext_quadRotorInit", &ext_initQuadRotor_FFLQR01);
@@ -155,4 +162,5 @@ EMSCRIPTEN_BINDINGS(simulator) {
     function("ext_getSnapshot", &ext_getSnapshot);
     function("ext_run", &ext_run);
     function("ext_stop", &ext_stop);
+    function("ext_getPlantSnapshot", &ext_getPlantSnapshot);
 }

@@ -172,6 +172,28 @@ bool SystemManager::ExecuteOnModel(const std::function<bool(BaseModel &)> &model
     return ret;
 }
 
+bool SystemManager::ExecuteOnPlant(const std::function<bool(BasePlant &)> &plantFcn)
+{
+    if (!plantFcn)
+    {
+        // Invalid function, error
+        return true;
+    }
+
+    lockGuard_t lock(m_mutex);
+
+    RETURN_ERR_IF_NO_PLANT;
+
+    bool ret = plantFcn(*m_pPlant);
+
+    if (!ret)
+    {
+        TRACE("OK");
+    }
+
+    return ret;
+}
+
 bool SystemManager::ExecuteOnTrajectoryManager(const std::function<bool(const TrajectoryManager &)> &tmFcn)
 {
     if (!tmFcn)

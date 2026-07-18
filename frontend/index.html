@@ -105,9 +105,19 @@
 
         /* ── Views ── */
         #view-charts { display: grid; }
-        #view-3d     { display: none; width: 100%; height: calc(100vh - 200px);
+        #view-3d     { display: none; position: relative; width: 100%; height: calc(100vh - 200px);
                        background: #0d0d0d; border-radius: 4px; overflow: hidden; }
         #view-params { display: none; }
+
+        /* ── 3D view source toggles ── */
+        #view3d-sources {
+            position: absolute; top: 10px; left: 10px; z-index: 5;
+            display: flex; gap: 14px; padding: 6px 10px;
+            background: rgba(20, 20, 20, 0.75); border: 1px solid #2a2a2a;
+            border-radius: 4px; font-size: 0.85em;
+        }
+        #view3d-sources label { color: #aaa; display: flex; align-items: center; gap: 5px; cursor: pointer; }
+        #view3d-sources label.disabled { color: #555; cursor: default; }
 
         /* ── Numeric grid ── */
         .grid {
@@ -323,7 +333,14 @@
 </div>
 
 <!-- ════ 3D view ════ -->
-<div id="view-3d"></div>
+<div id="view-3d">
+    <div id="view3d-sources">
+        <label><input type="checkbox" id="chkViewTraj" checked> Reference trajectory</label>
+        <label><input type="checkbox" id="chkViewModel" checked> Model</label>
+        <label id="lblViewPlant" class="disabled" title="Enabled when plant snapshots are available">
+            <input type="checkbox" id="chkViewPlant" disabled> Plant</label>
+    </div>
+</div>
 
 <!-- ════ Params view ════ -->
 <div id="view-params">

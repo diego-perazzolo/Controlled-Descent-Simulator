@@ -179,6 +179,14 @@ def run_tests(s):
     assert vals[2] == 0.0, f"time advanced before run: {vals[2]}"
     print("snapshot at rest OK (t=0)")
 
+    # plant snapshot before run: the server attaches a loopback plant at boot,
+    # but its communication starts with Run — attached, no sample yet
+    p = rpc(s, header(MSG["GET_PLANT_SNAPSHOT"]))
+    vals = struct.unpack("<BB14fBB", p)
+    assert vals[-2] == 1, "plant not attached"
+    assert vals[-1] == 1, "plant had a sample before run"
+    print("plant snapshot at rest OK (attached, no sample)")
+
     # run for ~0.5 s of wall time: simulated time must advance with the
     # real-time thread (loose bounds, the tick pace is not deterministic)
     p = rpc(s, header(MSG["RUN"]))
@@ -191,6 +199,16 @@ def run_tests(s):
     assert 0.05 < t_run < 2.0, f"simulated time not advancing: {t_run}"
     print(f"run + snapshot OK (t={t_run:.3f}s)")
 
+    # plant snapshot while running: fresh samples with growing sequence
+    # (loopback: period 20 ms, latency 50 ms — first sample after ~70 ms)
+    p = rpc(s, header(MSG["GET_PLANT_SNAPSHOT"]))
+    pv = struct.unpack("<BB14fBB", p)
+    assert (pv[-2], pv[-1]) == (1, 0), f"plant snapshot failed: {pv[-2:]}"
+    seq_run, t_plant = pv[3], pv[2]
+    assert seq_run >= 1, f"plant sequence not started: {seq_run}"
+    assert t_plant > 0, f"plant time not advancing: {t_plant}"
+    print(f"plant snapshot OK (seq={seq_run:.0f}, plantTime={t_plant:.3f}s)")
+
     # stop: simulated time must freeze
     p = rpc(s, header(MSG["STOP"]))
     assert struct.unpack("<BBB", p)[2] == 0, "stop failed"
@@ -199,6 +217,13 @@ def run_tests(s):
     t2 = struct.unpack("<BB17fB", rpc(s, header(MSG["GET_SNAPSHOT"])))[2]
     assert t1 == t2, f"time still advancing after stop: {t1} -> {t2}"
     print(f"stop OK (t frozen at {t2:.3f}s)")
+
+    # plant after stop: communication halted, sequence frozen on re-reads
+    s1 = struct.unpack("<BB14fBB", rpc(s, header(MSG["GET_PLANT_SNAPSHOT"])))[3]
+    time.sleep(0.1)
+    s2 = struct.unpack("<BB14fBB", rpc(s, header(MSG["GET_PLANT_SNAPSHOT"])))[3]
+    assert s1 == s2, f"plant sequence still advancing after stop: {s1} -> {s2}"
+    print(f"plant stop OK (seq frozen at {s2:.0f})")
 
     # remove last trajectory item
     p = rpc(s, header(MSG["TRAJ_REMOVE_LAST"]))

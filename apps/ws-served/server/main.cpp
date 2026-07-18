@@ -38,6 +38,8 @@
 #include <thread>
 
 #include "core_defs.hpp"
+#include "BasePlant.hpp"
+#include "loopback/LoopbackPlant.hpp"
 #include "dispatch.hpp"
 #include "ws_protocol.hpp"
 #include "ws_server.hpp"
@@ -50,6 +52,7 @@ static std::atomic<bool> _run_rt_thread{true};
 
 extern bool g_core_tick(core_coord_t dt_seconds);                  // global function from core.cpp
 extern bool g_core_getTickPeriod(core_coord_t &tickPeriod_second); // global function from core.cpp
+extern bool g_core_attachPlant(std::unique_ptr<CDS::BasePlant> plant); // global function from core.cpp
 
 /* tick the system at rate 1/tickPeriodSeconds, unless ticking system takes too much (> tickPeriodSeconds) */
 static void _tick_generator(void)
@@ -136,6 +139,21 @@ int main(int argc, char **argv)
                 });
 
     WsServer server(port, server_dispatch);
+
+    auto plant = std::make_unique<plants::LoopbackPlant>();
+
+    if(plant->SetPlantParams((plants::LoopbackPlant::loopbackParams_t){0.02, 0.05, 0.1}) ||
+        g_core_attachPlant(std::move(plant)))
+    {
+        // Err
+        _run_rt_thread = false;
+        if (rt.joinable())
+        {
+            rt.join();
+        }
+        return 1;
+    }
+
     if (server.Run())
     {
         // Err

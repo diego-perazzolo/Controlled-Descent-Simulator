@@ -71,6 +71,19 @@ bool g_core_getTickPeriod(core_coord_t &tickPeriod_second)
     return ret;
 }
 
+/* Attach new plant to the System Manager */
+bool g_core_attachPlant(std::unique_ptr<BasePlant> plant)
+{
+    return _ctx.SM.AttachPlant(std::move(plant));
+}
+
+/* Detach current plant from system manager*/
+bool g_core_detachPlant()
+{
+    return _ctx.SM.DetachPlant();
+}
+
+
 /* public functions */
 
 bool core_init()
@@ -166,6 +179,32 @@ bool core_getSnapshot(core_snapshotData_t &par)
                                     ret |= model.GetCurrentTimeSeconds(par.time_seconds);
 
                                     return ret;
+                                });
+}
+
+bool core_getPlantSnapshot(core_plantSnapshotData_t &par)
+{
+    par.isAttached = false;
+
+    return _ctx.SM.ExecuteOnPlant([&par](BasePlant &plant)
+                                  {
+                                    /* the lambda only runs with a plant attached */
+                                    par.isAttached = true;
+
+                                    /* one Pull gets time, sequence and state as
+                                       a single coherent sample */
+                                    BasePlant::plantMeasurements_t measurements = {};
+                                    if (plant.PullMeasurements(measurements))
+                                    {
+                                        // No sample published yet, error
+                                        return true;
+                                    }
+
+                                    par.time_seconds = measurements.plantTime_seconds;
+                                    par.sequence = measurements.sequence;
+                                    par.state = measurements.state;
+
+                                    return false;
                                 });
 }
 
