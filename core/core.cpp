@@ -32,6 +32,7 @@
 #include <mutex>
 
 #include "core.hpp"
+#include "SystemManager.hpp"
 #include "Models/Rocket.hpp"
 #include "Models/QuadRotor.hpp"
 #include "Trajectory/TrajectoryManager.hpp"
@@ -40,14 +41,7 @@ using namespace CDS;
 
 struct
 {
-    BaseModel *pModel;
-    TrajectoryManager *pTrajectoryManager;
-    std::mutex mtx;
-
-    // System parameters
-    bool run;
-    core_coord_t tickPeriod_seconds;
-    Vec3 userForces;
+    SystemManager SM;
 } _ctx = {};
 
 /* private types */
@@ -64,170 +58,84 @@ struct
         functionalities; it should be treated accordingly */
 bool g_core_tick(core_coord_t dt_seconds)
 {
-    std::lock_guard<std::mutex> lock(_ctx.mtx);
-
-    if (!_ctx.pModel)
-    {
-        // No model initialized, error
-        return true;
-    }
-
-    if(!_ctx.run)
-    {
-        // System is not running
-        return false;
-    }
-
-    // Compute safety considerations
-
-    // Drive the plant, using past control data
-
-    // Collect data from the plant
-
-    // Perform filtering
-
-    // Compute control
-
-    // Perform model integration
-    _ctx.pModel->PerformIntegration({.timestep = dt_seconds,
-                                     .user_fX = _ctx.userForces[0],
-                                     .user_fY = _ctx.userForces[1],
-                                     .user_fZ = _ctx.userForces[2]});
-
-    return false;
+    return _ctx.SM.ExecuteTick(dt_seconds);
 }
 
 /* Get system's tick period expressed in seconds. Returns true on error */
 bool g_core_getTickPeriod(core_coord_t &tickPeriod_second)
 {
-    std::lock_guard<std::mutex> lock(_ctx.mtx);
+    SystemManager::systemManagerParams_t params;
+    bool ret = _ctx.SM.GetParameters(params);
+    tickPeriod_second = params.timestep_seconds;
 
-    if (!_ctx.pModel)
-    {
-        // No model initialized, error
-        return true;
-    }
-
-    tickPeriod_second = _ctx.tickPeriod_seconds;
-    return false;
+    return ret;
 }
 
 /* public functions */
 
 bool core_init()
 {
-    std::lock_guard<std::mutex> lock(_ctx.mtx);
-
-    _ctx.run = false;
     return false;
 }
 
 bool core_rocketFfLqr01_init(const core_rocketParams_t rPar)
 {
-    std::lock_guard<std::mutex> lock(_ctx.mtx);
-
-    if (_ctx.pModel)
+    // Configure the model while it is still local: the SystemManager only
+    // ever receives a fully-initialized model
+    auto model = std::make_unique<Rocket>();
+    if (model->SetModelParams(rPar))
     {
-        delete _ctx.pModel;
-        _ctx.pModel = nullptr;
+        // Err
+        return true;
     }
 
-    // A fresh model must never inherit a running tick loop
-    _ctx.run = false;
-
-    _ctx.pModel = new Rocket();
-
-    // Initializing rocket's parameters
-    return _ctx.pModel->SetModelParams(rPar);
+    return _ctx.SM.InitModel(std::move(model));
 }
 
 bool core_quadRotorFfLqr01_init(const core_quadRotorParams_t rPar)
 {
-    std::lock_guard<std::mutex> lock(_ctx.mtx);
-
-    if (_ctx.pModel)
+    // Configure the model while it is still local: the SystemManager only
+    // ever receives a fully-initialized model
+    auto model = std::make_unique<QuadRotor>();
+    if (model->SetModelParams(rPar))
     {
-        delete _ctx.pModel;
-        _ctx.pModel = nullptr;
+        // Err
+        return true;
     }
 
-    // A fresh model must never inherit a running tick loop
-    _ctx.run = false;
-
-    _ctx.pModel = new QuadRotor();
-
-    // Initializing quadrotor's parameters
-    return _ctx.pModel->SetModelParams(rPar);
+    return _ctx.SM.InitModel(std::move(model));
 }
 
 bool core_trajectoryInit()
 {
-    std::lock_guard<std::mutex> lock(_ctx.mtx);
-
-    if (_ctx.pTrajectoryManager)
-    {
-        delete _ctx.pTrajectoryManager;
-        _ctx.pTrajectoryManager = nullptr;
-    }
-
-    _ctx.pTrajectoryManager = new TrajectoryManager();
-
-    return false;
+    return _ctx.SM.InitTrajectory();
 }
 
 bool core_trajectoryAppendPoly4(const core_trajectoryPoly4Params_t tPar)
 {
-    std::lock_guard<std::mutex> lock(_ctx.mtx);
-
-    if (_ctx.pTrajectoryManager == nullptr || _ctx.pModel == nullptr)
-    {
-        // ERR
-        return true;
-    }
-
-    _ctx.pTrajectoryManager->AppendPoly4(tPar);
-    _ctx.pModel->SetTrajectoryManager(_ctx.pTrajectoryManager);
-
-    return false;
+    return _ctx.SM.MutateTrajectoryManager([tPar](TrajectoryManager &tM)
+                                  { return tM.AppendPoly4(tPar);});
 }
 
 bool core_trajectoryAppendPoint(const core_trajectoryPointParams_t tPar)
 {
-    std::lock_guard<std::mutex> lock(_ctx.mtx);
-
-    if (_ctx.pTrajectoryManager == nullptr || _ctx.pModel == nullptr)
-    {
-        // ERR
-        return true;
-    }
-
-    _ctx.pTrajectoryManager->AppendPoint(tPar);
-    _ctx.pModel->SetTrajectoryManager(_ctx.pTrajectoryManager);
-
-    return false;
+    return _ctx.SM.MutateTrajectoryManager([tPar](TrajectoryManager &tM)
+                                  { return tM.AppendPoint(tPar);});
 }
 
 bool core_trajectoryRemoveLastItem(void)
 {
-    std::lock_guard<std::mutex> lock(_ctx.mtx);
-
-    if (_ctx.pTrajectoryManager == nullptr)
-    {
-        // ERR
-        return true;
-    }
-
-    return _ctx.pTrajectoryManager->RemoveLastItem();
+    return _ctx.SM.MutateTrajectoryManager([](TrajectoryManager &tM)
+                                  { return tM.RemoveLastItem();});
 }
 
 bool core_getTrajectoryPoint(core_coord_t time, Vec3 &point)
 {
-    std::lock_guard<std::mutex> lock(_ctx.mtx);
-
     Reference_t ref;
-    if (_ctx.pTrajectoryManager == nullptr || _ctx.pTrajectoryManager->GetReference(time, ref))
+    if (_ctx.SM.ExecuteOnTrajectoryManager([time, &ref](const TrajectoryManager &tM)
+                                  { return tM.GetReference(time, ref);}))
     {
-        // Error
+        // Err
         return true;
     }
 
@@ -240,68 +148,33 @@ bool core_getTrajectoryPoint(core_coord_t time, Vec3 &point)
 
 bool core_setSystemParams(const core_systemParams_t &par)
 {
-    std::lock_guard<std::mutex> lock(_ctx.mtx);
+    SystemManager::userForces_t uF = {par.user_fX, par.user_fY, par.user_fZ};
 
-    if (!_ctx.pModel)
-    {
-        // Err
-        return true;
-    }
+    bool ret = _ctx.SM.SetParameters({.timestep_seconds = par.timestep_seconds});
+    ret |= _ctx.SM.SetUserForces(uF);
 
-    _ctx.tickPeriod_seconds = par.timestep_seconds;
-    _ctx.userForces[0] = par.user_fX;
-    _ctx.userForces[1] = par.user_fY;
-    _ctx.userForces[2] = par.user_fZ;
-
-    return false;
+    return ret;
 }
 
 bool core_getSnapshot(core_snapshotData_t &par)
 {
-    std::lock_guard<std::mutex> lock(_ctx.mtx);
 
-    if (!_ctx.pModel)
-    {
-        // Err
-        return true;
-    }
+    return _ctx.SM.ExecuteOnModel([&par](BaseModel &model)
+                                  {
+                                    bool ret = model.GetState(par.state);
+                                    ret |= model.GetTrackingErrors(par.errors);
+                                    ret |= model.GetCurrentTimeSeconds(par.time_seconds);
 
-    if(_ctx.pModel->GetState(par.state) || 
-        _ctx.pModel->GetTrackingErrors(par.errors) ||
-        _ctx.pModel->GetCurrentTimeSeconds(par.time_seconds))
-    {
-        // Err
-        return true;
-    }
-
-    return false;
+                                    return ret;
+                                });
 }
 
 bool core_run(void)
 {
-    std::lock_guard<std::mutex> lock(_ctx.mtx);
-
-    if (!_ctx.pModel)
-    {
-        // Err
-        return true;
-    }
-
-    _ctx.run = true;
-
-    return false;
+    return _ctx.SM.Run();
 }
 
 bool core_stop(void)
 {
-    std::lock_guard<std::mutex> lock(_ctx.mtx);
-
-    if (!_ctx.pModel)
-    {
-        // Err
-        return true;
-    }
-
-    _ctx.run = false;
-    return false;
+    return _ctx.SM.Stop();
 }

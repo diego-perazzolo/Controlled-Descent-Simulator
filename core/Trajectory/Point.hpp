@@ -44,7 +44,7 @@ namespace CDS
 
         /* Virtual methods */
          /* Gets reference trajectory state at a time instant. Returns true on error */
-        virtual bool GetReference(const core_coord_t&  time, Reference_t& ref) override;
+        virtual bool GetReference(const core_coord_t&  time, Reference_t& ref) const override;
 
         /* Set dictionary of trajectory parameters and their value. Returns true on error */
         virtual bool SetParameters(const std::map<std::string, core_coord_t>& params) override;

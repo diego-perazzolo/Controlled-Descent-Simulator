@@ -42,7 +42,7 @@ Point::~Point()
 
 }
 
-bool Point::GetReference(const core_coord_t&  time, Reference_t& ref)
+bool Point::GetReference(const core_coord_t&  time, Reference_t& ref) const
 {
     // Reference is constant, TODO DP
 

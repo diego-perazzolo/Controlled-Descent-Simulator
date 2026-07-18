@@ -8,6 +8,7 @@ cmake_minimum_required(VERSION 3.15)
 
 add_library(cds_core STATIC
     core.cpp
+    System/SystemManager.cpp
     Models/BaseModel.cpp
     Models/Rocket.cpp
     Models/QuadRotor.cpp
@@ -23,6 +24,7 @@ target_compile_features(cds_core PUBLIC cxx_std_20)
 
 target_include_directories(cds_core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/System
     ${CMAKE_CURRENT_SOURCE_DIR}/Models
     ${CMAKE_CURRENT_SOURCE_DIR}/Trajectory
     ${CMAKE_CURRENT_SOURCE_DIR}/../modeling/notebooks/exported_cpp/

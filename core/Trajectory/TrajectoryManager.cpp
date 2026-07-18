@@ -51,7 +51,7 @@ bool TrajectoryManager::AppendPoint(const core_trajectoryPointParams_t& params)
     return AppendItem(std::make_unique<Point>(params));
 }
 
-bool TrajectoryManager::GoNextItem(void)
+bool TrajectoryManager::GoNextItem(void) const
 {
     core_coord_t finalTime = 0;
     m_trajectoryItems[m_currentItemIndex++]->GetEndTime(finalTime);
@@ -67,7 +67,7 @@ bool TrajectoryManager::GoNextItem(void)
     return false;
 }
 
-bool TrajectoryManager::GoPrevItem(void)
+bool TrajectoryManager::GoPrevItem(void) const
 {
     core_coord_t finalTime = 0;
     m_currentItemIndex--;
@@ -110,7 +110,7 @@ bool TrajectoryManager::RemoveLastItem(void)
     return false;
 };
 
-bool TrajectoryManager::GetReference(const core_coord_t& time, Reference_t& ref)
+bool TrajectoryManager::GetReference(const core_coord_t& time, Reference_t& ref) const
 {
     if(m_trajectoryItems.empty())
     {
