@@ -2,7 +2,8 @@
 
 Read `Readme.md` first for architecture and features; build details and the
 full repo layout are in `docs/build.md`, the ext API reference in
-`docs/api.md`. This file only contains what cannot be inferred from the code:
+`docs/api.md`, the ArduPilot SITL run guide in `docs/sitl.md`. This file only
+contains what cannot be inferred from the code:
 conventions, invariants, verification commands and the review procedure.
 
 ## Golden rules (violating these causes real damage)
