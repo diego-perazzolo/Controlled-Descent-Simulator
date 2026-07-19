@@ -252,6 +252,7 @@ ext_plantSnapshotData ext_getPlantSnapshot(void)
     if(_rpc(req, resp))
     {
         ret.isAttached = true;
+        ret.isReadyToStart = true;
         ret.isError = true;
         return ret;
     }
@@ -260,7 +261,39 @@ ext_plantSnapshotData ext_getPlantSnapshot(void)
     ret.sequence = resp.sequence;
     ret.state = resp.state;
     ret.isAttached = resp.isAttached != 0;
+    ret.isReadyToStart = resp.isReadyToStart != 0;
     ret.isError = resp.isError != 0;
 
     return ret;
+}
+
+bool ext_beginStaging(ext_coord_t safetyAltitude)
+{
+    reqBeginStaging_t req = {};
+    respBool_t resp = {};
+
+    req.h.type = WS_MSG_BEGIN_STAGING;
+    req.safetyAltitude = safetyAltitude;
+
+    if(_rpc(req, resp))
+    {
+        return true;
+    }
+
+    return resp.isError != 0;
+}
+
+bool ext_stopStaging(void)
+{
+    reqStopStaging_t req = {};
+    respBool_t resp = {};
+
+    req.h.type = WS_MSG_STOP_STAGING;
+
+    if(_rpc(req, resp))
+    {
+        return true;
+    }
+
+    return resp.isError != 0;
 }

@@ -103,12 +103,25 @@ namespace CDS
         virtual bool Connect(void) = 0;
         virtual bool Disconnect(void) = 0;
 
+        /* Auto-staging (implementation-specific), driven by the SystemManager
+           on user request: bring the vehicle up to a stable hover at
+           altitude_m, ready for a mission. Default: no-op — a plant that needs
+           no staging (loopback) is ready as soon as its mission Start allows.
+           Returns true on error */
+        virtual bool BeginStaging(double altitude_m) { (void)altitude_m; return false; }
+        virtual bool StopStaging(void) { return false; }
+
         /* Mission toggles, driven by Run()/Stop(): enable / disable the
            tracking of commands on an already-connected link. Non-blocking
            (called under the SystemManager lock); Start on a disconnected
            plant is an error, Stop is idempotent. Returns true on error */
         virtual bool Start(void) = 0;
         virtual bool Stop(void) = 0;
+
+        /* True when a mission may begin (implementation-specific). Default:
+           true — a plant with no staging is always ready. Read from the
+           snapshot path under the SystemManager lock */
+        virtual bool IsReadyToStart(void) const { return true; }
 
         /* Tick-side exchange — called by the SystemManager under its lock at
            every tick. Non-virtual by design: implemented here on the triple

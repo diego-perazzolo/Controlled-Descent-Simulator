@@ -209,6 +209,9 @@ typedef struct
 
     // A plant is attached to the system
     bool isAttached;
+
+    // The plant is ready for a mission (staged / no staging needed)
+    bool isReadyToStart;
 } core_plantSnapshotData_t;
 
 // Snapshot data

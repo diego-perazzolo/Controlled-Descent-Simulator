@@ -190,6 +190,7 @@ bool core_getPlantSnapshot(core_plantSnapshotData_t &par)
                                   {
                                     /* the lambda only runs with a plant attached */
                                     par.isAttached = true;
+                                    par.isReadyToStart = plant.IsReadyToStart();
 
                                     /* one Pull gets time, sequence and state as
                                        a single coherent sample */
@@ -216,4 +217,14 @@ bool core_run(void)
 bool core_stop(void)
 {
     return _ctx.SM.Stop();
+}
+
+bool core_beginStaging(core_coord_t safetyAltitude)
+{
+    return _ctx.SM.BeginStaging(safetyAltitude);
+}
+
+bool core_stopStaging(void)
+{
+    return _ctx.SM.StopStaging();
 }

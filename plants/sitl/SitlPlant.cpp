@@ -61,6 +61,20 @@ namespace
     /* UDP is lossy: keep asking for the telemetry streams until they flow */
     constexpr double TELEMETRY_REREQUEST_PERIOD_S = 2.0;
 
+    /* ArduCopter flight mode number for GUIDED — a firmware constant, NOT a
+       MAVLink enum, hence defined here rather than pinned in mavlink_pin.hpp */
+    constexpr float ARDUCOPTER_GUIDED_MODE = 4.0f;
+
+    /* auto-staging: resend a command with no ACK after this long, and the
+       altitude window within which the climb counts as "at altitude" */
+    constexpr double STAGE_CMD_RETRY_S = 1.0;
+    constexpr double STAGE_ALT_TOL_M = 0.5;
+
+    /* above this height (m) the vehicle is already airborne: staging then
+       skips arm + takeoff (which ArduCopter rejects in flight) and only
+       settles to a stable hover */
+    constexpr double STAGE_MIN_AIRBORNE_M = 1.0;
+
     /* setpoints command position + velocity + yaw; acceleration and yaw rate
        are ignored (yaw rate is left out for ArduCopter GUIDED compatibility,
        which does not accept a combined yaw + yaw-rate target) */
@@ -105,6 +119,7 @@ struct SitlPlant::Link
     double lastHeartbeatTx_seconds;
     double lastTelemetryReq_seconds;
     double lastSetpointTx_seconds;
+    double lastStageCmdTx_seconds;   /* auto-staging command retry timer */
 
     /* telemetry assembly: LOCAL_POSITION_NED (position + velocity) and
        ATTITUDE (angles + rates) arrive as separate messages; they are
@@ -146,6 +161,10 @@ struct SitlPlant::Link
     bool haveAttTime;
     uint32_t lastAttBootMs;
 
+    /* staging began with the vehicle already airborne: arm + takeoff were
+       skipped, so STAGED needs only a stable hover (no altitude match) */
+    bool stageSkipTakeoff;
+
     Link() : peerKnown(false),
              peer({}),
              fcSystemId(0),
@@ -156,6 +175,7 @@ struct SitlPlant::Link
              /* negative: the first stream request fires as soon as READY */
              lastTelemetryReq_seconds(-TELEMETRY_REREQUEST_PERIOD_S),
              lastSetpointTx_seconds(0.0),
+             lastStageCmdTx_seconds(0.0),
              assembled({}),
              havePosition(false),
              lastPositionRx_seconds(0.0),
@@ -170,7 +190,8 @@ struct SitlPlant::Link
              lastNedX(0.0), lastNedY(0.0), lastNedZ(0.0), lastNedYaw(0.0),
              commanding(false),
              haveLposTime(false), lastLposBootMs(0),
-             haveAttTime(false), lastAttBootMs(0)
+             haveAttTime(false), lastAttBootMs(0),
+             stageSkipTakeoff(false)
     {
     }
 
@@ -191,7 +212,9 @@ SitlPlant::SitlPlant() : m_params({.host = "0.0.0.0",
                          m_threadRun(false),
                          m_missionRun(false),
                          m_linkState(linkState_t::DISCONNECTED),
-                         m_readyToStart(false)
+                         m_stagingState(stagingState_t::IDLE),
+                         m_stageRequested(false),
+                         m_stageAltitude(0.0)
 {
 
 }
@@ -254,10 +277,11 @@ bool SitlPlant::Disconnect(void)
     }
 
     m_missionRun = false;
+    m_stageRequested = false;
     m_threadRun = false;
     m_thread.join();
     m_linkState = linkState_t::DISCONNECTED;
-    m_readyToStart = false;
+    m_stagingState = stagingState_t::IDLE;
 
     return false;
 }
@@ -276,9 +300,9 @@ bool SitlPlant::Start(void)
         return true;
     }
 
-    if (!m_readyToStart)
+    if (m_stagingState != stagingState_t::STAGED)
     {
-        // Vehicle not ready (link not READY, or not held still long enough)
+        // Vehicle not staged (not airborne in a stable hover), error
         return true;
     }
 
@@ -290,6 +314,42 @@ bool SitlPlant::Stop(void)
 {
     /* idempotent: stopping a stopped mission is not an error */
     m_missionRun = false;
+    /* clear staging: after a mission the vehicle has descended and is no
+       longer at the staging altitude, so it must be re-staged (climb back up)
+       before another mission — otherwise a descent from a low altitude would
+       command the vehicle below ground. The mission-stop edge holds it. */
+    m_stageRequested = false;
+    m_stagingState = stagingState_t::IDLE;
+    return false;
+}
+
+bool SitlPlant::BeginStaging(double altitude_m)
+{
+    if (!m_thread.joinable())
+    {
+        // Cannot stage a disconnected link, error
+        return true;
+    }
+
+    if (altitude_m <= 0.0)
+    {
+        // Invalid staging altitude, error
+        return true;
+    }
+
+    m_stageAltitude = altitude_m;
+    /* force a fresh sequence even from STAGED, so staging can be repeated
+       after a maneuver (the vehicle climbs back to the altitude) */
+    m_stagingState = stagingState_t::IDLE;
+    m_stageRequested = true;
+    return false;
+}
+
+bool SitlPlant::StopStaging(void)
+{
+    /* clears the request; the communication loop aborts any in-progress (or
+       completed) staging back to IDLE and holds the vehicle in place */
+    m_stageRequested = false;
     return false;
 }
 
@@ -298,9 +358,14 @@ SitlPlant::linkState_t SitlPlant::GetLinkState(void) const
     return m_linkState;
 }
 
+SitlPlant::stagingState_t SitlPlant::GetStagingState(void) const
+{
+    return m_stagingState;
+}
+
 bool SitlPlant::IsReadyToStart(void) const
 {
-    return m_readyToStart;
+    return m_stagingState == stagingState_t::STAGED;
 }
 
 void SitlPlant::_commLoop(void)
@@ -337,7 +402,9 @@ void SitlPlant::_commLoop(void)
             link.stableSince_seconds = -1.0;
             link.haveStagingRef = false;
             link.haveMissionOffset = false;
-            m_readyToStart = false;
+            /* link lost: staging is void, require an explicit re-stage */
+            m_stagingState = stagingState_t::IDLE;
+            m_stageRequested = false;
             m_linkState = linkState_t::DISCONNECTED;
         }
 
@@ -362,13 +429,12 @@ void SitlPlant::_commLoop(void)
             link.missionWasRunning = missionNow;
         }
 
-        /* readiness gate: link identified and the vehicle held still long
-           enough. Only meaningful before a mission starts */
-        m_readyToStart = (m_linkState == linkState_t::READY) &&
-                         link.havePosition &&
-                         link.stableSince_seconds >= 0.0 &&
-                         (tNow - link.stableSince_seconds >=
-                          m_params.stabilityHoldTime_seconds);
+        /* drive the auto-staging sequence (GUIDED → arm → takeoff → climb →
+           STAGED). Only meaningful on an identified link and before a mission */
+        if (m_linkState == linkState_t::READY && !missionNow)
+        {
+            _runStaging(link);
+        }
 
         if (link.peerKnown &&
             tNow - link.lastHeartbeatTx_seconds >= HEARTBEAT_PERIOD_S)
@@ -496,6 +562,51 @@ void SitlPlant::_processInbound(Link& link)
                     break;
                 }
 
+                case MAVLINK_MSG_ID_COMMAND_ACK:
+                {
+                    mavlink_command_ack_t ack;
+                    mavlink_msg_command_ack_decode(&message, &ack);
+
+                    if (ack.result != MAV_RESULT_ACCEPTED)
+                    {
+                        // rejected: _runStaging will resend on its retry timer
+                        break;
+                    }
+
+                    /* advance the staging sequence on the accepted command and
+                       fire the next one immediately */
+                    const stagingState_t st = m_stagingState.load();
+                    if (st == stagingState_t::SET_MODE &&
+                        ack.command == MAV_CMD_DO_SET_MODE)
+                    {
+                        if (link.assembled.z > STAGE_MIN_AIRBORNE_M)
+                        {
+                            /* already flying: arm + takeoff would be rejected;
+                               just settle to a stable hover */
+                            link.stageSkipTakeoff = true;
+                            m_stagingState = stagingState_t::CLIMB;
+                        }
+                        else
+                        {
+                            m_stagingState = stagingState_t::ARM;
+                            _sendStageCommand(link, stagingState_t::ARM);
+                        }
+                    }
+                    else if (st == stagingState_t::ARM &&
+                             ack.command == MAV_CMD_COMPONENT_ARM_DISARM)
+                    {
+                        m_stagingState = stagingState_t::TAKEOFF;
+                        _sendStageCommand(link, stagingState_t::TAKEOFF);
+                    }
+                    else if (st == stagingState_t::TAKEOFF &&
+                             ack.command == MAV_CMD_NAV_TAKEOFF)
+                    {
+                        /* airborne: the climb is monitored by _runStaging */
+                        m_stagingState = stagingState_t::CLIMB;
+                    }
+                    break;
+                }
+
                 case MAVLINK_MSG_ID_ATTITUDE:
                 {
                     mavlink_attitude_t attitude;
@@ -584,8 +695,9 @@ void SitlPlant::_processInbound(Link& link)
                         link.stableSince_seconds = -1.0;
                     }
 
-                    /* staging regime: capture, once, the raw pose that maps
-                       to the CDS origin, so the ghost drifts near it */
+                    /* staging regime: capture, once, the raw pose whose
+                       horizontal part maps to the CDS origin (the altitude is
+                       shown as-is, see the publish below) */
                     if (!link.haveStagingRef && !m_missionRun)
                     {
                         link.stagingRefX = link.assembled.x;
@@ -607,9 +719,14 @@ void SitlPlant::_processInbound(Link& link)
                     }
                     else if (link.haveStagingRef)
                     {
+                        /* zero the horizontal position (and yaw) to the CDS
+                           origin, but NOT the altitude: z is the physical
+                           height above the takeoff point and maps directly to
+                           the CDS z. Offsetting it by a captured reference
+                           would send the ghost underground when the vehicle
+                           descends below where the reference was taken. */
                         out.x -= link.stagingRefX;
                         out.y -= link.stagingRefY;
-                        out.z -= link.stagingRefZ;
                         out.yaw = wrapPi(link.assembled.yaw - link.stagingRefYaw);
                     }
 
@@ -722,4 +839,136 @@ void SitlPlant::_sendHold(Link& link)
     uint8_t buffer[MAVLINK_MAX_PACKET_LEN];
     const uint16_t length = mavlink_msg_to_send_buffer(buffer, &message);
     link.transport.Send(buffer, length, link.peer);
+}
+
+void SitlPlant::_sendClimbSetpoint(Link& link)
+{
+    /* climb in place to the staging altitude: current NED horizontal position,
+       target altitude, zero velocity — a GUIDED position target ArduCopter
+       honours in flight (unlike NAV_TAKEOFF) */
+    mavlink_message_t message;
+    mavlink_msg_set_position_target_local_ned_pack(
+        OUR_SYSTEM_ID, OUR_COMPONENT_ID, &message, 0,
+        link.fcSystemId, link.fcComponentId, MAV_FRAME_LOCAL_NED,
+        SETPOINT_TYPE_MASK,
+        static_cast<float>(link.lastNedX),
+        static_cast<float>(link.lastNedY),
+        static_cast<float>(-m_stageAltitude.load()) /* down = -altitude */,
+        0, 0, 0 /* velocity: zero */,
+        0, 0, 0 /* acceleration: ignored */,
+        static_cast<float>(link.lastNedYaw), 0 /* yaw rate: ignored */);
+
+    uint8_t buffer[MAVLINK_MAX_PACKET_LEN];
+    const uint16_t length = mavlink_msg_to_send_buffer(buffer, &message);
+    link.transport.Send(buffer, length, link.peer);
+}
+
+void SitlPlant::_sendCommandLong(Link& link, uint16_t command,
+                                 float p1, float p2, float p3, float p4,
+                                 float p5, float p6, float p7)
+{
+    mavlink_message_t message;
+    mavlink_msg_command_long_pack(OUR_SYSTEM_ID, OUR_COMPONENT_ID, &message,
+                                  link.fcSystemId, link.fcComponentId,
+                                  command, 0 /* confirmation */,
+                                  p1, p2, p3, p4, p5, p6, p7);
+
+    uint8_t buffer[MAVLINK_MAX_PACKET_LEN];
+    const uint16_t length = mavlink_msg_to_send_buffer(buffer, &message);
+    link.transport.Send(buffer, length, link.peer);
+}
+
+void SitlPlant::_sendStageCommand(Link& link, stagingState_t state)
+{
+    switch (state)
+    {
+        case stagingState_t::SET_MODE:
+            /* DO_SET_MODE: custom mode enabled, ArduCopter GUIDED */
+            _sendCommandLong(link, MAV_CMD_DO_SET_MODE,
+                             MAV_MODE_FLAG_CUSTOM_MODE_ENABLED,
+                             ARDUCOPTER_GUIDED_MODE);
+            break;
+        case stagingState_t::ARM:
+            /* COMPONENT_ARM_DISARM: param1 = 1 (arm) */
+            _sendCommandLong(link, MAV_CMD_COMPONENT_ARM_DISARM, 1.0f);
+            break;
+        case stagingState_t::TAKEOFF:
+            /* NAV_TAKEOFF: param7 = altitude above the takeoff point */
+            _sendCommandLong(link, MAV_CMD_NAV_TAKEOFF,
+                             0, 0, 0, 0, 0, 0,
+                             static_cast<float>(m_stageAltitude.load()));
+            break;
+        default:
+            break;
+    }
+    link.lastStageCmdTx_seconds = link.Now();
+}
+
+void SitlPlant::_runStaging(Link& link)
+{
+    const double tNow = link.Now();
+    const stagingState_t st = m_stagingState.load();
+
+    /* abort: the request was cleared (StopStaging) — brake and reset. Also
+       covers leaving the STAGED state back to a plain armed hold */
+    if (!m_stageRequested)
+    {
+        if (st != stagingState_t::IDLE)
+        {
+            if (link.peerKnown)
+            {
+                _sendHold(link);
+            }
+            m_stagingState = stagingState_t::IDLE;
+        }
+        return;
+    }
+
+    switch (st)
+    {
+        case stagingState_t::IDLE:
+            /* kick off the sequence */
+            link.stageSkipTakeoff = false;
+            m_stagingState = stagingState_t::SET_MODE;
+            _sendStageCommand(link, stagingState_t::SET_MODE);
+            break;
+
+        case stagingState_t::SET_MODE:
+        case stagingState_t::ARM:
+        case stagingState_t::TAKEOFF:
+            /* waiting for the COMMAND_ACK (which advances the state); resend
+               on the retry timer, since UDP loses */
+            if (tNow - link.lastStageCmdTx_seconds > STAGE_CMD_RETRY_S)
+            {
+                _sendStageCommand(link, st);
+            }
+            break;
+
+        case stagingState_t::CLIMB:
+            /* When we took off from the ground NAV_TAKEOFF drives the climb;
+               when already airborne (takeoff skipped, e.g. re-staging after a
+               maneuver) NAV_TAKEOFF is invalid, so we command the climb with a
+               GUIDED position setpoint at the current XY. Either way STAGED is
+               reached at the target altitude in a stable hover. assembled.z is
+               the CDS "up" height above the takeoff origin */
+            if (link.stageSkipTakeoff &&
+                tNow - link.lastSetpointTx_seconds >=
+                    m_params.setpointPeriod_seconds)
+            {
+                _sendClimbSetpoint(link);
+                link.lastSetpointTx_seconds = tNow;
+            }
+            if (std::abs(link.assembled.z - m_stageAltitude.load()) <
+                    STAGE_ALT_TOL_M &&
+                link.stableSince_seconds >= 0.0 &&
+                (tNow - link.stableSince_seconds >=
+                 m_params.stabilityHoldTime_seconds))
+            {
+                m_stagingState = stagingState_t::STAGED;
+            }
+            break;
+
+        case stagingState_t::STAGED:
+            break;
+    }
 }

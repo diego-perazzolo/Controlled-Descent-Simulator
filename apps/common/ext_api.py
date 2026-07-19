@@ -229,6 +229,8 @@ COMM = [
                               "   float up to 2^24 samples (~93 h at 50 Hz)"),
             F("state", type="ext_fullState"),
             F("isAttached", type="bool"),
+            F("isReadyToStart", type="bool",
+              pre="the plant is ready for a mission (staged / no staging needed)"),
             F("isError", type="bool"),
         ]),
 ]
@@ -283,4 +285,14 @@ COMMANDS = [
     Cmd(11, "GetPlantSnapshot", "ext_getPlantSnapshot", "ext_getPlantSnapshot",
         req=None, resp="ext_plantSnapshotData",
         doc="Get the plant's last sample: plant time, sequence and state"),
+
+    Cmd(12, "BeginStaging", "ext_beginStaging", "ext_beginStaging",
+        req=("scalar", "ext_coord_t", "safetyAltitude"), resp="bool",
+        doc="Auto-stage the plant to (trajectory vertical range + safetyAltitude, m)",
+        log="begin staging"),
+
+    Cmd(13, "StopStaging", "ext_stopStaging", "ext_stopStaging",
+        req=None, resp="bool",
+        doc="Abort auto-staging (hold in place)",
+        log="stop staging"),
 ]

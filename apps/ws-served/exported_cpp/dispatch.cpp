@@ -200,8 +200,27 @@ std::vector<uint8_t> server_dispatch(const std::vector<uint8_t>& msg)
             resp.sequence = ret.sequence;
             resp.state = ret.state;
             resp.isAttached = ret.isAttached ? 1 : 0;
+            resp.isReadyToStart = ret.isReadyToStart ? 1 : 0;
             resp.isError = ret.isError ? 1 : 0;
             return _serialize(resp);
+        }
+
+        case WS_MSG_BEGIN_STAGING:
+        {
+            reqBeginStaging_t req = {};
+            if(_parse(msg, req)) return _respBool(h, true);
+
+            printf("[cds-server] begin staging\n");
+            return _respBool(h, ext_beginStaging(req.safetyAltitude));
+        }
+
+        case WS_MSG_STOP_STAGING:
+        {
+            reqStopStaging_t req = {};
+            if(_parse(msg, req)) return _respBool(h, true);
+
+            printf("[cds-server] stop staging\n");
+            return _respBool(h, ext_stopStaging());
         }
 
         default:

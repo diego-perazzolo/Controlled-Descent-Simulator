@@ -45,7 +45,8 @@ Simulate the controlled 3D flight of a rocket booster and of a quadrotor, with:
 - `ext_setSystemParams(params)` — sets the tick period and user forces used by the backend tick thread
 - `ext_run()` / `ext_stop()` — start / stop the simulation; integration advances on a backend tick thread
 - `ext_getSnapshot()` — returns the simulated time, full state and tracking errors (position + yaw)
-- `ext_getPlantSnapshot()` — returns the plant's last sample: plant-side time, sequence number and state (freshness is detected by comparing sequence numbers between polls)
+- `ext_getPlantSnapshot()` — returns the plant's last sample: plant-side time, sequence number, state and readiness (`isReadyToStart`); freshness is detected by comparing sequence numbers between polls
+- `ext_beginStaging(safetyAltitude)` / `ext_stopStaging()` — auto-stage the plant to a hover at (trajectory vertical range + `safetyAltitude` m) via GUIDED → arm → takeoff → climb, and abort it
 - `ext_trajectory_get_point(timeInstant)` - provides a point along the reference trajectory, used for trajectory preview
 - `ext_trajectory_append_poly4(params)` - appends a trajectory of type polynomial 4th order, configured with total time for the maneuver, initial/final position, velocity, acceleration and yaw
 - `ext_trajectory_append_point(params)` - appends a trajectory of type point, configured with a final position, a final yaw and the total time needed for the maneuver
@@ -56,7 +57,7 @@ Simulate the controlled 3D flight of a rocket booster and of a quadrotor, with:
 - **SystemManager** — single owner of model, trajectory and plant behind one lock; every tick of the real-time thread drives, in order, the plant exchange and the physics integration. Model and plant are orchestrated symmetrically: the model is the simulated vehicle, the plant is an external one (SITL/HIL) observed through the same state interface
 - **Plant subsystem** — `BasePlant` exchanges commands/measurements with the tick through wait-free latest-wins mailboxes (`libs/sync` TripleBuffer); samples carry sequence numbers and plant-side timestamps, so staleness, dropouts and latency are observable. The plant lifecycle is two-phase: the link lives from attach to detach (`Connect`/`Disconnect`), the mission runs between `Run` and `Stop` (`Start`/`Stop`). Two implementations ship under `plants/` (selected in the server, see [docs/build.md](docs/build.md)):
   - **loopback** — echoes the commanded reference back as measured state, with configurable sample period, latency and dropout rate; the plumbing test double
-  - **SITL (ArduCopter)** — drives an ArduPilot Copter SITL over MAVLink 2 / UDP: telemetry (`LOCAL_POSITION_NED` + `ATTITUDE`) comes back as measurements, the trajectory reference streams out as `SET_POSITION_TARGET_LOCAL_NED` Guided-mode setpoints. The NED↔ENU frame conversion is confined to the plant, the MAVLink headers are vendored and version-pinned, and the frame is aligned to the trajectory start at mission Start. A readiness gate refuses Start until the vehicle is connected and held still
+  - **SITL (ArduCopter)** — drives an ArduPilot Copter SITL over MAVLink 2 / UDP: telemetry (`LOCAL_POSITION_NED` + `ATTITUDE`) comes back as measurements, the trajectory reference streams out as `SET_POSITION_TARGET_LOCAL_NED` Guided-mode setpoints. The NED↔ENU frame conversion is confined to the plant, the MAVLink headers are vendored and version-pinned, and the frame is aligned to the trajectory start at mission Start. **Auto-staging** brings the vehicle up to a stable hover (GUIDED → arm → takeoff → climb to the trajectory's vertical range plus a safety margin; if already airborne it climbs in place instead of taking off) and Start is gated until it is staged. Mission stop / detach commands a safety hold in place
 
 #### Physics Engine
 - **6 DOF rigid body dynamics** (3 translational + 3 rotational) for both models
@@ -229,7 +230,7 @@ client), app switching, notebook setup and deployment are documented in
 - [x] Customizable trajectory composition (with yaw setpoints)
 - [x] Notebook-driven C++ code generation (shared codegen base, per-model generators)
 - [x] ws-served app: core on a native WebSocket server, browser as thin client
-- [x] SITL plant over MAVLink/UDP (ArduCopter): link, telemetry, Guided-mode setpoints — auto arm/takeoff staging still to come
+- [x] SITL plant over MAVLink/UDP (ArduCopter): link, telemetry, Guided-mode setpoints, auto arm/takeoff staging
 - [ ] Save / load of parameters and trajectories from the frontend
 - [ ] Real hardware interface (MAVLink over serial to a Pixhawk): the SITL plant's link layer is the same, only the transport changes
 

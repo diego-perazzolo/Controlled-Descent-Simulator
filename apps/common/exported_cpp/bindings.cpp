@@ -145,11 +145,12 @@ EMSCRIPTEN_BINDINGS(simulator) {
         .field("isError",      &ext_snapshotData::isError);
 
     value_object<ext_plantSnapshotData>("ext_plantSnapshotData")
-        .field("time_seconds", &ext_plantSnapshotData::time_seconds)
-        .field("sequence",     &ext_plantSnapshotData::sequence)
-        .field("state",        &ext_plantSnapshotData::state)
-        .field("isAttached",   &ext_plantSnapshotData::isAttached)
-        .field("isError",      &ext_plantSnapshotData::isError);
+        .field("time_seconds",   &ext_plantSnapshotData::time_seconds)
+        .field("sequence",       &ext_plantSnapshotData::sequence)
+        .field("state",          &ext_plantSnapshotData::state)
+        .field("isAttached",     &ext_plantSnapshotData::isAttached)
+        .field("isReadyToStart", &ext_plantSnapshotData::isReadyToStart)
+        .field("isError",        &ext_plantSnapshotData::isError);
 
     // --- Functions exposed to JS ---
     function("ext_rocketInit", &ext_initRocket_FFLQR01);
@@ -163,4 +164,6 @@ EMSCRIPTEN_BINDINGS(simulator) {
     function("ext_run", &ext_run);
     function("ext_stop", &ext_stop);
     function("ext_getPlantSnapshot", &ext_getPlantSnapshot);
+    function("ext_beginStaging", &ext_beginStaging);
+    function("ext_stopStaging", &ext_stopStaging);
 }

@@ -50,7 +50,7 @@ constexpr uint16_t WS_DEFAULT_PORT = 9002;
    carry different bytes, and both sides refuse to talk: a stale
    simulator.wasm against a newer cds_server fails loudly instead
    of corrupting the parsing. */
-constexpr uint8_t WS_PROTOCOL_VERSION = 0x43;
+constexpr uint8_t WS_PROTOCOL_VERSION = 0x47;
 
 /* Message types: request and matching response carry the same type id */
 enum MsgType : uint8_t
@@ -66,6 +66,8 @@ enum MsgType : uint8_t
     WS_MSG_RUN                = 9, // -> respBool_t
     WS_MSG_STOP               = 10, // -> respBool_t
     WS_MSG_GET_PLANT_SNAPSHOT = 11, // -> respGetPlantSnapshot_t
+    WS_MSG_BEGIN_STAGING      = 12, // -> respBool_t
+    WS_MSG_STOP_STAGING       = 13, // -> respBool_t
 };
 
 #pragma pack(push, 1)
@@ -140,6 +142,17 @@ typedef struct
     header_t h;
 } reqGetPlantSnapshot_t;
 
+typedef struct
+{
+    header_t h;
+    ext_coord_t safetyAltitude;
+} reqBeginStaging_t;
+
+typedef struct
+{
+    header_t h;
+} reqStopStaging_t;
+
 /* ------------------------------ responses ------------------------------- */
 
 /* generic boolean response: isError follows the core convention (1 = error) */
@@ -171,6 +184,7 @@ typedef struct
     ext_coord_t sequence;
     ext_fullState state;
     uint8_t isAttached;
+    uint8_t isReadyToStart;
     uint8_t isError;
 } respGetPlantSnapshot_t;
 
@@ -195,10 +209,12 @@ static_assert(sizeof(reqGetSnapshot_t)       ==  2, "wire layout drift");
 static_assert(sizeof(reqRun_t)               ==  2, "wire layout drift");
 static_assert(sizeof(reqStop_t)              ==  2, "wire layout drift");
 static_assert(sizeof(reqGetPlantSnapshot_t)  ==  2, "wire layout drift");
+static_assert(sizeof(reqBeginStaging_t)      ==  6, "wire layout drift"); // 2 + 1f
+static_assert(sizeof(reqStopStaging_t)       ==  2, "wire layout drift");
 static_assert(sizeof(respBool_t)             ==  3, "wire layout drift"); // 2 + u8
 static_assert(sizeof(respTrajGetPoint_t)     == 14, "wire layout drift"); // 2 + 1f + 1f + 1f
 static_assert(sizeof(respGetSnapshot_t)      == 71, "wire layout drift"); // 2 + 1f + 12f + 4f + u8
-static_assert(sizeof(respGetPlantSnapshot_t) == 60, "wire layout drift"); // 2 + 1f + 1f + 12f + u8 + u8
+static_assert(sizeof(respGetPlantSnapshot_t) == 61, "wire layout drift"); // 2 + 1f + 1f + 12f + u8 + u8 + u8
 
 static_assert(sizeof(reqTrajAppendPoly4_t) < WS_MAX_MSG_SIZE, "wire msg too big");
 static_assert(sizeof(respGetSnapshot_t) < WS_MAX_MSG_SIZE, "wire msg too big");

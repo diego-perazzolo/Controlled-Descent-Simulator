@@ -111,6 +111,18 @@ namespace plants
             READY               /* flight controller heartbeat identified */
         };
 
+        /* Auto-staging state: the sequence that puts the vehicle airborne in a
+           stable hover, ready for a mission. Observable from any thread */
+        enum class stagingState_t : uint8_t
+        {
+            IDLE = 0,   /* not staging (on ground, or aborted/holding) */
+            SET_MODE,   /* requesting GUIDED mode */
+            ARM,        /* arming */
+            TAKEOFF,    /* commanding takeoff */
+            CLIMB,      /* climbing to the staging altitude */
+            STAGED      /* hovering stably at altitude — mission may begin */
+        };
+
         SitlPlant();
         virtual ~SitlPlant();
 
@@ -131,13 +143,22 @@ namespace plants
         virtual bool Start(void) override;
         virtual bool Stop(void) override;
 
-        /* Current link session state (any thread) */
-        linkState_t GetLinkState(void) const;
+        /* Auto-staging control: bring the vehicle up to a stable hover at
+           altitude_m (meters above the takeoff point) via GUIDED → arm →
+           takeoff → climb. Requires a connected link. StopStaging aborts the
+           sequence (or leaves a staged vehicle) and holds in place, armed.
+           Both are idempotent-ish. Return true on error */
+        bool BeginStaging(double altitude_m) override;
+        bool StopStaging(void) override;
 
-        /* True when the vehicle may begin a mission: link READY and the
-           vehicle held still (per the stability params) long enough. Any
-           thread */
-        bool IsReadyToStart(void) const;
+        /* Current link session / staging state (any thread) */
+        linkState_t GetLinkState(void) const;
+        stagingState_t GetStagingState(void) const;
+
+        /* True when the vehicle may begin a mission: auto-staging has reached
+           STAGED (airborne, GUIDED, stable hover at the staging altitude).
+           Any thread */
+        bool IsReadyToStart(void) const override;
 
         private:
 
@@ -170,12 +191,31 @@ namespace plants
            instead of coasting to the last commanded target */
         void _sendHold(Link& link);
 
+        /* drive the auto-staging sub-state machine (send/retry the current
+           command, advance on ACK, detect the stable hover at altitude) */
+        void _runStaging(Link& link);
+
+        /* send the COMMAND_LONG that drives the given staging state */
+        void _sendStageCommand(Link& link, stagingState_t state);
+
+        /* command the vehicle to climb in place to the staging altitude (for
+           re-staging while already airborne, where takeoff is invalid) */
+        void _sendClimbSetpoint(Link& link);
+
+        /* send one COMMAND_LONG to the flight controller */
+        void _sendCommandLong(Link& link, uint16_t command,
+                              float p1 = 0, float p2 = 0, float p3 = 0,
+                              float p4 = 0, float p5 = 0, float p6 = 0,
+                              float p7 = 0);
+
         sitlParams_t m_params;
         std::thread m_thread;
         std::atomic<bool> m_threadRun;
         std::atomic<bool> m_missionRun;
         std::atomic<linkState_t> m_linkState;
-        std::atomic<bool> m_readyToStart;
+        std::atomic<stagingState_t> m_stagingState;
+        std::atomic<bool> m_stageRequested;
+        std::atomic<double> m_stageAltitude;
     };
 
 } // namespace plants

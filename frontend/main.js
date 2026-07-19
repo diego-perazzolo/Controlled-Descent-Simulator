@@ -143,6 +143,12 @@ const ui = {
     chkViewModel: $('chkViewModel'),
     chkViewPlant: $('chkViewPlant'),
     lblViewPlant: $('lblViewPlant'),
+    // plant / staging controls
+    plantBar:     $('plantBar'),
+    plantStatus:  $('plantStatus'),
+    stageSafetyAlt: $('stageSafetyAlt'),
+    btnBeginStaging: $('btnBeginStaging'),
+    btnStopStaging:  $('btnStopStaging'),
     modelSelect: $('modelSelect'),
     // Rocket params panel
     panelRocket: $('panel-rocket'),
@@ -1171,6 +1177,9 @@ let lastPlantSeq   = -1;
 let lastPlantFreshMs = 0;
 const PLANT_STALE_MS = 1000;
 
+let plantReady = false;        // last isReadyToStart from the plant snapshot
+let stagingRequested = false;  // Begin Staging pressed, not yet aborted
+
 function refreshPlantFreshness(psnap) {
     const live = psnap.isAttached && !psnap.isError;
     const now  = performance.now();
@@ -1179,6 +1188,25 @@ function refreshPlantFreshness(psnap) {
         lastPlantFreshMs = now;
     }
     setPlantAvailable(live && (now - lastPlantFreshMs) < PLANT_STALE_MS);
+
+    // reflect the plant readiness in the staging status + Start gating
+    const wasReady = plantReady;
+    plantReady = plantAvailable && !!psnap.isReadyToStart;
+    if (plantReady) {
+        ui.plantStatus.textContent = 'Staged — ready';
+        ui.plantStatus.className = 'ready';
+        // nothing to abort once ready: only aborting an in-progress climb
+        ui.btnStopStaging.disabled = true;
+    } else if (plantAvailable && stagingRequested) {
+        ui.plantStatus.textContent = 'Staging…';
+        ui.plantStatus.className = 'staging';
+        ui.btnStopStaging.disabled = running;
+    } else if (plantAvailable) {
+        ui.plantStatus.textContent = 'Not staged';
+        ui.plantStatus.className = '';
+        ui.btnStopStaging.disabled = true;
+    }
+    if (plantReady !== wasReady) refreshStartEnabled();
 }
 
 // The loop runs continuously from boot: the plant ghost is polled every frame
@@ -1216,12 +1244,14 @@ function refreshStartEnabled() {
     // Start is allowed only when:
     //   - sim is not currently running, AND
     //   - the trajectory has at least one item (otherwise the backend has
-    //     nothing to track and the run is meaningless).
+    //     nothing to track and the run is meaningless), AND
+    //   - if a plant is connected, it is ready (staged).
     if (running) {
         ui.btnStart.disabled = true;
         return;
     }
-    ui.btnStart.disabled = trajectoryBuilder.isEmpty();
+    const plantBlocks = plantAvailable && !plantReady;
+    ui.btnStart.disabled = trajectoryBuilder.isEmpty() || plantBlocks;
 }
 
 function start() {
@@ -1241,6 +1271,7 @@ function start() {
     ui.btnStart.disabled = true;
     ui.btnStop.disabled  = false;
     ui.btnReset.disabled = true;
+    ui.btnBeginStaging.disabled = true;   // no staging while the mission runs
     setStatus('Running...');
     setError('');
     // the poll loop is already running (started at boot); it now switches to
@@ -1253,6 +1284,11 @@ function stop() {
     if (sim) sim.ext_stop();
     ui.btnStop.disabled  = true;
     ui.btnReset.disabled = false;
+    ui.btnBeginStaging.disabled = false;   // staging allowed again once stopped
+    // the plant clears its staging on Stop (the vehicle descended and must be
+    // re-staged before another mission): reflect that in the UI
+    stagingRequested = false;
+    ui.btnStopStaging.disabled = true;
     setStatus('Stopped.');
     refreshStartEnabled();
 }
@@ -1306,12 +1342,40 @@ function setPlantAvailable(avail) {
     plantAvailable = avail;
     ui.chkViewPlant.disabled = !avail;
     ui.lblViewPlant.classList.toggle('disabled', !avail);
+    // a plant just appeared: show its ghost automatically
+    if (avail) ui.chkViewPlant.checked = true;
+    // reveal the staging controls only while a plant is connected
+    ui.plantBar.style.display = avail ? 'flex' : 'none';
+    if (!avail) {
+        stagingRequested = false;
+        plantReady = false;
+        ui.btnStopStaging.disabled = true;
+        refreshStartEnabled();
+    }
     applySourceToggles();
 }
 
 ui.chkViewTraj.addEventListener('change',  applySourceToggles);
 ui.chkViewModel.addEventListener('change', applySourceToggles);
 ui.chkViewPlant.addEventListener('change', applySourceToggles);
+
+// Staging controls
+ui.btnBeginStaging.addEventListener('click', () => {
+    const safetyAlt = parseFloat(ui.stageSafetyAlt.value);
+    if (!(safetyAlt >= 0)) { setError('Safety altitude must be ≥ 0'); return; }
+    if (sim.ext_beginStaging(safetyAlt)) {
+        setError('Begin staging failed — need a plant, a non-empty trajectory, and a stopped sim');
+        return;
+    }
+    stagingRequested = true;
+    ui.btnStopStaging.disabled = false;
+    setError('');
+});
+ui.btnStopStaging.addEventListener('click', () => {
+    sim.ext_stopStaging();
+    stagingRequested = false;
+    ui.btnStopStaging.disabled = true;
+});
 
 // View toggle helpers
 function showView(name) {
@@ -1433,6 +1497,7 @@ trajectoryBuilder.onChange(() => {
         setupForceButtons();
         setStatus('Ready.');
         refreshStartEnabled();
+        ui.btnReset.disabled = false;   // reset is safe whenever not running
 
         // Start the continuous poll loop: it keeps the plant ghost live even
         // before the simulation runs, so staging is visible.

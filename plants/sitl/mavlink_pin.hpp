@@ -93,8 +93,13 @@ static_assert(MAVLINK_MSG_ID_SET_POSITION_TARGET_LOCAL_NED == 84 &&
 /* Enum values that travel on the wire as plain numbers */
 static_assert(MAV_CMD_NAV_TAKEOFF == 22 &&
               MAV_CMD_COMPONENT_ARM_DISARM == 400 &&
-              MAV_CMD_SET_MESSAGE_INTERVAL == 511,
+              MAV_CMD_SET_MESSAGE_INTERVAL == 511 &&
+              MAV_CMD_DO_SET_MODE == 176,
               "MAVLink pin: MAV_CMD command number drifted");
+
+static_assert(MAV_MODE_FLAG_CUSTOM_MODE_ENABLED == 1 &&
+              MAV_RESULT_ACCEPTED == 0,
+              "MAVLink pin: mode-flag / command-result value drifted");
 
 static_assert(MAV_FRAME_LOCAL_NED == 1,
               "MAVLink pin: MAV_FRAME_LOCAL_NED value drifted");

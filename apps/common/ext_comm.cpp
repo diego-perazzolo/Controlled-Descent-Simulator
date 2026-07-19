@@ -306,6 +306,7 @@ ext_plantSnapshotData ext_getPlantSnapshot(void)
     extPar.state.yaw = corePar.state.yaw;
 
     extPar.isAttached = corePar.isAttached;
+    extPar.isReadyToStart = corePar.isReadyToStart;
     extPar.isError = ret;
 
     return extPar;
@@ -319,4 +320,14 @@ bool ext_run(void)
 bool ext_stop(void)
 {
     return core_stop();
+}
+
+bool ext_beginStaging(ext_coord_t safetyAltitude)
+{
+    return core_beginStaging(safetyAltitude);
+}
+
+bool ext_stopStaging(void)
+{
+    return core_stopStaging();
 }

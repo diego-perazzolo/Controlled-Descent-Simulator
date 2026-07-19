@@ -73,3 +73,10 @@ bool core_run(void);
 
 // Stop simulation / plant ticking. Returns true on error
 bool core_stop(void);
+
+// Auto-stage the plant to (trajectory vertical range + safetyAltitude).
+// Returns true on error
+bool core_beginStaging(core_coord_t safetyAltitude);
+
+// Abort auto-staging (hold in place). Returns true on error
+bool core_stopStaging(void);

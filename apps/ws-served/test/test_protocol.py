@@ -179,13 +179,15 @@ def run_tests(s):
     assert vals[2] == 0.0, f"time advanced before run: {vals[2]}"
     print("snapshot at rest OK (t=0)")
 
-    # plant snapshot before run: the server attaches a loopback plant at boot,
-    # but its communication starts with Run — attached, no sample yet
+    # plant snapshot before run: the server attaches a loopback plant at boot
+    # and its link is up from attach (two-phase lifecycle), so it already
+    # streams a hover — a sample may or may not have arrived yet by now, we
+    # only assert the plant is attached (a "no sample" check would race the
+    # first hover publish)
     p = rpc(s, header(MSG["GET_PLANT_SNAPSHOT"]))
-    vals = struct.unpack("<BB14fBB", p)
-    assert vals[-2] == 1, "plant not attached"
-    assert vals[-1] == 1, "plant had a sample before run"
-    print("plant snapshot at rest OK (attached, no sample)")
+    vals = struct.unpack("<BB14fBBB", p)  # ...isAttached, isReadyToStart, isError
+    assert vals[-3] == 1, "plant not attached"
+    print("plant snapshot before run OK (attached)")
 
     # run for ~0.5 s of wall time: simulated time must advance with the
     # real-time thread (loose bounds, the tick pace is not deterministic)
@@ -202,8 +204,8 @@ def run_tests(s):
     # plant snapshot while running: fresh samples with growing sequence
     # (loopback: period 20 ms, latency 50 ms — first sample after ~70 ms)
     p = rpc(s, header(MSG["GET_PLANT_SNAPSHOT"]))
-    pv = struct.unpack("<BB14fBB", p)
-    assert (pv[-2], pv[-1]) == (1, 0), f"plant snapshot failed: {pv[-2:]}"
+    pv = struct.unpack("<BB14fBBB", p)
+    assert (pv[-3], pv[-1]) == (1, 0), f"plant snapshot failed: {pv[-3:]}"
     seq_run, t_plant = pv[3], pv[2]
     assert seq_run >= 1, f"plant sequence not started: {seq_run}"
     assert t_plant > 0, f"plant time not advancing: {t_plant}"
@@ -221,9 +223,9 @@ def run_tests(s):
     # plant after stop: STOP ends the mission, not the link. The plant stays
     # connected (two-phase lifecycle: link lives from attach to detach), so a
     # loopback keeps publishing its held state and the sequence keeps growing.
-    s1 = struct.unpack("<BB14fBB", rpc(s, header(MSG["GET_PLANT_SNAPSHOT"])))[3]
+    s1 = struct.unpack("<BB14fBBB", rpc(s, header(MSG["GET_PLANT_SNAPSHOT"])))[3]
     time.sleep(0.2)
-    s2 = struct.unpack("<BB14fBB", rpc(s, header(MSG["GET_PLANT_SNAPSHOT"])))[3]
+    s2 = struct.unpack("<BB14fBBB", rpc(s, header(MSG["GET_PLANT_SNAPSHOT"])))[3]
     assert s2 > s1, f"plant link died on mission stop: seq {s1} -> {s2}"
     print(f"plant link alive after stop OK (seq {s1:.0f} -> {s2:.0f})")
 

@@ -30,9 +30,10 @@ bool ext_setSystemParams(ext_systemParams params);
 /* Get a snapshot of the simulation: elapsed time, state, tracking errors */
 ext_snapshotData ext_getSnapshot(void);
 
-/* Get the plant's last sample: plant-side time, sequence number and state.
-   isAttached distinguishes "no plant" from "plant attached, no sample yet"
-   (both report isError) */
+/* Get the plant's last sample: plant-side time, sequence number, state and
+   readiness (isReadyToStart: staged, or no staging needed). isAttached
+   distinguishes "no plant" from "plant attached, no sample yet" (both report
+   isError) */
 ext_plantSnapshotData ext_getPlantSnapshot(void);
 
 /* Start the simulation / plant ticking, returns true on error */
@@ -40,6 +41,14 @@ bool ext_run(void);
 
 /* Stop the simulation / plant ticking, returns true on error */
 bool ext_stop(void);
+
+/* Auto-stage the plant to a hover at (trajectory vertical range +
+   safetyAltitude, m) via GUIDED -> arm -> takeoff -> climb; ready when staged.
+   Returns true on error (no plant, no trajectory, or already running) */
+bool ext_beginStaging(ext_coord_t safetyAltitude);
+
+/* Abort auto-staging (hold in place), returns true on error */
+bool ext_stopStaging(void);
 
 /* Get a point at time instant t along the trajectory */
 ext_trajectoryPoint ext_trajectory_get_point(ext_coord_t t);
@@ -75,7 +84,8 @@ ext_systemParams               { timestep_seconds, user_forces (ext_userForce) }
 ext_snapshotData               { time_seconds, state (ext_fullState),
                                 err (ext_setpointError), isError (bool) }
 ext_plantSnapshotData          { time_seconds, sequence, state (ext_fullState),
-                                isAttached (bool), isError (bool) }
+                                isAttached (bool), isReadyToStart (bool),
+                                isError (bool) }
 ```
 
 ## Protocol version
@@ -118,6 +128,12 @@ import createSimulator from '../build/simulator.js';
 const sim = await createSimulator();
 sim.ext_rocketInit({ rocketPar: {...}, rocketActuatorLimits: {...} });
 sim.ext_setSystemParams({ timestep_seconds: 0.01, user_forces: { fX: 0, fY: 0, fZ: 0 } });
+
+// with a SITL plant attached: auto-stage before the mission, then poll
+// readiness from the plant snapshot
+sim.ext_beginStaging(5);   // range + 5 m safety margin
+const { isReadyToStart } = sim.ext_getPlantSnapshot();
+
 sim.ext_run();
 const { isError, time_seconds, state, err } = sim.ext_getSnapshot();
 sim.ext_stop();

@@ -55,6 +55,12 @@ namespace CDS
            but it advances the internal seek cursor (mutable). Returns true on error */
         bool GetReference(const core_coord_t& time, Reference_t& ref) const;
 
+        /* Vertical range (max − min altitude z) of the whole trajectory, found
+           by sampling every item across its duration. Used to size the plant
+           staging altitude (the vehicle must climb enough to cover the
+           trajectory's vertical travel). Returns true on error (empty) */
+        bool GetAltitudeRange(core_coord_t& range) const;
+
         private:
 
         /* Append a trajectory item to the stack */

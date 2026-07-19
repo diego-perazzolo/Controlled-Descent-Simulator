@@ -78,6 +78,8 @@ typedef struct
     ext_coord_t sequence;
     ext_fullState state;
     bool isAttached;
+    /* the plant is ready for a mission (staged / no staging needed) */
+    bool isReadyToStart;
     bool isError;
 } ext_plantSnapshotData;
 
@@ -113,3 +115,9 @@ bool ext_stop(void);
 
 /* Get the plant's last sample: plant time, sequence and state */
 ext_plantSnapshotData ext_getPlantSnapshot(void);
+
+/* Auto-stage the plant to (trajectory vertical range + safetyAltitude, m) */
+bool ext_beginStaging(ext_coord_t safetyAltitude);
+
+/* Abort auto-staging (hold in place) */
+bool ext_stopStaging(void);

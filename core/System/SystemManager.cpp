@@ -273,6 +273,40 @@ bool SystemManager::SetUserForces(const userForces_t &uF)
     return false;
 }
 
+bool SystemManager::BeginStaging(sm_coord_t safetyAltitude)
+{
+    lockGuard_t lock(m_mutex);
+
+    RETURN_ERR_IF_RUNNING;
+    RETURN_ERR_IF_NO_PLANT;
+
+    if (!m_pTrajectoryManager || safetyAltitude < 0)
+    {
+        // No trajectory to size the altitude, or invalid margin, error
+        return true;
+    }
+
+    core_coord_t altitudeRange = 0;
+    if (m_pTrajectoryManager->GetAltitudeRange(altitudeRange))
+    {
+        // Empty trajectory, error
+        return true;
+    }
+
+    /* stage above the trajectory's vertical travel by the safety margin: an
+       additive margin stays valid even for a flat trajectory (range 0) */
+    return m_pPlant->BeginStaging(altitudeRange + safetyAltitude);
+}
+
+bool SystemManager::StopStaging(void)
+{
+    lockGuard_t lock(m_mutex);
+
+    RETURN_ERR_IF_NO_PLANT;
+
+    return m_pPlant->StopStaging();
+}
+
 bool SystemManager::Run(void)
 {
     lockGuard_t lock(m_mutex);

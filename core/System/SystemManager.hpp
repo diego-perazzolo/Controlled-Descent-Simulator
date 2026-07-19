@@ -110,6 +110,13 @@ namespace CDS
         /* Set user perturbation forces used by the next ticks. Returns true on error */
         bool SetUserForces(const userForces_t& uF);
 
+        /* Auto-staging: ask the attached plant to bring the vehicle up to a
+           hover at (trajectory vertical range + safetyAltitude), ready for a
+           mission. Requires a stopped system with a plant and a trajectory.
+           StopStaging aborts it. Return true on error */
+        bool BeginStaging(sm_coord_t safetyAltitude);
+        bool StopStaging(void);
+
         bool Run(void);
         bool ExecuteTick(sm_coord_t timestep_seconds);
         bool Stop(void);
