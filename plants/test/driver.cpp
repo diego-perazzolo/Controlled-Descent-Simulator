@@ -208,6 +208,72 @@ static void testWithSystemManager(void)
     std::printf("system manager OK\n");
 }
 
+/* Spy plant: records, at the instant its mission Start is called, whether a
+   command was already deposited in the mailbox and its reference. Used to
+   check that Run() seeds a fresh command BEFORE starting the plant mission. */
+class SpyPlant : public BasePlant
+{
+    public:
+    bool commandSeenAtStart = false;
+    double refXAtStart = -999.0;
+
+    bool SetPlantParams(const std::any&) override { return false; }
+    bool Connect(void) override { return false; }
+    bool Disconnect(void) override { return false; }
+    bool Stop(void) override { return false; }
+    bool Start(void) override
+    {
+        plantCommands_t cmd = {};
+        if (!FetchCommands(cmd))
+        {
+            commandSeenAtStart = true;
+            refXAtStart = cmd.reference.pos[0];
+        }
+        return false;
+    }
+};
+
+/* --- phase 4: Run() seeds the plant before the mission starts ----------- */
+static void testRunSeedsPlant(void)
+{
+    SystemManager sm;
+
+    auto rocket = std::make_unique<Rocket>();
+    core_rocketParams_t rPar = {};
+    rPar.m = 10.0; rPar.Ix = 10.0 / 3; rPar.Iy = 10.0 / 3; rPar.Iz = 1.0;
+    rPar.g = 9.81; rPar.c = 1.0; rPar.cz = 0.02;
+    rPar.F1_max = 500; rPar.F1_min = 0;
+    rPar.T1_max = 10; rPar.T1_min = -10;
+    rPar.T2_max = 10; rPar.T2_min = -10;
+    rPar.T3_max = 10; rPar.T3_min = -10;
+    CHECK(rocket->SetModelParams(rPar) == false);
+    CHECK(sm.InitModel(std::move(rocket)) == false);
+
+    /* Point trajectory with a known first reference (x = 7) */
+    CHECK(sm.InitTrajectory() == false);
+    core_trajectoryPointParams_t pt = {};
+    pt.finalPos = {7, 8, 9};
+    pt.time_s = 10;
+    CHECK(sm.MutateTrajectoryManager([&pt](TrajectoryManager& tM)
+                                     { return tM.AppendPoint(pt); }) == false);
+
+    auto spy = std::make_unique<SpyPlant>();
+    SpyPlant* spyPtr = spy.get();
+    CHECK(sm.AttachPlant(std::move(spy)) == false);
+    CHECK(sm.SetParameters({0.01}) == false);
+
+    /* Run must deposit the trajectory-start command before starting the
+       plant mission, so the plant never captures a stale command */
+    CHECK(sm.Run() == false);
+    CHECK(spyPtr->commandSeenAtStart == true);
+    CHECK(std::abs(spyPtr->refXAtStart - 7) < 1e-9);
+
+    CHECK(sm.Stop() == false);
+    CHECK(sm.DetachPlant() == false);
+
+    std::printf("run seeds plant OK\n");
+}
+
 /* --- phase 3: SitlPlant skeleton --------------------------------------- */
 static void testSitlSkeleton(void)
 {
@@ -270,6 +336,7 @@ int main(void)
 {
     testStandalone();
     testWithSystemManager();
+    testRunSeedsPlant();
     testSitlSkeleton();
 
     if (_failures)

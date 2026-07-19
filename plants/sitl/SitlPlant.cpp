@@ -83,6 +83,7 @@ namespace
         }
         return angle - PI;
     }
+
 }
 
 /* communication-thread context: everything the loop needs, on its stack */
@@ -137,6 +138,14 @@ struct SitlPlant::Link
        safety hold so it is sent only when we were really driving */
     bool commanding;
 
+    /* on-board timestamp of the last accepted sample of each stream: a
+       message arriving older than this is a UDP reordering artefact and is
+       dropped, so the ghost never jumps backwards */
+    bool haveLposTime;
+    uint32_t lastLposBootMs;
+    bool haveAttTime;
+    uint32_t lastAttBootMs;
+
     Link() : peerKnown(false),
              peer({}),
              fcSystemId(0),
@@ -159,7 +168,9 @@ struct SitlPlant::Link
              missionOffYaw(0.0),
              missionWasRunning(false),
              lastNedX(0.0), lastNedY(0.0), lastNedZ(0.0), lastNedYaw(0.0),
-             commanding(false)
+             commanding(false),
+             haveLposTime(false), lastLposBootMs(0),
+             haveAttTime(false), lastAttBootMs(0)
     {
     }
 
@@ -490,13 +501,31 @@ void SitlPlant::_processInbound(Link& link)
                     mavlink_attitude_t attitude;
                     mavlink_msg_attitude_decode(&message, &attitude);
 
-                    /* NED aircraft body → CDS/ENU: roll unchanged, pitch and
-                       yaw negated (Y and Z axes flip), heading measured from
-                       East instead of North. Body rates follow the same axis
-                       flip */
+                    /* drop UDP-reordered stale samples (older on-board time) */
+                    if (link.haveAttTime &&
+                        attitude.time_boot_ms < link.lastAttBootMs)
+                    {
+                        break;
+                    }
+                    link.haveAttTime = true;
+                    link.lastAttBootMs = attitude.time_boot_ms;
+
+                    /* NED aircraft body → CDS/ENU baselink attitude. The
+                       NED→ENU world frame (x↔y, z negated) and the FRD→FLU
+                       body frame (y,z negated) are both proper rotations, and
+                       their composition reduces the aerospace Z-Y-X Euler
+                       angles EXACTLY to: roll unchanged, pitch negated, yaw =
+                       π/2 − yaw_ned. This is not an approximation — it is
+                       bit-identical to the full quaternion composition
+                       (NED_ENU ⊗ q_ned ⊗ AIRCRAFT_BASELINK), and it matches
+                       the convention the QuadRotor model itself reads back
+                       from its body→ENU quaternion. */
                     link.assembled.roll = attitude.roll;
                     link.assembled.pitch = -attitude.pitch;
                     link.assembled.yaw = wrapPi(PI / 2.0 - attitude.yaw);
+
+                    /* body angular rates: FRD → FLU flips the Y and Z axes,
+                       an exact per-axis sign flip (no coupling) */
                     link.assembled.roll_dot = attitude.rollspeed;
                     link.assembled.pitch_dot = -attitude.pitchspeed;
                     link.assembled.yaw_dot = -attitude.yawspeed;
@@ -510,6 +539,16 @@ void SitlPlant::_processInbound(Link& link)
                 {
                     mavlink_local_position_ned_t lpos;
                     mavlink_msg_local_position_ned_decode(&message, &lpos);
+
+                    /* drop UDP-reordered stale samples (older on-board time),
+                       so the published ghost never jumps backwards */
+                    if (link.haveLposTime &&
+                        lpos.time_boot_ms < link.lastLposBootMs)
+                    {
+                        break;
+                    }
+                    link.haveLposTime = true;
+                    link.lastLposBootMs = lpos.time_boot_ms;
 
                     /* NED → CDS/ENU: East=N_y, North=N_x, Up=-N_z, same for
                        the velocity components */

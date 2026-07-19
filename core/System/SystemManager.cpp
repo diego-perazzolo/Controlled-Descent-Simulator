@@ -284,6 +284,24 @@ bool SystemManager::Run(void)
        begins the mission on the warm link */
     if (IsPlantOk())
     {
+        /* Seed a fresh command at the trajectory start BEFORE starting the
+           mission. The plant captures its frame offset from the first command
+           it finds in the mailbox once the mission begins; without this seed
+           it would read the stale command left there by the previous run (the
+           held final reference), misaligning the ghost at t=0. This value
+           equals what the first tick will push (model time has not advanced),
+           so it introduces no inconsistency. */
+        if (m_pTrajectoryManager)
+        {
+            BasePlant::plantCommands_t commands = {};
+            if (!m_pModel->GetCurrentTimeSeconds(commands.time_seconds) &&
+                !m_pTrajectoryManager->GetReference(commands.time_seconds,
+                                                    commands.reference))
+            {
+                m_pPlant->PushCommands(commands);
+            }
+        }
+
         if (m_pPlant->Start())
         {
             // Plant failed to start, do not run

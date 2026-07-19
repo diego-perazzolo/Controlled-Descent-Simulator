@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(lsof -nP -iUDP:14550)"
+    ]
+  }
+}

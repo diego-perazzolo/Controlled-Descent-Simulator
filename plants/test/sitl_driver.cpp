@@ -123,6 +123,7 @@ class FakeSitl
             return true;
         }
 
+        m_epoch = std::chrono::steady_clock::now();
         m_run = true;
         m_thread = std::thread(&FakeSitl::_loop, this);
         return false;
@@ -209,6 +210,11 @@ class FakeSitl
             sendAttitude = m_reqAttitude;
         }
 
+        /* realistic monotonic on-board time, milliseconds since boot */
+        const uint32_t bootMs = static_cast<uint32_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - m_epoch).count());
+
         mavlink_message_t message;
         uint8_t out[MAVLINK_MAX_PACKET_LEN];
 
@@ -220,8 +226,8 @@ class FakeSitl
         if (sendLpos)
         {
             mavlink_msg_local_position_ned_pack(1, MAV_COMP_ID_AUTOPILOT1,
-                                                &message, 0, nedX, nedY, nedZ,
-                                                0, 0, 0);
+                                                &message, bootMs, nedX, nedY,
+                                                nedZ, 0, 0, 0);
             m_socket.Send(out, mavlink_msg_to_send_buffer(out, &message),
                           m_target);
         }
@@ -229,7 +235,7 @@ class FakeSitl
         if (sendAttitude)
         {
             mavlink_msg_attitude_pack(1, MAV_COMP_ID_AUTOPILOT1, &message,
-                                      0, 0, 0, yawNed, 0, 0, 0);
+                                      bootMs, 0, 0, yawNed, 0, 0, 0);
             m_socket.Send(out, mavlink_msg_to_send_buffer(out, &message),
                           m_target);
         }
@@ -278,6 +284,7 @@ class FakeSitl
     std::thread m_thread;
     std::atomic<bool> m_run;
     std::mutex m_mutex;
+    std::chrono::steady_clock::time_point m_epoch;
 
     /* reported pose (NED) */
     double m_nedX, m_nedY, m_nedZ, m_nedVx, m_nedVy, m_nedVz, m_yawNed;

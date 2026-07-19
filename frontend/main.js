@@ -111,10 +111,7 @@ let fpsCounter = 0;
 let fpsDisplay = 0;
 let timestep_s = DEFAULT_TIMESTEP_S;
 let currentModel = MODEL_ROCKET;   // 'rocket' | 'quadrotor'
-let plantAvailable = false;        // plant attached AND publishing samples
-let plantBaselineSeq = 0;          // last sequence seen BEFORE this run: the
-                                   // mailbox keeps the final sample of the
-                                   // previous run, which must not be drawn
+let plantAvailable = false;        // plant attached AND publishing fresh samples
 
 // =============================================================================
 // Renderers registry — add a renderer here to hook into the sim loop
@@ -684,6 +681,19 @@ function make3DRenderer() {
 
             applySources();
         },
+        // Pose ONLY the plant ghost, leaving the model and charts untouched.
+        // Used before Start so the vehicle staging near the origin is visible
+        // (and responds to manual commands) while the simulation is idle.
+        previewPlant(plantState) {
+            if (!initialized || !visible) return;
+            if (plantState) {
+                poseVehicle(plantGroup, plantState);
+                updateTrail(plantTrail, plantTrailLine,
+                            plantState.x, plantState.z, plantState.y);
+            }
+            plantGroup.visible = sources.plant && !!plantState;
+            applySources();
+        },
         reset() {
             trail.length = 0;
             plantTrail.length = 0;
@@ -1152,32 +1162,51 @@ function updatePanels(state, err, t, step) {
 // Display loop — integration runs on the backend tick thread; here we only
 // poll a snapshot per animation frame and refresh the panels/renderers.
 // =============================================================================
-function loop() {
-    if (!running) return;
+// Plant freshness: the plant link lives from attach through the mission, so
+// its sequence advances whenever it is publishing (staging OR running). We
+// treat it as "available" while the sequence keeps changing, and drop it once
+// it has been frozen (link down / detached) for longer than the timeout —
+// independent of the frame rate.
+let lastPlantSeq   = -1;
+let lastPlantFreshMs = 0;
+const PLANT_STALE_MS = 1000;
 
-    const snap = sim.ext_getSnapshot();
-
-    if (snap.isError) {
-        setError('ext_getSnapshot returned error — simulation stopped');
-        stop();
-        return;
+function refreshPlantFreshness(psnap) {
+    const live = psnap.isAttached && !psnap.isError;
+    const now  = performance.now();
+    if (live && psnap.sequence !== lastPlantSeq) {
+        lastPlantSeq     = psnap.sequence;
+        lastPlantFreshMs = now;
     }
+    setPlantAvailable(live && (now - lastPlantFreshMs) < PLANT_STALE_MS);
+}
 
-    simTime   = snap.time_seconds;
-    stepCount = Math.round(simTime / timestep_s);   // estimated backend ticks
+// The loop runs continuously from boot: the plant ghost is polled every frame
+// so it is visible while staging (before Start), and the model/time/charts are
+// driven only while the simulation is actually running.
+function loop() {
+    frameId = requestAnimationFrame(loop);
+    if (!sim) return;
 
-    // Plant snapshot: optional — availability drives the "Plant" view toggle.
-    // Samples at or below the baseline sequence are leftovers of a previous
-    // run still sitting in the mailbox: not fresh, not drawn.
     const psnap = sim.ext_getPlantSnapshot();
-    setPlantAvailable(psnap.isAttached && !psnap.isError &&
-                      psnap.sequence > plantBaselineSeq);
+    refreshPlantFreshness(psnap);
     const plantState = plantAvailable ? psnap.state : null;
 
-    updatePanels(snap.state, snap.err, simTime, stepCount);
-    renderers.forEach(r => r.update(snap.state, snap.err, simTime, stepCount, plantState));
-
-    frameId = requestAnimationFrame(loop);
+    if (running) {
+        const snap = sim.ext_getSnapshot();
+        if (snap.isError) {
+            setError('ext_getSnapshot returned error — simulation stopped');
+            stop();
+            return;
+        }
+        simTime   = snap.time_seconds;
+        stepCount = Math.round(simTime / timestep_s);   // estimated backend ticks
+        updatePanels(snap.state, snap.err, simTime, stepCount);
+        renderers.forEach(r => r.update(snap.state, snap.err, simTime, stepCount, plantState));
+    } else {
+        // Idle: keep only the plant ghost live, leaving model and charts as-is.
+        renderer3d.previewPlant(plantState);
+    }
 }
 
 // =============================================================================
@@ -1208,22 +1237,19 @@ function start() {
         setError('ext_run failed — is a model initialized?');
         return;
     }
-    // Baseline the plant sequence: only samples newer than this belong to
-    // the run that is starting now
-    const ps = sim.ext_getPlantSnapshot();
-    plantBaselineSeq = (ps.isAttached && !ps.isError) ? ps.sequence : 0;
     running = true;
     ui.btnStart.disabled = true;
     ui.btnStop.disabled  = false;
     ui.btnReset.disabled = true;
     setStatus('Running...');
     setError('');
-    loop();
+    // the poll loop is already running (started at boot); it now switches to
+    // driving the model/time/charts because `running` is set
 }
 
 function stop() {
     running = false;
-    if (frameId) cancelAnimationFrame(frameId);
+    // the poll loop keeps running (it still polls the plant ghost while idle)
     if (sim) sim.ext_stop();
     ui.btnStop.disabled  = true;
     ui.btnReset.disabled = false;
@@ -1407,6 +1433,10 @@ trajectoryBuilder.onChange(() => {
         setupForceButtons();
         setStatus('Ready.');
         refreshStartEnabled();
+
+        // Start the continuous poll loop: it keeps the plant ghost live even
+        // before the simulation runs, so staging is visible.
+        loop();
     } catch (e) {
         setError(`Failed to load WASM: ${e.message}`);
     }
