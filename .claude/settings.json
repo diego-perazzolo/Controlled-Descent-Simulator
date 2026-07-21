@@ -5,7 +5,11 @@
       "Bash(grep -n \"const ui = {\\\\|ui = {\\\\|chkViewPlant:\\\\|lblViewPlant:\\\\|btnStart.addEventListener\\\\|btnStop.addEventListener\\\\|btnReset.addEventListener\\\\|\\\\$\\('btnStart'\\)\\\\|\\\\$\\('btnStop'\\)\" frontend/main.js)",
       "Bash(node --check /tmp/mc.mjs)",
       "Bash(pkill -f \"cds_server 9102\")",
-      "Bash(pkill -f \"build-server/cds_server\")"
+      "Bash(pkill -f \"build-server/cds_server\")",
+      "Bash(cp /tmp/att_check.py .)",
+      "Bash(python3 att_check.py)",
+      "Bash(node --check /tmp/m.mjs)",
+      "Bash(docker info *)"
     ]
   }
 }

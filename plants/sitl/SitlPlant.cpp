@@ -70,6 +70,10 @@ namespace
     constexpr double STAGE_CMD_RETRY_S = 1.0;
     constexpr double STAGE_ALT_TOL_M = 0.5;
 
+    /* heading window (rad) within which the vehicle counts as "on the staging
+       heading": STAGED is withheld until the vehicle has yawed to it */
+    constexpr double STAGE_YAW_TOL_RAD = 0.05;
+
     /* above this height (m) the vehicle is already airborne: staging then
        skips arm + takeoff (which ArduCopter rejects in flight) and only
        settles to a stable hover */
@@ -134,12 +138,15 @@ struct SitlPlant::Link
     double stableSince_seconds;
 
     /* frame alignment, two regimes (see file header). Offsets are the raw
-       CDS/ENU pose value that maps to the CDS reference of the regime:
-       subtracted from measurements, added to outbound setpoints. */
-    bool haveStagingRef;   /* staging: raw pose that maps to the CDS origin */
-    double stagingRefX, stagingRefY, stagingRefZ, stagingRefYaw;
-    bool haveMissionOffset;/* mission: raw pose that maps to the trajectory t0 */
-    double missionOffX, missionOffY, missionOffZ, missionOffYaw;
+       CDS/ENU POSITION that maps to the CDS reference of the regime:
+       subtracted from measurements, added to outbound setpoints. Heading is
+       NOT offset: the vehicle is staged to the trajectory's initial heading
+       and the mission commands the reference yaw absolutely, so the ghost's
+       reported roll/pitch stay consistent with its rendered heading. */
+    bool haveStagingRef;   /* staging: raw position that maps to the CDS origin */
+    double stagingRefX, stagingRefY, stagingRefZ;
+    bool haveMissionOffset;/* mission: raw position that maps to the trajectory t0 */
+    double missionOffX, missionOffY, missionOffZ;
 
     /* edge detector on the mission toggle, to re-anchor on transitions */
     bool missionWasRunning;
@@ -182,10 +189,8 @@ struct SitlPlant::Link
              stableSince_seconds(-1.0),
              haveStagingRef(false),
              stagingRefX(0.0), stagingRefY(0.0), stagingRefZ(0.0),
-             stagingRefYaw(0.0),
              haveMissionOffset(false),
              missionOffX(0.0), missionOffY(0.0), missionOffZ(0.0),
-             missionOffYaw(0.0),
              missionWasRunning(false),
              lastNedX(0.0), lastNedY(0.0), lastNedZ(0.0), lastNedYaw(0.0),
              commanding(false),
@@ -214,7 +219,8 @@ SitlPlant::SitlPlant() : m_params({.host = "0.0.0.0",
                          m_linkState(linkState_t::DISCONNECTED),
                          m_stagingState(stagingState_t::IDLE),
                          m_stageRequested(false),
-                         m_stageAltitude(0.0)
+                         m_stageAltitude(0.0),
+                         m_stageYaw(0.0)
 {
 
 }
@@ -323,7 +329,7 @@ bool SitlPlant::Stop(void)
     return false;
 }
 
-bool SitlPlant::BeginStaging(double altitude_m)
+bool SitlPlant::BeginStaging(double altitude_m, double headingYaw)
 {
     if (!m_thread.joinable())
     {
@@ -338,6 +344,7 @@ bool SitlPlant::BeginStaging(double altitude_m)
     }
 
     m_stageAltitude = altitude_m;
+    m_stageYaw = headingYaw;
     /* force a fresh sequence even from STAGED, so staging can be repeated
        after a maneuver (the vehicle climbs back to the altitude) */
     m_stagingState = stagingState_t::IDLE;
@@ -465,14 +472,13 @@ void SitlPlant::_commLoop(void)
             {
                 if (!link.haveMissionOffset)
                 {
-                    /* offset = current raw pose − trajectory t0 reference:
+                    /* offset = current raw position − trajectory t0 reference:
                        makes the ghost coincide with the trajectory start and
-                       maps setpoints back into the vehicle's frame */
+                       maps setpoints back into the vehicle's frame. Heading is
+                       not offset (staging already aligned it) */
                     link.missionOffX = link.assembled.x - commands.reference.pos[0];
                     link.missionOffY = link.assembled.y - commands.reference.pos[1];
                     link.missionOffZ = link.assembled.z - commands.reference.pos[2];
-                    link.missionOffYaw =
-                        wrapPi(link.assembled.yaw - commands.reference.yaw);
                     link.haveMissionOffset = true;
                 }
 
@@ -695,7 +701,7 @@ void SitlPlant::_processInbound(Link& link)
                         link.stableSince_seconds = -1.0;
                     }
 
-                    /* staging regime: capture, once, the raw pose whose
+                    /* staging regime: capture, once, the raw position whose
                        horizontal part maps to the CDS origin (the altitude is
                        shown as-is, see the publish below) */
                     if (!link.haveStagingRef && !m_missionRun)
@@ -703,31 +709,31 @@ void SitlPlant::_processInbound(Link& link)
                         link.stagingRefX = link.assembled.x;
                         link.stagingRefY = link.assembled.y;
                         link.stagingRefZ = link.assembled.z;
-                        link.stagingRefYaw = link.assembled.yaw;
                         link.haveStagingRef = true;
                     }
 
-                    /* publish the raw pose minus the active frame offset
-                       (mission offset once captured, else staging ref) */
+                    /* publish the raw pose minus the active position offset
+                       (mission offset once captured, else staging ref). Heading
+                       is published as-is: the vehicle flies the trajectory's
+                       actual heading, so its raw roll/pitch stay consistent
+                       with the rendered yaw (no wrong-axis tilt). */
                     core_state_t out = link.assembled;
                     if (m_missionRun && link.haveMissionOffset)
                     {
                         out.x -= link.missionOffX;
                         out.y -= link.missionOffY;
                         out.z -= link.missionOffZ;
-                        out.yaw = wrapPi(link.assembled.yaw - link.missionOffYaw);
                     }
                     else if (link.haveStagingRef)
                     {
-                        /* zero the horizontal position (and yaw) to the CDS
-                           origin, but NOT the altitude: z is the physical
-                           height above the takeoff point and maps directly to
-                           the CDS z. Offsetting it by a captured reference
-                           would send the ghost underground when the vehicle
-                           descends below where the reference was taken. */
+                        /* zero the horizontal position to the CDS origin, but
+                           NOT the altitude: z is the physical height above the
+                           takeoff point and maps directly to the CDS z.
+                           Offsetting it by a captured reference would send the
+                           ghost underground when the vehicle descends below
+                           where the reference was taken. */
                         out.x -= link.stagingRefX;
                         out.y -= link.stagingRefY;
-                        out.yaw = wrapPi(link.assembled.yaw - link.stagingRefYaw);
                     }
 
                     /* the vehicle's own boot time is the moment the sample
@@ -785,13 +791,15 @@ void SitlPlant::_requestTelemetryStreams(Link& link)
 
 void SitlPlant::_sendSetpoint(Link& link, const plantCommands_t& commands)
 {
-    /* target pose in CDS/ENU: reference plus the mission offset, so the
-       trajectory frame maps onto the vehicle's frame. Velocity and yaw rate
-       are frame-rotated only (a translation offset has no derivative) */
+    /* target pose in CDS/ENU: reference position plus the mission offset, so
+       the trajectory frame maps onto the vehicle's frame. Heading is commanded
+       absolutely (the reference yaw): the vehicle was staged to the
+       trajectory's initial heading, so there is no yaw jump at mission start.
+       Velocity is a translation, so it carries no offset */
     const double targetX = commands.reference.pos[0] + link.missionOffX;
     const double targetY = commands.reference.pos[1] + link.missionOffY;
     const double targetZ = commands.reference.pos[2] + link.missionOffZ;
-    const double targetYaw = wrapPi(commands.reference.yaw + link.missionOffYaw);
+    const double targetYaw = wrapPi(commands.reference.yaw);
 
     /* CDS/ENU → NED: North=E_y, East=E_x, Down=-E_z; heading measured from
        North instead of East (inverse of the inbound conversion) */
@@ -843,9 +851,13 @@ void SitlPlant::_sendHold(Link& link)
 
 void SitlPlant::_sendClimbSetpoint(Link& link)
 {
-    /* climb in place to the staging altitude: current NED horizontal position,
-       target altitude, zero velocity — a GUIDED position target ArduCopter
-       honours in flight (unlike NAV_TAKEOFF) */
+    /* climb in place to the staging altitude and yaw to the staging heading:
+       current NED horizontal position, target altitude, zero velocity, target
+       heading — a GUIDED position target ArduCopter honours in flight (unlike
+       NAV_TAKEOFF). CDS/ENU heading → NED heading (measured from North) */
+    const float nedYaw =
+        static_cast<float>(wrapPi(PI / 2.0 - m_stageYaw.load()));
+
     mavlink_message_t message;
     mavlink_msg_set_position_target_local_ned_pack(
         OUR_SYSTEM_ID, OUR_COMPONENT_ID, &message, 0,
@@ -856,7 +868,7 @@ void SitlPlant::_sendClimbSetpoint(Link& link)
         static_cast<float>(-m_stageAltitude.load()) /* down = -altitude */,
         0, 0, 0 /* velocity: zero */,
         0, 0, 0 /* acceleration: ignored */,
-        static_cast<float>(link.lastNedYaw), 0 /* yaw rate: ignored */);
+        nedYaw, 0 /* yaw rate: ignored */);
 
     uint8_t buffer[MAVLINK_MAX_PACKET_LEN];
     const uint16_t length = mavlink_msg_to_send_buffer(buffer, &message);
@@ -945,21 +957,29 @@ void SitlPlant::_runStaging(Link& link)
             break;
 
         case stagingState_t::CLIMB:
-            /* When we took off from the ground NAV_TAKEOFF drives the climb;
-               when already airborne (takeoff skipped, e.g. re-staging after a
-               maneuver) NAV_TAKEOFF is invalid, so we command the climb with a
-               GUIDED position setpoint at the current XY. Either way STAGED is
-               reached at the target altitude in a stable hover. assembled.z is
+            /* Once airborne, drive a GUIDED setpoint that both holds the climb
+               to the staging altitude and yaws the vehicle to the mission
+               heading, so STAGED already faces the trajectory start (no yaw
+               jump at Start). On the ground path NAV_TAKEOFF performs the
+               liftoff (a position setpoint alone will not lift a landed
+               vehicle); we only take over with setpoints once off the ground.
+               When already airborne (takeoff skipped, e.g. re-staging after a
+               maneuver) the setpoint drives the whole climb. assembled.z is
                the CDS "up" height above the takeoff origin */
-            if (link.stageSkipTakeoff &&
+            if ((link.stageSkipTakeoff ||
+                 link.assembled.z > STAGE_MIN_AIRBORNE_M) &&
                 tNow - link.lastSetpointTx_seconds >=
                     m_params.setpointPeriod_seconds)
             {
                 _sendClimbSetpoint(link);
                 link.lastSetpointTx_seconds = tNow;
             }
+            /* STAGED: at the target altitude, on the target heading, in a
+               stable hover held long enough */
             if (std::abs(link.assembled.z - m_stageAltitude.load()) <
                     STAGE_ALT_TOL_M &&
+                std::abs(wrapPi(link.assembled.yaw - m_stageYaw.load())) <
+                    STAGE_YAW_TOL_RAD &&
                 link.stableSince_seconds >= 0.0 &&
                 (tNow - link.stableSince_seconds >=
                  m_params.stabilityHoldTime_seconds))

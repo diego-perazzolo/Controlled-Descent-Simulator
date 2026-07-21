@@ -293,9 +293,18 @@ bool SystemManager::BeginStaging(sm_coord_t safetyAltitude)
         return true;
     }
 
+    /* face the trajectory's initial heading when staged, so the mission
+       starts already aligned (no yaw jump at Start) */
+    Reference_t ref0;
+    if (m_pTrajectoryManager->GetReference(0, ref0))
+    {
+        // Empty trajectory, error
+        return true;
+    }
+
     /* stage above the trajectory's vertical travel by the safety margin: an
        additive margin stays valid even for a flat trajectory (range 0) */
-    return m_pPlant->BeginStaging(altitudeRange + safetyAltitude);
+    return m_pPlant->BeginStaging(altitudeRange + safetyAltitude, ref0.yaw);
 }
 
 bool SystemManager::StopStaging(void)

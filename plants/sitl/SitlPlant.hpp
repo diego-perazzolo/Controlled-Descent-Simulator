@@ -144,11 +144,12 @@ namespace plants
         virtual bool Stop(void) override;
 
         /* Auto-staging control: bring the vehicle up to a stable hover at
-           altitude_m (meters above the takeoff point) via GUIDED → arm →
-           takeoff → climb. Requires a connected link. StopStaging aborts the
-           sequence (or leaves a staged vehicle) and holds in place, armed.
-           Both are idempotent-ish. Return true on error */
-        bool BeginStaging(double altitude_m) override;
+           altitude_m (meters above the takeoff point) and facing headingYaw
+           (CDS/ENU radians, the trajectory's initial heading) via GUIDED →
+           arm → takeoff → climb → yaw. Requires a connected link. StopStaging
+           aborts the sequence (or leaves a staged vehicle) and holds in place,
+           armed. Both are idempotent-ish. Return true on error */
+        bool BeginStaging(double altitude_m, double headingYaw) override;
         bool StopStaging(void) override;
 
         /* Current link session / staging state (any thread) */
@@ -198,8 +199,9 @@ namespace plants
         /* send the COMMAND_LONG that drives the given staging state */
         void _sendStageCommand(Link& link, stagingState_t state);
 
-        /* command the vehicle to climb in place to the staging altitude (for
-           re-staging while already airborne, where takeoff is invalid) */
+        /* command the vehicle to climb in place to the staging altitude and
+           yaw to the staging heading (used once airborne, to reach the target
+           altitude and the mission heading before STAGED) */
         void _sendClimbSetpoint(Link& link);
 
         /* send one COMMAND_LONG to the flight controller */
@@ -216,6 +218,7 @@ namespace plants
         std::atomic<stagingState_t> m_stagingState;
         std::atomic<bool> m_stageRequested;
         std::atomic<double> m_stageAltitude;
+        std::atomic<double> m_stageYaw;     // CDS/ENU heading to face when staged
     };
 
 } // namespace plants

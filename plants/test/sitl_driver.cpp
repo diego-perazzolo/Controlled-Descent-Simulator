@@ -298,6 +298,9 @@ class FakeSitl
             m_spYaw = sp.yaw; m_spMask = sp.type_mask;
             m_spFrame = sp.coordinate_frame;
             m_haveSetpoint = true;
+            /* a GUIDED vehicle always yaws to the commanded heading: this lets
+               the staging yaw maneuver reach the target heading (STAGED gate) */
+            m_yawNed = sp.yaw;
             /* optionally follow the commanded position (used to exercise the
                airborne re-staging climb) */
             if (m_trackSetpoints) { m_nedX = sp.x; m_nedY = sp.y; m_nedZ = sp.z; }
@@ -402,17 +405,18 @@ int main(void)
     }, 2.0));
 
     /* auto-staging from the ground: BeginStaging drives GUIDED → arm →
-       takeoff → climb; the fake acks each command and, on takeoff, climbs to
-       the requested altitude. Start is refused until STAGED, allowed after */
+       takeoff → climb → yaw to the mission heading (0.1 rad ENU); the fake
+       acks each command, climbs to the requested altitude on takeoff and yaws
+       to the commanded heading. Start is refused until STAGED, allowed after */
     CHECK(plant.IsReadyToStart() == false);
     CHECK(plant.Start() == true);
-    CHECK(plant.BeginStaging(40.0) == false);
+    CHECK(plant.BeginStaging(40.0, 0.1) == false);
     CHECK(waitFor([&] {
         return plant.GetStagingState() == SitlPlant::stagingState_t::STAGED;
     }, 5.0));
     CHECK(plant.IsReadyToStart());
 
-    /* the vehicle now hovers at ENU (0,0,40) — NED (0,0,-40) */
+    /* the vehicle now hovers at ENU (0,0,40) — NED (0,0,-40) — facing 0.1 */
 
     /* ref0 present before Start: first fetch captures the mission offset */
     plant.PushCommands(command(1, 2, 3, 0, 0, 0, 0.1));
@@ -428,10 +432,11 @@ int main(void)
     }, 2.0));
 
     /* stream refB: the setpoint on the wire is the NED conversion of
-       (refB + missionOffset). raw ENU pose = (0,0,40) yaw pi/2; ref0 =
-       (1,2,3) yaw 0.1 → offset = (-1,-2,37), yawoff = pi/2 - 0.1.
-       refB = (11,12,13) vel (1,2,3) yaw 0.1 → target ENU (10,10,50) yaw pi/2
-       → NED North 10, East 10, Down -50, vN 2 vE 1 vD -3, yaw_ned 0 */
+       (refB position + missionOffset), with the reference heading commanded
+       absolutely (no yaw offset — the vehicle was staged to it). raw ENU pose
+       = (0,0,40) facing 0.1; ref0 = (1,2,3) → position offset = (-1,-2,37).
+       refB = (11,12,13) vel (1,2,3) yaw 0.1 → target ENU (10,10,50) yaw 0.1
+       → NED North 10, East 10, Down -50, vN 2 vE 1 vD -3, yaw_ned pi/2 - 0.1 */
     const auto deadline = std::chrono::steady_clock::now() +
                           std::chrono::seconds(1);
     while (std::chrono::steady_clock::now() < deadline)
@@ -450,7 +455,7 @@ int main(void)
     CHECK(std::abs(vx - 2) < 1e-3);
     CHECK(std::abs(vy - 1) < 1e-3);
     CHECK(std::abs(vz + 3) < 1e-3);
-    CHECK(std::abs(yaw) < 1e-3);
+    CHECK(std::abs(yaw - (PI / 2.0 - 0.1)) < 1e-3);
     CHECK(mask == (POSITION_TARGET_TYPEMASK_AX_IGNORE |
                    POSITION_TARGET_TYPEMASK_AY_IGNORE |
                    POSITION_TARGET_TYPEMASK_AZ_IGNORE |
@@ -480,7 +485,7 @@ int main(void)
        position setpoint. The fake now follows the setpoints, so it climbs to
        50 m and reaches STAGED — the recovery/repeat path after a maneuver */
     fake.SetTrackSetpoints(true);
-    CHECK(plant.BeginStaging(50.0) == false);
+    CHECK(plant.BeginStaging(50.0, 0.1) == false);
     /* STAGED requires |assembled.z - 50| < tol, so reaching it proves the
        vehicle actually climbed to the new altitude */
     CHECK(waitFor([&] {

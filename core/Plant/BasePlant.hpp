@@ -105,10 +105,12 @@ namespace CDS
 
         /* Auto-staging (implementation-specific), driven by the SystemManager
            on user request: bring the vehicle up to a stable hover at
-           altitude_m, ready for a mission. Default: no-op — a plant that needs
-           no staging (loopback) is ready as soon as its mission Start allows.
-           Returns true on error */
-        virtual bool BeginStaging(double altitude_m) { (void)altitude_m; return false; }
+           altitude_m AND facing headingYaw (the trajectory's initial heading),
+           ready for a mission — so the mission can start with no yaw jump.
+           Default: no-op — a plant that needs no staging (loopback) is ready
+           as soon as its mission Start allows. Returns true on error */
+        virtual bool BeginStaging(double altitude_m, double headingYaw)
+        { (void)altitude_m; (void)headingYaw; return false; }
         virtual bool StopStaging(void) { return false; }
 
         /* Mission toggles, driven by Run()/Stop(): enable / disable the
