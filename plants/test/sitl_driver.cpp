@@ -149,6 +149,10 @@ class FakeSitl
     /* when set, the fake follows commanded position setpoints (teleport) */
     void SetTrackSetpoints(bool on) { m_trackSetpoints = on; }
 
+    /* when set, NAV_TAKEOFF is refused (as ArduCopter does while already in
+       flight), so the plant must fall back to the airborne climb path */
+    void SetRejectTakeoff(bool on) { m_rejectTakeoff = on; }
+
     bool StreamsRequested(void)
     {
         std::lock_guard<std::mutex> lock(m_mutex);
@@ -270,18 +274,28 @@ class FakeSitl
                      command.command == MAV_CMD_NAV_TAKEOFF)
             {
                 /* accept every staging command; on takeoff, climb to the
-                   requested altitude (teleport up, still) */
+                   requested altitude (teleport up, still) — unless takeoff is
+                   set to be refused, to emulate ArduCopter rejecting it while
+                   already flying */
+                uint8_t result = MAV_RESULT_ACCEPTED;
                 if (command.command == MAV_CMD_NAV_TAKEOFF)
                 {
-                    std::lock_guard<std::mutex> lock(m_mutex);
-                    m_nedZ = -static_cast<double>(command.param7);
+                    if (m_rejectTakeoff)
+                    {
+                        result = MAV_RESULT_FAILED;
+                    }
+                    else
+                    {
+                        std::lock_guard<std::mutex> lock(m_mutex);
+                        m_nedZ = -static_cast<double>(command.param7);
+                    }
                 }
                 mavlink_message_t ack;
                 /* ack is addressed back to the plant (sysid 254); the plant
                    does not check the target, so the exact value is not load-
                    bearing */
                 mavlink_msg_command_ack_pack(1, MAV_COMP_ID_AUTOPILOT1, &ack,
-                                             command.command, MAV_RESULT_ACCEPTED,
+                                             command.command, result,
                                              0, 0, 254, 0);
                 uint8_t out[MAVLINK_MAX_PACKET_LEN];
                 m_socket.Send(out, mavlink_msg_to_send_buffer(out, &ack),
@@ -315,6 +329,7 @@ class FakeSitl
     std::thread m_thread;
     std::atomic<bool> m_run;
     std::atomic<bool> m_trackSetpoints{false};
+    std::atomic<bool> m_rejectTakeoff{false};
     std::mutex m_mutex;
     std::chrono::steady_clock::time_point m_epoch;
 
@@ -500,6 +515,29 @@ int main(void)
     }, 2.0));
     CHECK(plant.IsReadyToStart() == false);
     fake.SetTrackSetpoints(false);
+
+    /* guard: a vehicle airborne BELOW the airborne threshold is misread as
+       grounded, so staging attempts arm + takeoff; ArduCopter refuses takeoff
+       in flight. The plant must NOT retry forever — on the rejected NAV_TAKEOFF
+       it falls back to the airborne climb path and still reaches STAGED. */
+    fake.SetPose(0, 0, -0.2, 0);   /* airborne at 0.2 m, below STAGE_MIN_AIRBORNE_M */
+    CHECK(waitFor([&] {
+        return plant.PullMeasurements(meas) == false &&
+               std::abs(meas.state.z - 0.2) < 0.1;
+    }, 2.0));
+    fake.SetRejectTakeoff(true);
+    fake.SetTrackSetpoints(true);
+    CHECK(plant.BeginStaging(30.0, 0.0) == false);
+    CHECK(waitFor([&] {
+        return plant.GetStagingState() == SitlPlant::stagingState_t::STAGED;
+    }, 5.0));
+    CHECK(plant.IsReadyToStart());
+    fake.SetRejectTakeoff(false);
+    fake.SetTrackSetpoints(false);
+    CHECK(plant.StopStaging() == false);
+    CHECK(waitFor([&] {
+        return plant.GetStagingState() == SitlPlant::stagingState_t::IDLE;
+    }, 2.0));
 
     /* silence watchdog: once the fake goes quiet the session must fall back
        to DISCONNECTED within the link timeout */

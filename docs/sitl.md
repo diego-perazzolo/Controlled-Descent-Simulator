@@ -26,17 +26,17 @@ and only for monitoring; give it its **own** UDP output so it does not share a
 port or a system id with the plant.
 
 ```
- ┌──────────────────── Docker container ────────────────────┐
- │   ArduCopter SITL   (sim_vehicle.py + MAVProxy console)   │
- └───────────────┬───────────────────────────┬───────────────┘
-        UDP out  │                            │  UDP out
-   host.docker.internal:14550     host.docker.internal:14551
-                 │                            │
-        ┌────────▼─────────┐        ┌─────────▼─────────┐
-        │  cds_server sitl │        │  QGroundControl   │
-        │  bind :14550     │        │   (optional)      │
-        │  sysid 254       │        │   sysid 255       │
-        └──────────────────┘        └───────────────────┘
+┌────────────────────── Docker container ──────────────────────┐
+│ ArduCopter SITL   (sim_vehicle.py + MAVProxy console)        │
+└─────────────┬──────────────────────────────────┬─────────────┘
+           UDP out                            UDP out
+ host.docker.internal:14550         host.docker.internal:14551
+              │                                  │
+    ┌─────────▼────────┐               ┌─────────▼────────┐
+    │ cds_server sitl  │               │ QGroundControl   │
+    │ bind :14550      │               │ (optional)       │
+    │ sysid 254        │               │ sysid 255        │
+    └──────────────────┘               └──────────────────┘
 ```
 
 The plant identifies on the wire as **sysid 254** (component *mission
@@ -53,24 +53,14 @@ ports (one for the plant, one for QGC):
 ```bash
 sim_vehicle.py -v ArduCopter -f quad -I0 \
     --out=udp:host.docker.internal:14550 \
-    --out=udp:host.docker.internal:14551
+    --out=udp:host.docker.internal:14551 \
+    --mavproxy-args="--streamrate 50"
 ```
 
 `-I0` selects instance 0; the two `--out` give the plant and QGC independent
-links.
+links, `--mavproxy-args1` allows for executing commands in the mavlink console, in particular setting the rates of all sensors. to 50 Hz
 
-**2. Raise the telemetry stream rate** in the MAVProxy console. The plant needs
-`LOCAL_POSITION_NED` and `ATTITUDE` flowing to build the ghost:
-
-```
-set streamrate 50
-```
-
-The plant also requests those two messages explicitly via
-`SET_MESSAGE_INTERVAL` (re-requested until they arrive), but bumping the global
-rate keeps the ghost smooth.
-
-**3. Start the server with the `sitl` plant** on the host:
+**2. Start the server with the `sitl` plant** on the host:
 
 ```bash
 ./build-server/cds_server 9002 sitl
@@ -79,10 +69,10 @@ rate keeps the ghost smooth.
 It binds `0.0.0.0:14550` and waits for telemetry; the link reaches **READY** on
 the autopilot heartbeat.
 
-**4. (Optional) attach QGroundControl** on UDP `14551` to watch — or manually
+**3. (Optional) attach QGroundControl** on UDP `14551` to watch — or manually
 fly — the vehicle alongside the plant.
 
-**5. Serve the frontend** with the COOP/COEP headers (required by the WASM
+**4. Serve the frontend** with the COOP/COEP headers (required by the WASM
 proxy — see [`build.md`](build.md#ws-served-native-core-server--thin-client))
 and open it:
 
@@ -97,7 +87,7 @@ Open `http://localhost:8080/frontend/` and select the **QuadRotor** model.
 Once telemetry flows, the plant ghost appears in the 3D view and the **Plant
 bar** shows up at the top of the frontend. From there:
 
-1. **Set the altitude margin** (field *Altitude margin*, default `5` m). The
+1. **Set the altitude margin** (field *Altitude margin*, default `2` m). The
    staging altitude is the trajectory's vertical range (`max − min`) **plus**
    this margin — additive so that a flat trajectory still gets a valid climb.
 2. **Begin staging.** The plant drives the vehicle `GUIDED → arm → takeoff →

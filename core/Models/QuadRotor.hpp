@@ -63,7 +63,7 @@ namespace CDS
         private:
         void*              m_modelPtr;
         StateVec           m_state;
-        TrajectoryManager* m_trajectoryManagerPtr = nullptr;
+        TrajectoryManager* m_trajectoryManagerPtr;
         TrackingErr        m_trackingErr;
         UserForces         m_userForces;
         double             m_time;

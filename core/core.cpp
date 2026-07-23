@@ -54,7 +54,7 @@ struct
     ATTENTION: this function is intended to be called at pace,
         from a proper Real-Time thread. It is NOT suited to be
         called from a frontend via ext_... layer. This function
-        handles physics integration, plant communication, near-safety
+        handles physics integration, plant interactions, near-safety
         functionalities; it should be treated accordingly */
 bool g_core_tick(core_coord_t dt_seconds)
 {
@@ -93,8 +93,8 @@ bool core_init()
 
 bool core_rocketFfLqr01_init(const core_rocketParams_t rPar)
 {
-    // Configure the model while it is still local: the SystemManager only
-    // ever receives a fully-initialized model
+    // Configure the model. The SystemManager always 
+    // receives a fully-initialized model
     auto model = std::make_unique<Rocket>();
     if (model->SetModelParams(rPar))
     {
@@ -107,8 +107,8 @@ bool core_rocketFfLqr01_init(const core_rocketParams_t rPar)
 
 bool core_quadRotorFfLqr01_init(const core_quadRotorParams_t rPar)
 {
-    // Configure the model while it is still local: the SystemManager only
-    // ever receives a fully-initialized model
+    // Configure the model. The SystemManager always 
+    // receives a fully-initialized model
     auto model = std::make_unique<QuadRotor>();
     if (model->SetModelParams(rPar))
     {
@@ -187,26 +187,26 @@ bool core_getPlantSnapshot(core_plantSnapshotData_t &par)
     par.isAttached = false;
 
     return _ctx.SM.ExecuteOnPlant([&par](BasePlant &plant)
-                                  {
-                                    /* the lambda only runs with a plant attached */
-                                    par.isAttached = true;
-                                    par.isReadyToStart = plant.IsReadyToStart();
+        {
+        /* the lambda only runs with a plant attached */
+        par.isAttached = true;
+        par.isReadyToStart = plant.IsReadyToStart();
 
-                                    /* one Pull gets time, sequence and state as
-                                       a single coherent sample */
-                                    BasePlant::plantMeasurements_t measurements = {};
-                                    if (plant.PullMeasurements(measurements))
-                                    {
-                                        // No sample published yet, error
-                                        return true;
-                                    }
+        /* one Pull gets time, sequence and state as
+            a single coherent sample */
+        BasePlant::plantMeasurements_t measurements = {};
+        if (plant.PullMeasurements(measurements))
+        {
+            // No sample published yet, error
+            return true;
+        }
 
-                                    par.time_seconds = measurements.plantTime_seconds;
-                                    par.sequence = measurements.sequence;
-                                    par.state = measurements.state;
+        par.time_seconds = measurements.plantTime_seconds;
+        par.sequence = measurements.sequence;
+        par.state = measurements.state;
 
-                                    return false;
-                                });
+        return false;
+    });
 }
 
 bool core_run(void)

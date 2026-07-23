@@ -68,8 +68,8 @@ cmake --build build-server
 ./build-server/cds_server          # listens on ws://0.0.0.0:9002 (port as argv[1])
 ```
 
-The server attaches a plant, selected by an optional second argument —
-`loopback` (default) or `sitl`:
+The websocket server attaches a plant, selected by an optional second argument —
+`loopback` (default) or `sitl`, whilst the first argument is the communication port:
 
 ```bash
 ./build-server/cds_server 9002 loopback   # default: the echo test double
@@ -238,7 +238,6 @@ The repository includes a GitHub Actions workflow ([`.github/workflows/deploy.ym
 │
 ├── docs/                                       # Documentation and media
 │   ├── build.md                                # This file
-│   ├── sitl.md                                 # Running against ArduPilot SITL (Docker walkthrough)
 │   └── api.md                                  # Core API reference
 │
 ├── .github/

@@ -26,8 +26,6 @@
 // File        : ext_comm.cpp
 // Description : Direct implementation of the external communication API:
 //               converts ext structs and calls straight into the core.
-//               Linked by apps/wasm-only (in-browser core) and by
-//               apps/ws-served/server (native core behind cds_server).
 // Author      : Diego Perazzolo
 // Created     : 2026
 // =============================================================================
@@ -36,7 +34,7 @@
 #include "core.hpp"
 
 /* Immediately return if ret == true */
-#define ASSERT_FALSE(ret) if(ret) return ret 
+#define RETURN_IF_TRUE(ret) if(ret) return ret 
 
 /* Static functions */
 static core_rocketParams_t _convertExtToCore_rocketParams(ext_rocketParams rPar, ext_rocketActuatorLimits aPar)
@@ -168,15 +166,15 @@ bool ext_initRocket_FFLQR01(ext_initRocketParams params)
 
     // Core initialization
     bool ret = core_init();
-    ASSERT_FALSE(ret);
+    RETURN_IF_TRUE(ret);
 
     // Rocket initialization
     ret = core_rocketFfLqr01_init(rPar);
-    ASSERT_FALSE(ret);
+    RETURN_IF_TRUE(ret);
 
     // Trajectory initialization
     ret = core_trajectoryInit();
-    ASSERT_FALSE(ret);
+    RETURN_IF_TRUE(ret);
 
     return ret;
 }
@@ -191,15 +189,15 @@ bool ext_initQuadRotor_FFLQR01(ext_initQuadRotorParams params)
 
     // Core initialization
     bool ret = core_init();
-    ASSERT_FALSE(ret);
+    RETURN_IF_TRUE(ret);
 
     // QuadRotor initialization
     ret = core_quadRotorFfLqr01_init(rPar);
-    ASSERT_FALSE(ret);
+    RETURN_IF_TRUE(ret);
 
     // Trajectory initialization
     ret = core_trajectoryInit();
-    ASSERT_FALSE(ret);
+    RETURN_IF_TRUE(ret);
 
     return ret;
 }
@@ -210,12 +208,7 @@ bool ext_trajectory_append_poly4(ext_trajectoryPoly4Params_t params)
 
     core_trajectoryPoly4Params_t core_params = _convertExtToCore_trajectoryPoly4Params(params);
 
-    if(core_trajectoryAppendPoly4(core_params))
-    {
-        // Err
-
-        ret = true;
-    }
+    ret = core_trajectoryAppendPoly4(core_params);
     
     return ret;
 }
@@ -226,12 +219,7 @@ bool ext_trajectory_append_point(ext_trajectoryPointParams_t params)
 
     core_trajectoryPointParams_t core_params = _convertExtToCore_trajectoryPointParams(params);
 
-    if(core_trajectoryAppendPoint(core_params))
-    {
-        // Err
-        
-        ret = true;
-    }
+    ret = core_trajectoryAppendPoint(core_params);
     
     return ret;
 }
@@ -240,13 +228,8 @@ bool ext_trajectory_remove_last_item(void)
 {
     bool ret = false;
 
-    if(core_trajectoryRemoveLastItem())
-    {
-        // Err
-        
-        ret = true;
-    }
-    
+    ret = core_trajectoryRemoveLastItem();
+
     return ret;
 }
 

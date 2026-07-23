@@ -163,6 +163,8 @@ Rocket::Rocket()
     m_trackingErr.fill(0);
     m_userForces.fill(0);
 
+    m_trajectoryManagerPtr = nullptr;
+
     m_time = 0;
 
 }

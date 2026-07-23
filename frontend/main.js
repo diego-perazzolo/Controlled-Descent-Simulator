@@ -17,8 +17,8 @@ const MODEL_QUADROTOR = 'quadrotor';
 // Hardcoded fallback for the very first Poly4 when the trajectory list is
 // empty and the user has no rocket state to seed from. Matches the reference
 // descent in the design notebook (section 6).
-const SEED_INITIAL_POS = { x: -50, y:  50, z: 150 };
-const SEED_INITIAL_VEL = { x:   0, y:   5, z: -50 };
+const SEED_INITIAL_POS = { x: -10, y:  20, z: 80 };
+const SEED_INITIAL_VEL = { x:   0, y:   5, z: -30 };
 // Yaw seeds for the initial Poly4 (rad / rad·s⁻¹). Only meaningful once a
 // model that tracks yaw is selected, but always sent to the backend.
 const SEED_INITIAL_YAW      = 0;
@@ -32,9 +32,9 @@ const DEFAULT_TRAJECTORY = [
     {
         kind: 'poly4',
         params: {
-            initialPos:     { x: -50, y: 50, z:  80 },
+            initialPos:     { x: -10, y: 20, z:  80 },
             initialYaw:     0,
-            initialVel:     { x:   0, y:  5, z: -50 },
+            initialVel:     { x:   0, y:  5, z: -30 },
             initialYawRate: 0,
             finalPos:       { x:   0, y:  0, z:   0 },
             finalYaw:       0,

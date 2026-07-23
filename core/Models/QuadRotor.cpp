@@ -88,8 +88,7 @@ namespace CDS {
 // _normalize_quaternion()
 // RK4 does not preserve the unit-norm constraint of the attitude quaternion
 // (q_dot = 1/2 Omega(w) q keeps ||q|| constant only in continuous time), so the
-// norm drifts a little each step. Renormalize after every integration step —
-// this is the quaternion analogue of "nothing to do" for the rocket's Euler model.
+// norm drifts a little each step. Renormalize after every integration step
 // -----------------------------------------------------------------------------
 static void _normalize_quaternion(QuadRotor::StateVec& x)
 {
@@ -158,7 +157,7 @@ static void _init_dynamicsState(Reference_t& ref, QuadRotor::StateVec& state)
     Dynamics::QUADROTOR_FF_LQR_01::SetState(state, SN::Y, ref.pos[1]);
     Dynamics::QUADROTOR_FF_LQR_01::SetState(state, SN::Z, ref.pos[2]);
 
-    // Initial attitude: level, but heading = ref.yaw  ->  pure yaw quaternion
+    // Initial attitude: all zero angles except heading: ref.yaw  ->  pure yaw quaternion
     //   q = [cos(psi/2), 0, 0, sin(psi/2)]  (rotation about world Z)
     const double half_psi = 0.5 * ref.yaw;
     Dynamics::QUADROTOR_FF_LQR_01::SetState(state, SN::Qw, std::cos(half_psi));
@@ -190,6 +189,8 @@ QuadRotor::QuadRotor()
     m_state[IDX_QW] = 1.0;
     m_trackingErr.fill(0);
     m_userForces.fill(0);
+
+    m_trajectoryManagerPtr = nullptr;
 
     m_time = 0;
 }
@@ -252,7 +253,8 @@ bool QuadRotor::PerformIntegration(const core_stepParams_t& params)
 {
     // Getting reference setpoints from Trajectory
     Reference_t ref;
-    if (m_trajectoryManagerPtr == nullptr || m_trajectoryManagerPtr->GetReference(m_time, ref))
+    if (m_trajectoryManagerPtr == nullptr || 
+        m_trajectoryManagerPtr->GetReference(m_time, ref))
     {
         // ERR
         return true;
@@ -262,14 +264,13 @@ bool QuadRotor::PerformIntegration(const core_stepParams_t& params)
     m_trackingErr[0] = ref.pos[0] - m_state[IDX_X];
     m_trackingErr[1] = ref.pos[1] - m_state[IDX_Y];
     m_trackingErr[2] = ref.pos[2] - m_state[IDX_Z];
-    {
-        const double qw = m_state[IDX_QW], qx = m_state[IDX_QX];
-        const double qy = m_state[IDX_QY], qz = m_state[IDX_QZ];
-        const double yaw = std::atan2(2.0*(qw*qz + qx*qy), 1.0 - 2.0*(qy*qy + qz*qz));
-        double eyaw = ref.yaw - yaw;                       // wrap to [-pi, pi]
-        eyaw = std::atan2(std::sin(eyaw), std::cos(eyaw));
-        m_trackingErr[3] = eyaw;
-    }
+
+    const double qw = m_state[IDX_QW], qx = m_state[IDX_QX];
+    const double qy = m_state[IDX_QY], qz = m_state[IDX_QZ];
+    const double yaw = std::atan2(2.0*(qw*qz + qx*qy), 1.0 - 2.0*(qy*qy + qz*qz));
+    double eyaw = ref.yaw - yaw;                       // wrap to [-pi, pi]
+    eyaw = std::atan2(std::sin(eyaw), std::cos(eyaw));
+    m_trackingErr[3] = eyaw;
 
     // User forces
     m_userForces[0] = params.user_fX;

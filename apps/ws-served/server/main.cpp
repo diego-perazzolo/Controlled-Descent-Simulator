@@ -57,9 +57,7 @@ extern bool g_core_tick(core_coord_t dt_seconds);                  // global fun
 extern bool g_core_getTickPeriod(core_coord_t &tickPeriod_second); // global function from core.cpp
 extern bool g_core_attachPlant(std::unique_ptr<CDS::BasePlant> plant); // global function from core.cpp
 
-/* Build the plant selected on the command line (default: loopback). The
-   composition lives here for now; a future ext command will let the frontend
-   pick and configure the plant. Returns nullptr on unknown kind or on a
+/* Build the plant (default: loopback). Returns nullptr on unknown kind or on a
    parameter error. */
 static std::unique_ptr<CDS::BasePlant> _makePlant(const char *kind)
 {
@@ -163,7 +161,7 @@ static void _tick_generator(void)
 
 int main(int argc, char **argv)
 {
-    /* line-buffered logs even when stdout is redirected to a file */
+    /* line-buffered (flush on new line) logs even when stdout is redirected to a file */
     setvbuf(stdout, nullptr, _IOLBF, 0);
 
     uint16_t port = ws_proto::WS_DEFAULT_PORT;

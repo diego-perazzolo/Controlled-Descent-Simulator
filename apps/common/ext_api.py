@@ -5,7 +5,7 @@
 # Description : Declarative description of the external communication API —
 #               the single source of truth for the ext boundary. gen_ext.py
 #               reads this file and generates the struct definitions, the API
-#               contract, the embind bindings and the whole ws-served wire
+#               contract, the embind bindings and the whole web socket wire
 #               layer (protocol, client marshalling, server dispatch).
 #
 #               To add a command: add its structs here (if new), add a Cmd

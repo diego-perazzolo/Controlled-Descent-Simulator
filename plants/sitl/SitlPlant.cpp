@@ -48,10 +48,10 @@ using FpSeconds = std::chrono::duration<double>;
 
 namespace
 {
-    /* our identity on the wire: a ground-control-station peer. System id is
-       254, NOT the 255 default that ground stations (QGroundControl, MAVProxy)
-       use — sharing 255/190 with a co-connected GCS makes the flight
-       controller see one conflated node and arbitrate commands erratically. */
+    /* our identity on the wire: a ground-control-station peer. System id 254,
+       not the 255 that ground stations (QGroundControl, MAVProxy) default to:
+       sharing 255/190 with a co-connected GCS makes the flight controller
+       conflate the two nodes and arbitrate commands erratically. */
     constexpr uint8_t OUR_SYSTEM_ID = 254;
     constexpr uint8_t OUR_COMPONENT_ID = MAV_COMP_ID_MISSIONPLANNER;
 
@@ -77,7 +77,7 @@ namespace
     /* above this height (m) the vehicle is already airborne: staging then
        skips arm + takeoff (which ArduCopter rejects in flight) and only
        settles to a stable hover */
-    constexpr double STAGE_MIN_AIRBORNE_M = 1.0;
+    constexpr double STAGE_MIN_AIRBORNE_M = 0.3;
 
     /* setpoints command position + velocity + yaw; acceleration and yaw rate
        are ignored (yaw rate is left out for ArduCopter GUIDED compatibility,
@@ -573,15 +573,28 @@ void SitlPlant::_processInbound(Link& link)
                     mavlink_command_ack_t ack;
                     mavlink_msg_command_ack_decode(&message, &ack);
 
+                    const stagingState_t st = m_stagingState.load();
+
                     if (ack.result != MAV_RESULT_ACCEPTED)
                     {
-                        // rejected: _runStaging will resend on its retry timer
+                        /* A rejected NAV_TAKEOFF means the vehicle is already
+                           flying (we only reach TAKEOFF once armed), so the
+                           altitude-based airborne check was fooled — e.g. by a
+                           low hover below STAGE_MIN_AIRBORNE_M. Retrying takeoff
+                           is futile; fall back to the airborne path and drive
+                           the climb with GUIDED setpoints. Any other rejection
+                           is transient — _runStaging resends on its retry timer. */
+                        if (st == stagingState_t::TAKEOFF &&
+                            ack.command == MAV_CMD_NAV_TAKEOFF)
+                        {
+                            link.stageSkipTakeoff = true;
+                            m_stagingState = stagingState_t::CLIMB;
+                        }
                         break;
                     }
 
                     /* advance the staging sequence on the accepted command and
                        fire the next one immediately */
-                    const stagingState_t st = m_stagingState.load();
                     if (st == stagingState_t::SET_MODE &&
                         ack.command == MAV_CMD_DO_SET_MODE)
                     {

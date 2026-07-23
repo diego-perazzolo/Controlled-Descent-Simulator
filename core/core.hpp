@@ -23,8 +23,8 @@
 // THE SOFTWARE.
 //
 // =============================================================================
-// File        : <filename.cpp>
-// Description : <brief description of this file>
+// File        : core.hpp
+// Description : header file of core functionalities
 // Author      : Diego Perazzolo
 // Created     : 2026
 // =============================================================================

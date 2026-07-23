@@ -23,8 +23,8 @@
 // THE SOFTWARE.
 //
 // =============================================================================
-// File        : <filename.cpp>
-// Description : <brief description of this file>
+// File        : BaseModel.hpp
+// Description : Header file for BaseModel, implements a pure virtual class
 // Author      : Diego Perazzolo
 // Created     : 2026
 // =============================================================================

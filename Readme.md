@@ -240,9 +240,12 @@ client), app switching, notebook setup and deployment are documented in
 
 ## Author
 
-Diego Perazzolo
+Diego Perazzolo — system design, physics/control modeling, architecture and
+all engineering decisions.
 
-Co-Authored-By: Claude AI (mainly frontend, docs and VS Code Setup)
+Built with Claude (Claude Code) as an AI pair-programmer used across the whole
+stack — C++ core, SITL plant, frontend, docs and code review — under the
+author's direction and review.
 
 ---
 

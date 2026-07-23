@@ -24,7 +24,7 @@
 //
 // =============================================================================
 // File        : main.cpp
-// Description : entry point of the emscripten application. Sets the timer used
+// Description : entry point of the wasm-only application. Sets the timer used
 //                  for simulating ticks used for physics or communication
 //                  (emulation of a Real-time timer)
 // Author      : Diego Perazzolo
@@ -74,7 +74,7 @@ static void _tick_generator(void)
     {
         _lastTime = t1;
 
-        /* A stall (e.g. the tab left in background) must not feed a huge dt
+        /* A stall (e.g. the browser tab left in background) must not feed a huge dt
            into the integrator */
         core_coord_t dt_seconds = static_cast<core_coord_t>(elapsed_seconds);
         const core_coord_t dtMax_seconds = 3 * tickPeriodSeconds;
