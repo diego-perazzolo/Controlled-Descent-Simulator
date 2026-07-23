@@ -51,7 +51,7 @@ namespace CDS
         virtual ~Trajectory() = default;
 
         /* Gets reference trajectory state at a time instant. Returns true on error */
-        virtual bool GetReference(const core_coord_t&  time, Reference_t& ref) = 0;
+        virtual bool GetReference(const core_coord_t&  time, Reference_t& ref) const = 0;
 
         /* Set dictionary of trajectory parameters and their value. Returns true on error */
         virtual bool SetParameters(const std::map<std::string, core_coord_t>& params) = 0;
@@ -69,10 +69,10 @@ namespace CDS
         /* Trajectory methods */
 
         /* Get trajectory start time */
-        void GetStartTime(core_coord_t& s);
+        void GetStartTime(core_coord_t& s) const;
 
          /* Get trajectory end time */
-        void GetEndTime(core_coord_t& e);
+        void GetEndTime(core_coord_t& e) const;
 
         protected:
 

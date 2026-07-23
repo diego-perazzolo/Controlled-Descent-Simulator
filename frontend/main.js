@@ -6,19 +6,19 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 // Config
 // =============================================================================
 const DEFAULT_TIMESTEP_S = 0.01;
-const TIMESTEP_MIN_S     = 0.0001;
+const TIMESTEP_MIN_S     = 0.0000001;
 const TIMESTEP_MAX_S     = 0.5;
 
 // Available dynamic models. The backend exposes a separate init entry point
-// per model; the trajectory / step API is shared between them.
+// per model; the trajectory / run / snapshot API is shared between them.
 const MODEL_ROCKET    = 'rocket';
 const MODEL_QUADROTOR = 'quadrotor';
 
 // Hardcoded fallback for the very first Poly4 when the trajectory list is
 // empty and the user has no rocket state to seed from. Matches the reference
 // descent in the design notebook (section 6).
-const SEED_INITIAL_POS = { x: -50, y:  50, z: 150 };
-const SEED_INITIAL_VEL = { x:   0, y:   5, z: -50 };
+const SEED_INITIAL_POS = { x: -10, y:  20, z: 80 };
+const SEED_INITIAL_VEL = { x:   0, y:   5, z: -30 };
 // Yaw seeds for the initial Poly4 (rad / rad·s⁻¹). Only meaningful once a
 // model that tracks yaw is selected, but always sent to the backend.
 const SEED_INITIAL_YAW      = 0;
@@ -32,9 +32,9 @@ const DEFAULT_TRAJECTORY = [
     {
         kind: 'poly4',
         params: {
-            initialPos:     { x: -50, y: 50, z:  80 },
+            initialPos:     { x: -10, y: 20, z:  80 },
             initialYaw:     0,
-            initialVel:     { x:   0, y:  5, z: -50 },
+            initialVel:     { x:   0, y:  5, z: -30 },
             initialYawRate: 0,
             finalPos:       { x:   0, y:  0, z:   0 },
             finalYaw:       0,
@@ -111,10 +111,12 @@ let fpsCounter = 0;
 let fpsDisplay = 0;
 let timestep_s = DEFAULT_TIMESTEP_S;
 let currentModel = MODEL_ROCKET;   // 'rocket' | 'quadrotor'
+let plantAvailable = false;        // plant attached AND publishing fresh samples
 
 // =============================================================================
 // Renderers registry — add a renderer here to hook into the sim loop
-// Each renderer is { update(state, err, simTime, stepCount), reset() }
+// Each renderer is { update(state, err, simTime, stepCount, plantState), reset() }
+// plantState is null when plant snapshots are unavailable.
 // =============================================================================
 const renderers = [];
 
@@ -136,6 +138,17 @@ const ui = {
     viewCharts: $('view-charts'), view3d: $('view-3d'), viewParams: $('view-params'),
     status:     $('statusBar'), error: $('errorMsg'),
     btnApply:   $('btnApply'),
+    // 3D view source toggles
+    chkViewTraj:  $('chkViewTraj'),
+    chkViewModel: $('chkViewModel'),
+    chkViewPlant: $('chkViewPlant'),
+    lblViewPlant: $('lblViewPlant'),
+    // plant / staging controls
+    plantBar:     $('plantBar'),
+    plantStatus:  $('plantStatus'),
+    stageSafetyAlt: $('stageSafetyAlt'),
+    btnBeginStaging: $('btnBeginStaging'),
+    btnStopStaging:  $('btnStopStaging'),
     modelSelect: $('modelSelect'),
     // Rocket params panel
     panelRocket: $('panel-rocket'),
@@ -156,6 +169,16 @@ const ui = {
 // =============================================================================
 const userForce = { fX: 0, fY: 0, fZ: 0 };
 
+// Push the current tick period and user forces to the backend. Integration
+// runs on the backend tick thread, so these take effect from the next tick.
+// Returns the backend error code (truthy = failure).
+function sendSystemParams() {
+    return sim.ext_setSystemParams({
+        timestep_seconds: timestep_s,
+        user_forces: { fX: userForce.fX, fY: userForce.fY, fZ: userForce.fZ },
+    });
+}
+
 function setupForceButtons() {
     document.querySelectorAll('.btn-force').forEach(btn => {
         const axis = btn.dataset.axis;          // 'fX' | 'fY' | 'fZ'
@@ -165,10 +188,12 @@ function setupForceButtons() {
             const mag = parseFloat($('forceMag').value) || 0;
             userForce[axis] = sign * mag;
             btn.classList.add('pressing');
+            if (sim) sendSystemParams();
         };
         const release = () => {
             userForce[axis] = 0;
             btn.classList.remove('pressing');
+            if (sim) sendSystemParams();
         };
 
         btn.addEventListener('mousedown',   press);
@@ -293,12 +318,15 @@ function setError(msg)  { ui.error.textContent  = msg; }
 // already be in the shape expected by that model's init entry point:
 //   rocket    -> ext_initRocketParams    { rocketPar, rocketActuatorLimits }
 //   quadrotor -> ext_initQuadRotorParams { quadRotorPar, quadRotorActuatorLimits }
+// Init leaves the backend stopped; the tick period is pushed right after so
+// the tick thread is configured before the first Run.
 // Returns the backend error code (truthy = failure), matching the old ext_init.
 function initBackend(params) {
-    if (currentModel === MODEL_QUADROTOR) {
-        return sim.ext_quadRotorInit(params);
-    }
-    return sim.ext_rocketInit(params);
+    const err = (currentModel === MODEL_QUADROTOR)
+        ? sim.ext_quadRotorInit(params)
+        : sim.ext_rocketInit(params);
+    if (err) return err;
+    return sendSystemParams();
 }
 
 // =============================================================================
@@ -307,14 +335,19 @@ function initBackend(params) {
 function make3DRenderer() {
     const TRAIL_MAX = 6000;
     const TRAJECTORY_MAX = 6000;
-    const trail     = [];
+    const trail      = [];
+    const plantTrail = [];
     const trajectory = [];
 
     let scene, camera, renderer, controls;
     let rocketGroup, trailLine, trajectoryLine;   // rocketGroup = active vehicle mesh
+    let plantGroup, plantTrailLine;               // plant ghost mesh + its trail
     let initialized = false;
     let animating   = false;
     let visible     = false;
+
+    // Which sources are drawn (driven by the view3d-sources checkboxes)
+    const sources = { traj: true, model: true, plant: false };
 
     function buildRocket() {
         const group = new THREE.Group();
@@ -432,6 +465,20 @@ function make3DRenderer() {
         return currentModel === MODEL_QUADROTOR ? buildQuadrotor() : buildRocket();
     }
 
+    // Ghost version of the vehicle for the plant: same shape, translucent green
+    function buildPlantVehicle() {
+        const group = buildVehicle();
+        group.traverse(obj => {
+            if (obj.isMesh) {
+                obj.material = obj.material.clone();
+                obj.material.color.set(0x33ff88);
+                obj.material.transparent = true;
+                obj.material.opacity = 0.45;
+            }
+        });
+        return group;
+    }
+
     // Camera preset per model: the quadrotor is real-size (~0.75 m tip-to-tip),
     // so it needs a much closer start and a smaller zoom-in limit than the rocket.
     function applyCameraForModel() {
@@ -488,12 +535,24 @@ function make3DRenderer() {
         rocketGroup = buildVehicle();
         scene.add(rocketGroup);
 
+        // Plant ghost vehicle (hidden until enabled and fed by snapshots)
+        plantGroup = buildPlantVehicle();
+        plantGroup.visible = false;
+        scene.add(plantGroup);
+
         // Trail line
         trailLine = new THREE.Line(
             new THREE.BufferGeometry(),
             new THREE.LineBasicMaterial({ color: 0x0099ff, transparent: true, opacity: 0.55 })
         );
         scene.add(trailLine);
+
+        // Plant trail line
+        plantTrailLine = new THREE.Line(
+            new THREE.BufferGeometry(),
+            new THREE.LineBasicMaterial({ color: 0x33ff88, transparent: true, opacity: 0.5 })
+        );
+        scene.add(plantTrailLine);
 
         // Trajectory preview
         trajectoryLine = new THREE.Line(
@@ -523,21 +582,21 @@ function make3DRenderer() {
         renderer?.render(scene, camera);
     }
 
-    function updateTrail(x, y, z) {
-        trail.push(new THREE.Vector3(x, y, z));
-        if (trail.length > TRAIL_MAX) trail.shift();
+    function updateTrail(points, line, x, y, z) {
+        points.push(new THREE.Vector3(x, y, z));
+        if (points.length > TRAIL_MAX) points.shift();
 
-        const pos = new Float32Array(trail.length * 3);
-        trail.forEach((v, i) => {
+        const pos = new Float32Array(points.length * 3);
+        points.forEach((v, i) => {
             pos[i * 3]     = v.x;
             pos[i * 3 + 1] = v.y;
             pos[i * 3 + 2] = v.z;
         });
-        trailLine.geometry.setAttribute(
+        line.geometry.setAttribute(
             'position', new THREE.BufferAttribute(pos, 3)
         );
-        trailLine.geometry.setDrawRange(0, trail.length);
-        trailLine.geometry.attributes.position.needsUpdate = true;
+        line.geometry.setDrawRange(0, points.length);
+        line.geometry.attributes.position.needsUpdate = true;
     }
 
     function pushTrajectoryPoint(x, y, z) {
@@ -579,8 +638,35 @@ function make3DRenderer() {
         if (trajectoryLine) trajectoryLine.geometry.setDrawRange(0, 0);
     }
 
+    // sim(x, y, z=up) → Three.js(x, z, y)  [Y is up in Three.js]
+    // The world→scene axis swap (y↔z) is a reflection: every world rotation
+    // maps to the permuted scene axis with negated angle (world X→scene X,
+    // world Y→scene Z, world Z→scene Y), and the composition order must
+    // match each model's Euler sequence.
+    function poseVehicle(group, state) {
+        group.position.set(state.x, state.z, state.y);
+        if (currentModel === MODEL_QUADROTOR) {
+            // Aerospace ZYX: roll about X, pitch about Y, yaw about Z
+            // R = Rz(yaw)·Ry(pitch)·Rx(roll) → scene 'YZX' with negated angles.
+            group.rotation.set(-state.roll, -state.yaw, -state.pitch, 'YZX');
+        } else {
+            // Rocket Rm = Ry(alpha)·Rx(beta)·Rz(psi), GetState maps
+            // roll=alpha, pitch=beta, yaw=psi → scene 'ZXY' with negated angles.
+            group.rotation.set(-state.pitch, -state.yaw, -state.roll, 'ZXY');
+        }
+    }
+
+    function applySources() {
+        if (!initialized) return;
+        trajectoryLine.visible = sources.traj;
+        rocketGroup.visible    = sources.model;
+        trailLine.visible      = sources.model;
+        plantTrailLine.visible = sources.plant;
+        if (!sources.plant) plantGroup.visible = false;
+    }
+
     return {
-        update(state) {
+        update(state, err, simTime, stepCount, plantState) {
             if (!initialized || !visible) return;
 
             // Generate preview lazily on first display, or after invalidation.
@@ -588,31 +674,50 @@ function make3DRenderer() {
                 generateTrajectoryPreview();
             }
 
-            // sim(x, y, z=up) → Three.js(x, z, y)  [Y is up in Three.js]
-            rocketGroup.position.set(state.x, state.z, state.y);
-            // The world→scene axis swap (y↔z) is a reflection: every world
-            // rotation maps to the permuted scene axis with negated angle
-            // (world X→scene X, world Y→scene Z, world Z→scene Y), and the
-            // composition order must match each model's Euler sequence.
-            if (currentModel === MODEL_QUADROTOR) {
-                // Aerospace ZYX: roll about X, pitch about Y, yaw about Z
-                // R = Rz(yaw)·Ry(pitch)·Rx(roll) → scene 'YZX' with negated angles.
-                rocketGroup.rotation.set(-state.roll, -state.yaw, -state.pitch, 'YZX');
-            } else {
-                // Rocket Rm = Ry(alpha)·Rx(beta)·Rz(psi), GetState maps
-                // roll=alpha, pitch=beta, yaw=psi → scene 'ZXY' with negated angles.
-                rocketGroup.rotation.set(-state.pitch, -state.yaw, -state.roll, 'ZXY');
+            poseVehicle(rocketGroup, state);
+            updateTrail(trail, trailLine, state.x, state.z, state.y);
+
+            // Plant ghost: only when snapshots are flowing
+            if (plantState) {
+                poseVehicle(plantGroup, plantState);
+                updateTrail(plantTrail, plantTrailLine,
+                            plantState.x, plantState.z, plantState.y);
             }
-            updateTrail(state.x, state.z, state.y);
+            plantGroup.visible = sources.plant && !!plantState;
+
+            applySources();
+        },
+        // Pose ONLY the plant ghost, leaving the model and charts untouched.
+        // Used before Start so the vehicle staging near the origin is visible
+        // (and responds to manual commands) while the simulation is idle.
+        previewPlant(plantState) {
+            if (!initialized || !visible) return;
+            if (plantState) {
+                poseVehicle(plantGroup, plantState);
+                updateTrail(plantTrail, plantTrailLine,
+                            plantState.x, plantState.z, plantState.y);
+            }
+            plantGroup.visible = sources.plant && !!plantState;
+            applySources();
         },
         reset() {
             trail.length = 0;
+            plantTrail.length = 0;
             if (trailLine) trailLine.geometry.setDrawRange(0, 0);
+            if (plantTrailLine) plantTrailLine.geometry.setDrawRange(0, 0);
 
-            if (rocketGroup) {
-                rocketGroup.position.set(0, 0, 0);
-                rocketGroup.rotation.set(0, 0, 0);
+            for (const g of [rocketGroup, plantGroup]) {
+                if (g) {
+                    g.position.set(0, 0, 0);
+                    g.rotation.set(0, 0, 0);
+                }
             }
+            if (plantGroup) plantGroup.visible = false;
+        },
+        // Enable/disable the drawn sources (reference trajectory, model, plant)
+        setSources(s) {
+            Object.assign(sources, s);
+            applySources();
         },
         // Drop the cached trajectory line so the next frame regenerates it
         // from the current backend state. Called by the trajectory builder
@@ -626,10 +731,15 @@ function make3DRenderer() {
         rebuildVehicle() {
             if (!initialized || !scene) return;
             if (rocketGroup) scene.remove(rocketGroup);
+            if (plantGroup)  scene.remove(plantGroup);
             rocketGroup = buildVehicle();
             rocketGroup.position.set(0, 0, 0);
             rocketGroup.rotation.set(0, 0, 0);
             scene.add(rocketGroup);
+            plantGroup = buildPlantVehicle();
+            plantGroup.visible = false;
+            scene.add(plantGroup);
+            applySources();
             applyCameraForModel();
         },
         show() {
@@ -654,14 +764,15 @@ function make3DRenderer() {
 function makeUplotRenderer() {
     const MAX_PTS = 3000;
 
-    const bufs = { x: [], y: [], z: [], e: [] };
+    const bufs = { x: [], y: [], z: [], yaw: [], e: [] };
 
     // One chart per canvas id
     const charts = [
-        { id: 'chartX',   key: 'x', color: '#f80', label: 'x (m)'    },
-        { id: 'chartY',   key: 'y', color: '#0f8', label: 'y (m)'    },
-        { id: 'chartZ',   key: 'z', color: '#0cf', label: 'z (m)'    },
-        { id: 'chartErr', key: 'e', color: '#fa0', label: '|err| (m)' },
+        { id: 'chartX',   key: 'x',   color: '#f80', label: 'x (m)'     },
+        { id: 'chartY',   key: 'y',   color: '#0f8', label: 'y (m)'     },
+        { id: 'chartZ',   key: 'z',   color: '#0cf', label: 'z (m)'     },
+        { id: 'chartYaw', key: 'yaw', color: '#c8f', label: 'yaw (rad)' },
+        { id: 'chartErr', key: 'e',   color: '#fa0', label: '|err| (m)' },
     ];
 
     function drawChart({ id, key, color }) {
@@ -704,14 +815,15 @@ function makeUplotRenderer() {
             bufs.x.push(state.x);
             bufs.y.push(state.y);
             bufs.z.push(state.z);
+            bufs.yaw.push(state.yaw);
             bufs.e.push(eMag);
-            for (const k of ['x', 'y', 'z', 'e'])
+            for (const k of ['x', 'y', 'z', 'yaw', 'e'])
                 if (bufs[k].length > MAX_PTS) bufs[k].shift();
 
             charts.forEach(drawChart);
         },
         reset() {
-            for (const k of ['x', 'y', 'z', 'e']) bufs[k] = [];
+            for (const k of ['x', 'y', 'z', 'yaw', 'e']) bufs[k] = [];
             charts.forEach(({ id }) => {
                 const c = $(id);
                 if (c) c.getContext('2d').clearRect(0, 0, c.width, c.height);
@@ -1053,31 +1165,76 @@ function updatePanels(state, err, t, step) {
 }
 
 // =============================================================================
-// Simulation loop
+// Display loop — integration runs on the backend tick thread; here we only
+// poll a snapshot per animation frame and refresh the panels/renderers.
 // =============================================================================
-function loop() {
-    if (!running) return;
+// Plant freshness: the plant link lives from attach through the mission, so
+// its sequence advances whenever it is publishing (staging OR running). We
+// treat it as "available" while the sequence keeps changing, and drop it once
+// it has been frozen (link down / detached) for longer than the timeout —
+// independent of the frame rate.
+let lastPlantSeq   = -1;
+let lastPlantFreshMs = 0;
+const PLANT_STALE_MS = 1000;
 
-    const stepParams = {
-        timeStep_s: timestep_s,
-        userForce: { fX: userForce.fX, fY: userForce.fY, fZ: userForce.fZ },
-    };
+let plantReady = false;        // last isReadyToStart from the plant snapshot
+let stagingRequested = false;  // Begin Staging pressed, not yet aborted
 
-    const result = sim.ext_step(stepParams);
-
-    if (result.isError) {
-        setError('ext_step returned error — simulation stopped');
-        stop();
-        return;
+function refreshPlantFreshness(psnap) {
+    const live = psnap.isAttached && !psnap.isError;
+    const now  = performance.now();
+    if (live && psnap.sequence !== lastPlantSeq) {
+        lastPlantSeq     = psnap.sequence;
+        lastPlantFreshMs = now;
     }
+    setPlantAvailable(live && (now - lastPlantFreshMs) < PLANT_STALE_MS);
 
-    simTime += timestep_s;
-    stepCount++;
+    // reflect the plant readiness in the staging status + Start gating
+    const wasReady = plantReady;
+    plantReady = plantAvailable && !!psnap.isReadyToStart;
+    if (plantReady) {
+        ui.plantStatus.textContent = 'Staged — ready';
+        ui.plantStatus.className = 'ready';
+        // nothing to abort once ready: only aborting an in-progress climb
+        ui.btnStopStaging.disabled = true;
+    } else if (plantAvailable && stagingRequested) {
+        ui.plantStatus.textContent = 'Staging…';
+        ui.plantStatus.className = 'staging';
+        ui.btnStopStaging.disabled = running;
+    } else if (plantAvailable) {
+        ui.plantStatus.textContent = 'Not staged';
+        ui.plantStatus.className = '';
+        ui.btnStopStaging.disabled = true;
+    }
+    if (plantReady !== wasReady) refreshStartEnabled();
+}
 
-    updatePanels(result.state, result.err, simTime, stepCount);
-    renderers.forEach(r => r.update(result.state, result.err, simTime, stepCount));
-
+// The loop runs continuously from boot: the plant ghost is polled every frame
+// so it is visible while staging (before Start), and the model/time/charts are
+// driven only while the simulation is actually running.
+function loop() {
     frameId = requestAnimationFrame(loop);
+    if (!sim) return;
+
+    const psnap = sim.ext_getPlantSnapshot();
+    refreshPlantFreshness(psnap);
+    const plantState = plantAvailable ? psnap.state : null;
+
+    if (running) {
+        const snap = sim.ext_getSnapshot();
+        if (snap.isError) {
+            setError('ext_getSnapshot returned error — simulation stopped');
+            stop();
+            return;
+        }
+        simTime   = snap.time_seconds;
+        stepCount = Math.round(simTime / timestep_s);   // estimated backend ticks
+        updatePanels(snap.state, snap.err, simTime, stepCount);
+        renderers.forEach(r => r.update(snap.state, snap.err, simTime, stepCount, plantState));
+    } else {
+        // Idle: keep only the plant ghost live, leaving model and charts as-is.
+        renderer3d.previewPlant(plantState);
+    }
 }
 
 // =============================================================================
@@ -1087,12 +1244,14 @@ function refreshStartEnabled() {
     // Start is allowed only when:
     //   - sim is not currently running, AND
     //   - the trajectory has at least one item (otherwise the backend has
-    //     nothing to track and the run is meaningless).
+    //     nothing to track and the run is meaningless), AND
+    //   - if a plant is connected, it is ready (staged).
     if (running) {
         ui.btnStart.disabled = true;
         return;
     }
-    ui.btnStart.disabled = trajectoryBuilder.isEmpty();
+    const plantBlocks = plantAvailable && !plantReady;
+    ui.btnStart.disabled = trajectoryBuilder.isEmpty() || plantBlocks;
 }
 
 function start() {
@@ -1100,20 +1259,36 @@ function start() {
         setError('Cannot start: trajectory sequence is empty.');
         return;
     }
+    if (sendSystemParams()) {
+        setError('ext_setSystemParams failed — is a model initialized?');
+        return;
+    }
+    if (sim.ext_run()) {
+        setError('ext_run failed — is a model initialized?');
+        return;
+    }
     running = true;
     ui.btnStart.disabled = true;
     ui.btnStop.disabled  = false;
     ui.btnReset.disabled = true;
+    ui.btnBeginStaging.disabled = true;   // no staging while the mission runs
     setStatus('Running...');
     setError('');
-    loop();
+    // the poll loop is already running (started at boot); it now switches to
+    // driving the model/time/charts because `running` is set
 }
 
 function stop() {
     running = false;
-    if (frameId) cancelAnimationFrame(frameId);
+    // the poll loop keeps running (it still polls the plant ghost while idle)
+    if (sim) sim.ext_stop();
     ui.btnStop.disabled  = true;
     ui.btnReset.disabled = false;
+    ui.btnBeginStaging.disabled = false;   // staging allowed again once stopped
+    // the plant clears its staging on Stop (the vehicle descended and must be
+    // re-staged before another mission): reflect that in the UI
+    stagingRequested = false;
+    ui.btnStopStaging.disabled = true;
     setStatus('Stopped.');
     refreshStartEnabled();
 }
@@ -1144,6 +1319,63 @@ function reset() {
 ui.btnStart.addEventListener('click', start);
 ui.btnStop.addEventListener('click',  stop);
 ui.btnReset.addEventListener('click', reset);
+
+// =============================================================================
+// 3D view source toggles (reference trajectory / model / plant)
+// =============================================================================
+function readSourceToggles() {
+    return {
+        traj:  ui.chkViewTraj.checked,
+        model: ui.chkViewModel.checked,
+        plant: ui.chkViewPlant.checked && plantAvailable,
+    };
+}
+
+function applySourceToggles() {
+    renderer3d?.setSources?.(readSourceToggles());
+}
+
+// Enable/disable the "Plant" checkbox as snapshots (dis)appear. The checked
+// state is preserved, so a plant that comes back is shown again without a click.
+function setPlantAvailable(avail) {
+    if (avail === plantAvailable) return;
+    plantAvailable = avail;
+    ui.chkViewPlant.disabled = !avail;
+    ui.lblViewPlant.classList.toggle('disabled', !avail);
+    // a plant just appeared: show its ghost automatically
+    if (avail) ui.chkViewPlant.checked = true;
+    // reveal the staging controls only while a plant is connected
+    ui.plantBar.style.display = avail ? 'flex' : 'none';
+    if (!avail) {
+        stagingRequested = false;
+        plantReady = false;
+        ui.btnStopStaging.disabled = true;
+        refreshStartEnabled();
+    }
+    applySourceToggles();
+}
+
+ui.chkViewTraj.addEventListener('change',  applySourceToggles);
+ui.chkViewModel.addEventListener('change', applySourceToggles);
+ui.chkViewPlant.addEventListener('change', applySourceToggles);
+
+// Staging controls
+ui.btnBeginStaging.addEventListener('click', () => {
+    const safetyAlt = parseFloat(ui.stageSafetyAlt.value);
+    if (!(safetyAlt >= 0)) { setError('Safety altitude must be ≥ 0'); return; }
+    if (sim.ext_beginStaging(safetyAlt)) {
+        setError('Begin staging failed — need a plant, a non-empty trajectory, and a stopped sim');
+        return;
+    }
+    stagingRequested = true;
+    ui.btnStopStaging.disabled = false;
+    setError('');
+});
+ui.btnStopStaging.addEventListener('click', () => {
+    sim.ext_stopStaging();
+    stagingRequested = false;
+    ui.btnStopStaging.disabled = true;
+});
 
 // View toggle helpers
 function showView(name) {
@@ -1246,6 +1478,10 @@ trajectoryBuilder.onChange(() => {
         currentModel = ui.modelSelect ? ui.modelSelect.value : MODEL_ROCKET;
         applyModelPanelVisibility();
 
+        // The backend outlives page reloads (ws-served): a previous session
+        // may have left it running, and init is refused while running.
+        sim.ext_stop();
+
         const err = initBackend(DEFAULT_INIT_PARAMS[currentModel]);
         if (err) {
             setError('init failed');
@@ -1261,6 +1497,11 @@ trajectoryBuilder.onChange(() => {
         setupForceButtons();
         setStatus('Ready.');
         refreshStartEnabled();
+        ui.btnReset.disabled = false;   // reset is safe whenever not running
+
+        // Start the continuous poll loop: it keeps the plant ghost live even
+        // before the simulation runs, so staging is visible.
+        loop();
     } catch (e) {
         setError(`Failed to load WASM: ${e.message}`);
     }

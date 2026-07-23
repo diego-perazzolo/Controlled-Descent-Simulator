@@ -26,8 +26,6 @@
 // File        : ext_comm.cpp
 // Description : Direct implementation of the external communication API:
 //               converts ext structs and calls straight into the core.
-//               Linked by apps/wasm-only (in-browser core) and by
-//               apps/ws-served/server (native core behind cds_server).
 // Author      : Diego Perazzolo
 // Created     : 2026
 // =============================================================================
@@ -36,7 +34,7 @@
 #include "core.hpp"
 
 /* Immediately return if ret == true */
-#define ASSERT_FALSE(ret) if(ret) return ret 
+#define RETURN_IF_TRUE(ret) if(ret) return ret 
 
 /* Static functions */
 static core_rocketParams_t _convertExtToCore_rocketParams(ext_rocketParams rPar, ext_rocketActuatorLimits aPar)
@@ -81,42 +79,6 @@ static core_quadRotorParams_t _convertExtToCore_quadRotorParams(ext_quadRotorPar
     return coreParam;
 }
 
-static core_stepParams_t _convertExtToCore_stepParams(ext_stepParams sPar)
-{
-    core_stepParams_t coreParam = {};
-    coreParam.timestep = sPar.timeStep_s;
-    coreParam.user_fX = sPar.userForce.fX;
-    coreParam.user_fY = sPar.userForce.fY;
-    coreParam.user_fZ = sPar.userForce.fZ;
-
-    return coreParam;
-}
-
-static ext_stepRet _convertCoreToExt_stepRetParams(core_state_t state, core_trackingErrors_t tErr)
-{
-    ext_stepRet extParam = {};
-
-    extParam.state.x_dot = state.x_dot; 
-    extParam.state.y_dot = state.y_dot; 
-    extParam.state.z_dot = state.z_dot; 
-    extParam.state.x = state.x; 
-    extParam.state.y = state.y; 
-    extParam.state.z = state.z; 
-    extParam.state.roll_dot = state.roll_dot; 
-    extParam.state.pitch_dot = state.pitch_dot; 
-    extParam.state.yaw_dot = state.yaw_dot; 
-    extParam.state.roll = state.roll; 
-    extParam.state.pitch = state.pitch; 
-    extParam.state.yaw = state.yaw; 
-
-    extParam.err.xErr = tErr.x;
-    extParam.err.yErr = tErr.y;
-    extParam.err.zErr = tErr.z;
-    extParam.err.yawErr = tErr.yaw;
-
-    return extParam;
-}
-
 static core_trajectoryPoly4Params_t _convertExtToCore_trajectoryPoly4Params(ext_trajectoryPoly4Params_t ext)
 {
     core_trajectoryPoly4Params_t coreParam = {
@@ -154,6 +116,44 @@ static ext_trajectoryPoint _convertExtToCore_trajectoryPoint(Vec3& point)
     return extParam;
 }
 
+static core_systemParams_t _convertExtToCore_systemParams(ext_systemParams& ext)
+{
+    core_systemParams_t coreParam = {
+        .timestep_seconds = ext.timestep_seconds,
+        .user_fX = ext.user_forces.fX,
+        .user_fY = ext.user_forces.fY,
+        .user_fZ = ext.user_forces.fZ,
+    };
+
+    return coreParam; 
+}
+
+static ext_snapshotData _convertCoreToExt_snapshotParams(core_snapshotData_t& core)
+{
+    ext_snapshotData ext = {};
+
+    ext.time_seconds = core.time_seconds;
+    ext.state.x_dot = core.state.x_dot; 
+    ext.state.y_dot = core.state.y_dot; 
+    ext.state.z_dot = core.state.z_dot; 
+    ext.state.x = core.state.x; 
+    ext.state.y = core.state.y; 
+    ext.state.z = core.state.z; 
+    ext.state.roll_dot = core.state.roll_dot; 
+    ext.state.pitch_dot = core.state.pitch_dot; 
+    ext.state.yaw_dot = core.state.yaw_dot; 
+    ext.state.roll = core.state.roll; 
+    ext.state.pitch = core.state.pitch; 
+    ext.state.yaw = core.state.yaw; 
+
+    ext.err.xErr = core.errors.x;
+    ext.err.yErr = core.errors.y;
+    ext.err.zErr = core.errors.z;
+    ext.err.yawErr = core.errors.yaw;
+
+    return ext;
+}
+
 /* ext functions */
 
 bool ext_initRocket_FFLQR01(ext_initRocketParams params)
@@ -166,15 +166,15 @@ bool ext_initRocket_FFLQR01(ext_initRocketParams params)
 
     // Core initialization
     bool ret = core_init();
-    ASSERT_FALSE(ret);
+    RETURN_IF_TRUE(ret);
 
     // Rocket initialization
     ret = core_rocketFfLqr01_init(rPar);
-    ASSERT_FALSE(ret);
+    RETURN_IF_TRUE(ret);
 
     // Trajectory initialization
     ret = core_trajectoryInit();
-    ASSERT_FALSE(ret);
+    RETURN_IF_TRUE(ret);
 
     return ret;
 }
@@ -189,44 +189,15 @@ bool ext_initQuadRotor_FFLQR01(ext_initQuadRotorParams params)
 
     // Core initialization
     bool ret = core_init();
-    ASSERT_FALSE(ret);
+    RETURN_IF_TRUE(ret);
 
     // QuadRotor initialization
     ret = core_quadRotorFfLqr01_init(rPar);
-    ASSERT_FALSE(ret);
+    RETURN_IF_TRUE(ret);
 
     // Trajectory initialization
     ret = core_trajectoryInit();
-    ASSERT_FALSE(ret);
-
-    return ret;
-}
-
-ext_stepRet ext_step(ext_stepParams stepParams)
-{
-    /* Executes one integration step with the simulation, returns system state, tracking errors */
-    ext_stepRet ret = {};
-    core_state_t coreState;
-    core_trackingErrors_t coreTrackingErr;
-
-    // Struct conversion
-    core_stepParams_t corePar = _convertExtToCore_stepParams(stepParams);
-
-    // Integration step
-    ret.isError = core_performSimulationStep(corePar);
-
-    // Get system data
-    ret.isError |= core_getState(&coreState);
-    ret.isError |= core_getTrackingError(&coreTrackingErr);
-
-    // Return if error
-    if(ret.isError)
-    {
-        return ret;
-    }
-
-    // Struct conversion
-    ret = _convertCoreToExt_stepRetParams(coreState, coreTrackingErr);
+    RETURN_IF_TRUE(ret);
 
     return ret;
 }
@@ -237,12 +208,7 @@ bool ext_trajectory_append_poly4(ext_trajectoryPoly4Params_t params)
 
     core_trajectoryPoly4Params_t core_params = _convertExtToCore_trajectoryPoly4Params(params);
 
-    if(core_trajectoryAppendPoly4(core_params))
-    {
-        // Err
-
-        ret = true;
-    }
+    ret = core_trajectoryAppendPoly4(core_params);
     
     return ret;
 }
@@ -253,12 +219,7 @@ bool ext_trajectory_append_point(ext_trajectoryPointParams_t params)
 
     core_trajectoryPointParams_t core_params = _convertExtToCore_trajectoryPointParams(params);
 
-    if(core_trajectoryAppendPoint(core_params))
-    {
-        // Err
-        
-        ret = true;
-    }
+    ret = core_trajectoryAppendPoint(core_params);
     
     return ret;
 }
@@ -267,13 +228,8 @@ bool ext_trajectory_remove_last_item(void)
 {
     bool ret = false;
 
-    if(core_trajectoryRemoveLastItem())
-    {
-        // Err
-        
-        ret = true;
-    }
-    
+    ret = core_trajectoryRemoveLastItem();
+
     return ret;
 }
 
@@ -287,4 +243,74 @@ ext_trajectoryPoint ext_trajectory_get_point(ext_coord_t t)
     }
 
     return _convertExtToCore_trajectoryPoint(p);
+}
+
+bool ext_setSystemParams(ext_systemParams params)
+{
+    // Struct conversion
+    core_systemParams_t corePar = _convertExtToCore_systemParams(params);
+
+    return core_setSystemParams(corePar);
+}
+
+ext_snapshotData ext_getSnapshot(void)
+{
+    core_snapshotData_t corePar = {};
+    bool ret = core_getSnapshot(corePar);
+
+    ext_snapshotData extPar = _convertCoreToExt_snapshotParams(corePar);
+    extPar.isError = ret;
+
+    return extPar;
+}
+
+
+ext_plantSnapshotData ext_getPlantSnapshot(void)
+{
+    core_plantSnapshotData_t corePar = {};
+    bool ret = core_getPlantSnapshot(corePar);
+
+    ext_plantSnapshotData extPar = {};
+    extPar.time_seconds = corePar.time_seconds;
+    /* float carries the sequence exactly up to 2^24 samples */
+    extPar.sequence = (ext_coord_t)corePar.sequence;
+
+    extPar.state.x_dot = corePar.state.x_dot;
+    extPar.state.y_dot = corePar.state.y_dot;
+    extPar.state.z_dot = corePar.state.z_dot;
+    extPar.state.x = corePar.state.x;
+    extPar.state.y = corePar.state.y;
+    extPar.state.z = corePar.state.z;
+    extPar.state.roll_dot = corePar.state.roll_dot;
+    extPar.state.pitch_dot = corePar.state.pitch_dot;
+    extPar.state.yaw_dot = corePar.state.yaw_dot;
+    extPar.state.roll = corePar.state.roll;
+    extPar.state.pitch = corePar.state.pitch;
+    extPar.state.yaw = corePar.state.yaw;
+
+    extPar.isAttached = corePar.isAttached;
+    extPar.isReadyToStart = corePar.isReadyToStart;
+    extPar.isError = ret;
+
+    return extPar;
+}
+
+bool ext_run(void)
+{
+    return core_run();
+}
+
+bool ext_stop(void)
+{
+    return core_stop();
+}
+
+bool ext_beginStaging(ext_coord_t safetyAltitude)
+{
+    return core_beginStaging(safetyAltitude);
+}
+
+bool ext_stopStaging(void)
+{
+    return core_stopStaging();
 }

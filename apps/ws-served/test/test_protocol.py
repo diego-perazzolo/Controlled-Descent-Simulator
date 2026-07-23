@@ -6,8 +6,11 @@
 #               cds_server: WebSocket handshake, transport correlation id,
 #               protocol version check (positive and negative), and the full
 #               command round-trip (init rocket, append poly4, get point,
-#               100 steps, remove last). Values are checked against the
-#               reference descent of the design notebook.
+#               set system params, run / snapshot / stop, remove last).
+#               Trajectory values are checked against the reference descent of
+#               the design notebook; the simulation itself advances on the
+#               server's real-time thread, so time checks use wall-clock
+#               bounds instead of exact positions.
 #               The expected protocol version is parsed from the generated
 #               ws_protocol.hpp, so the test follows the API description.
 # Usage       : python3 apps/ws-served/test/test_protocol.py [path/to/cds_server]
@@ -34,7 +37,17 @@ def protocol_version():
     return int(re.search(r"WS_PROTOCOL_VERSION = 0x([0-9A-Fa-f]+)", src).group(1), 16)
 
 
+def msg_ids():
+    """Message ids parsed from the generated header, so the test follows the
+    API description instead of hardcoding numbers."""
+    src = open(os.path.join(
+        REPO, "apps/ws-served/exported_cpp/ws_protocol.hpp")).read()
+    return {m.group(1): int(m.group(2))
+            for m in re.finditer(r"WS_MSG_(\w+)\s*=\s*(\d+)", src)}
+
+
 VERSION = protocol_version()
+MSG = msg_ids()
 
 
 # --------------------------------------------------------------------------- #
@@ -122,7 +135,7 @@ def header(msg_type, version=None):
 
 def run_tests(s):
     # version mismatch must be rejected with isError=1 and the server version
-    p = rpc(s, header(1, version=(VERSION + 1) & 0xFF) + b"\x00" * 56)
+    p = rpc(s, header(MSG["INIT_ROCKET"], version=(VERSION + 1) & 0xFF) + b"\x00" * 56)
     v, t, err = struct.unpack("<BBB", p)
     assert (v, err) == (VERSION, 1), f"version mismatch not rejected: v={v} err={err}"
     print(f"version mismatch rejected OK (server 0x{v:02X})")
@@ -130,7 +143,7 @@ def run_tests(s):
     # init rocket: 6 floats params + 8 floats actuator limits
     params = struct.pack("<6f", 10.0, 10 / 3, 10 / 3, 1.0, 1.0, 0.02)
     limits = struct.pack("<8f", 500, 0, 10, -10, 10, -10, 10, -10)
-    p = rpc(s, header(1) + params + limits)
+    p = rpc(s, header(MSG["INIT_ROCKET"]) + params + limits)
     v, t, err = struct.unpack("<BBB", p)
     assert (v, t, err) == (VERSION, 1, 0), f"init rocket failed: {v} {t} {err}"
     print("init rocket OK")
@@ -143,29 +156,81 @@ def run_tests(s):
                        0, 0, 0, 0,
                        0, 0, 0, 0,
                        20)
-    p = rpc(s, header(5) + poly)
+    p = rpc(s, header(MSG["TRAJ_APPEND_POLY4"]) + poly)
     assert struct.unpack("<BBB", p)[2] == 0, "append poly4 failed"
     print("append poly4 OK")
 
     # trajectory point at t=10 must match the reference values
-    p = rpc(s, header(4) + struct.pack("<f", 10.0))
+    p = rpc(s, header(MSG["TRAJ_GET_POINT"]) + struct.pack("<f", 10.0))
     v, t, x, y, z = struct.unpack("<BB3f", p)
     assert (round(x, 2), round(y, 2), round(z, 2)) == (-15.62, 21.88, -37.50), \
         f"trajectory point drifted: ({x:.2f}, {y:.2f}, {z:.2f})"
     print(f"trajectory point OK ({x:.2f}, {y:.2f}, {z:.2f})")
 
-    # 100 integration steps, check the reference position
-    for _ in range(100):
-        p = rpc(s, header(3) + struct.pack("<4f", 0.01, 0, 0, 0))
-    vals = struct.unpack("<BBB16f", p)
-    err, state = vals[2], vals[3:15]
-    assert err == 0, "step returned error"
-    pos = (round(state[3], 2), round(state[4], 2), round(state[5], 2))
-    assert pos == (-49.45, 53.79, 36.03), f"simulation drifted: {pos}"
-    print(f"100 steps OK pos={pos}")
+    # system params: 10 ms tick period, no user forces
+    p = rpc(s, header(MSG["SET_SYSTEM_PARAMS"]) + struct.pack("<4f", 0.01, 0, 0, 0))
+    assert struct.unpack("<BBB", p)[2] == 0, "set system params failed"
+    print("set system params OK")
+
+    # snapshot while stopped: no error, simulated time still at zero
+    p = rpc(s, header(MSG["GET_SNAPSHOT"]))
+    vals = struct.unpack("<BB17fB", p)
+    assert vals[-1] == 0, "snapshot returned error"
+    assert vals[2] == 0.0, f"time advanced before run: {vals[2]}"
+    print("snapshot at rest OK (t=0)")
+
+    # plant snapshot before run: the server attaches a loopback plant at boot
+    # and its link is up from attach (two-phase lifecycle), so it already
+    # streams a hover — a sample may or may not have arrived yet by now, we
+    # only assert the plant is attached (a "no sample" check would race the
+    # first hover publish)
+    p = rpc(s, header(MSG["GET_PLANT_SNAPSHOT"]))
+    vals = struct.unpack("<BB14fBBB", p)  # ...isAttached, isReadyToStart, isError
+    assert vals[-3] == 1, "plant not attached"
+    print("plant snapshot before run OK (attached)")
+
+    # run for ~0.5 s of wall time: simulated time must advance with the
+    # real-time thread (loose bounds, the tick pace is not deterministic)
+    p = rpc(s, header(MSG["RUN"]))
+    assert struct.unpack("<BBB", p)[2] == 0, "run failed"
+    time.sleep(0.5)
+    p = rpc(s, header(MSG["GET_SNAPSHOT"]))
+    vals = struct.unpack("<BB17fB", p)
+    assert vals[-1] == 0, "snapshot returned error"
+    t_run = vals[2]
+    assert 0.05 < t_run < 2.0, f"simulated time not advancing: {t_run}"
+    print(f"run + snapshot OK (t={t_run:.3f}s)")
+
+    # plant snapshot while running: fresh samples with growing sequence
+    # (loopback: period 20 ms, latency 50 ms — first sample after ~70 ms)
+    p = rpc(s, header(MSG["GET_PLANT_SNAPSHOT"]))
+    pv = struct.unpack("<BB14fBBB", p)
+    assert (pv[-3], pv[-1]) == (1, 0), f"plant snapshot failed: {pv[-3:]}"
+    seq_run, t_plant = pv[3], pv[2]
+    assert seq_run >= 1, f"plant sequence not started: {seq_run}"
+    assert t_plant > 0, f"plant time not advancing: {t_plant}"
+    print(f"plant snapshot OK (seq={seq_run:.0f}, plantTime={t_plant:.3f}s)")
+
+    # stop: simulated time must freeze
+    p = rpc(s, header(MSG["STOP"]))
+    assert struct.unpack("<BBB", p)[2] == 0, "stop failed"
+    t1 = struct.unpack("<BB17fB", rpc(s, header(MSG["GET_SNAPSHOT"])))[2]
+    time.sleep(0.2)
+    t2 = struct.unpack("<BB17fB", rpc(s, header(MSG["GET_SNAPSHOT"])))[2]
+    assert t1 == t2, f"time still advancing after stop: {t1} -> {t2}"
+    print(f"stop OK (t frozen at {t2:.3f}s)")
+
+    # plant after stop: STOP ends the mission, not the link. The plant stays
+    # connected (two-phase lifecycle: link lives from attach to detach), so a
+    # loopback keeps publishing its held state and the sequence keeps growing.
+    s1 = struct.unpack("<BB14fBBB", rpc(s, header(MSG["GET_PLANT_SNAPSHOT"])))[3]
+    time.sleep(0.2)
+    s2 = struct.unpack("<BB14fBBB", rpc(s, header(MSG["GET_PLANT_SNAPSHOT"])))[3]
+    assert s2 > s1, f"plant link died on mission stop: seq {s1} -> {s2}"
+    print(f"plant link alive after stop OK (seq {s1:.0f} -> {s2:.0f})")
 
     # remove last trajectory item
-    p = rpc(s, header(7))
+    p = rpc(s, header(MSG["TRAJ_REMOVE_LAST"]))
     assert struct.unpack("<BBB", p)[2] == 0, "remove last failed"
     print("remove last OK")
 

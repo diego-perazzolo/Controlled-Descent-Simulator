@@ -153,7 +153,7 @@ typedef struct
 
 
 // System's state (position, velocity, ...)
-typedef struct 
+typedef struct
 {
     /* velocities */
     core_coord_t x_dot;
@@ -182,3 +182,48 @@ typedef struct
     core_coord_t z;
     core_coord_t yaw;
 } core_trackingErrors_t;
+
+// System parameters
+typedef struct
+{
+    // Timestep of simulation / plant loop
+    core_coord_t timestep_seconds;
+    
+    // User forces
+    core_coord_t user_fX;
+    core_coord_t user_fY;
+    core_coord_t user_fZ;
+} core_systemParams_t;
+
+// Plant snapshot data
+typedef struct
+{
+    // Plant-side time of the last sample
+    core_coord_t time_seconds;
+
+    // Sequence number of the last sample
+    unsigned int sequence;
+
+    // Last known plant state
+    core_state_t state;
+
+    // A plant is attached to the system
+    bool isAttached;
+
+    // The plant is ready for a mission (staged / no staging needed)
+    bool isReadyToStart;
+} core_plantSnapshotData_t;
+
+// Snapshot data
+typedef struct
+{
+    // Elapsed time of simulation
+    core_coord_t time_seconds;
+    
+    // System's state
+    core_state_t state;
+
+    // System's tracking errors
+    core_trackingErrors_t errors;
+
+} core_snapshotData_t;

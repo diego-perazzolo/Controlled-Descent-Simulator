@@ -49,6 +49,8 @@ namespace CDS
         virtual bool PerformIntegration(const core_stepParams_t& params) override;
         virtual bool GetState(core_state_t& state) override;
         virtual bool GetTrackingErrors(core_trackingErrors_t& tErrors) override;
+        virtual bool GetCurrentTimeSeconds(core_coord_t& currentTimeSeconds) override;
+
 
         // Augmented runtime state (13 physical + 4 integrators):
         //   [r(3), q(4, quaternion), v(3), omega(3, body rates), IntX, IntY, IntZ, IntPsi]
@@ -61,7 +63,7 @@ namespace CDS
         private:
         void*              m_modelPtr;
         StateVec           m_state;
-        TrajectoryManager* m_trajectoryManagerPtr = nullptr;
+        TrajectoryManager* m_trajectoryManagerPtr;
         TrackingErr        m_trackingErr;
         UserForces         m_userForces;
         double             m_time;

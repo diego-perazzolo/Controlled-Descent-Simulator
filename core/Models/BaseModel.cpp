@@ -23,8 +23,8 @@
 // THE SOFTWARE.
 //
 // =============================================================================
-// File        : <filename.cpp>
-// Description : <brief description of this file>
+// File        : BaseModel.cpp
+// Description : Pure virtual Interface for Models.
 // Author      : Diego Perazzolo
 // Created     : 2026
 // =============================================================================

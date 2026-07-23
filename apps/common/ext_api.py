@@ -5,7 +5,7 @@
 # Description : Declarative description of the external communication API —
 #               the single source of truth for the ext boundary. gen_ext.py
 #               reads this file and generates the struct definitions, the API
-#               contract, the embind bindings and the whole ws-served wire
+#               contract, the embind bindings and the whole web socket wire
 #               layer (protocol, client marshalling, server dispatch).
 #
 #               To add a command: add its structs here (if new), add a Cmd
@@ -205,20 +205,34 @@ COMM = [
                F("actuatorLimits", type="ext_quadRotorActuatorLimits", js="quadRotorActuatorLimits"),
            ]),
 
-    Struct("ext_stepParams", file="comm",
-           doc="struct of the arguments of step function",
+    Struct("ext_systemParams", file="comm",
+           doc="struct of the argument of setSystemParams",
            fields=[
-               F("timeStep_s"),
-               F("userForce", type="ext_userForce"),
+               F("timestep_seconds"),
+               F("user_forces", type="ext_userForce"),
            ]),
 
-    Struct("ext_stepRet", file="comm",
-           doc="struct of the return data of the step function",
-           fields=[
-               F("isError", type="bool"),
-               F("state", type="ext_fullState"),
-               F("err", type="ext_setpointError"),
-           ]),
+    Struct("ext_snapshotData", file="comm",
+        doc="struct of the returned data from getSnapshot",
+        fields=[
+            F("time_seconds", pre="elapsed simulation time"),
+            F("state", type="ext_fullState"),
+            F("err", type="ext_setpointError"),
+            F("isError", type="bool"),
+        ]),
+
+    Struct("ext_plantSnapshotData", file="comm",
+        doc="struct of the returned data from getPlantSnapshot",
+        fields=[
+            F("time_seconds", pre="plant-side time of the last sample"),
+            F("sequence", pre="sequence number of the last sample, exact as a\n"
+                              "   float up to 2^24 samples (~93 h at 50 Hz)"),
+            F("state", type="ext_fullState"),
+            F("isAttached", type="bool"),
+            F("isReadyToStart", type="bool",
+              pre="the plant is ready for a mission (staged / no staging needed)"),
+            F("isError", type="bool"),
+        ]),
 ]
 
 # --------------------------------------------------------------------------- #
@@ -236,23 +250,49 @@ COMMANDS = [
         doc="Initialize QuadRotor model: FF_LQR_01, returns true on error",
         log="init quadrotor"),
 
-    Cmd(3, "Step", "ext_step", "ext_step",
-        req="ext_stepParams", resp="ext_stepRet",
-        doc="Advance one integration step"),
-
-    Cmd(4, "TrajGetPoint", "ext_trajectory_get_point", "ext_trajectory_get_point",
+    Cmd(3, "TrajGetPoint", "ext_trajectory_get_point", "ext_trajectory_get_point",
         req=("scalar", "ext_coord_t", "t"), resp="ext_trajectoryPoint",
         doc="Get a point at time instant t along the trajectory"),
 
-    Cmd(5, "TrajAppendPoly4", "ext_trajectory_append_poly4", "ext_trajectory_append_poly4",
+    Cmd(4, "TrajAppendPoly4", "ext_trajectory_append_poly4", "ext_trajectory_append_poly4",
         req="ext_trajectoryPoly4Params_t", resp="bool",
         doc="Add a trajectory Polynomial 4th order, returns true on error"),
 
-    Cmd(6, "TrajAppendPoint", "ext_trajectory_append_point", "ext_trajectory_append_point",
+    Cmd(5, "TrajAppendPoint", "ext_trajectory_append_point", "ext_trajectory_append_point",
         req="ext_trajectoryPointParams_t", resp="bool",
         doc="Add a trajectory Point, returns true on error"),
 
-    Cmd(7, "TrajRemoveLast", "ext_trajectory_remove_last_item", "ext_trajectory_remove_last_item",
+    Cmd(6, "TrajRemoveLast", "ext_trajectory_remove_last_item", "ext_trajectory_remove_last_item",
         req=None, resp="bool",
         doc="Remove last trajectory item, returns true on error"),
+
+    Cmd(7, "SetSystemParams", "ext_setSystemParams", "ext_setSystemParams",
+        req="ext_systemParams", resp="bool",
+        doc="Set timestep and user forces"),
+
+    Cmd(8, "GetSnapshot", "ext_getSnapshot", "ext_getSnapshot",
+        req=None, resp="ext_snapshotData",
+        doc="Get simulation's time, model's state and tracking error"),
+
+    Cmd(9, "Run", "ext_run", "ext_run",
+        req=None, resp="bool",
+        doc="Run simulation / plant ticking"),
+
+    Cmd(10, "Stop", "ext_stop", "ext_stop",
+        req=None, resp="bool",
+        doc="Stop simulation / plant ticking"),
+
+    Cmd(11, "GetPlantSnapshot", "ext_getPlantSnapshot", "ext_getPlantSnapshot",
+        req=None, resp="ext_plantSnapshotData",
+        doc="Get the plant's last sample: plant time, sequence and state"),
+
+    Cmd(12, "BeginStaging", "ext_beginStaging", "ext_beginStaging",
+        req=("scalar", "ext_coord_t", "safetyAltitude"), resp="bool",
+        doc="Auto-stage the plant to (trajectory vertical range + safetyAltitude, m)",
+        log="begin staging"),
+
+    Cmd(13, "StopStaging", "ext_stopStaging", "ext_stopStaging",
+        req=None, resp="bool",
+        doc="Abort auto-staging (hold in place)",
+        log="stop staging"),
 ]

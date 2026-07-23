@@ -68,6 +68,14 @@ cmake --build build-server
 ./build-server/cds_server          # listens on ws://0.0.0.0:9002 (port as argv[1])
 ```
 
+The websocket server attaches a plant, selected by an optional second argument —
+`loopback` (default) or `sitl`, whilst the first argument is the communication port:
+
+```bash
+./build-server/cds_server 9002 loopback   # default: the echo test double
+./build-server/cds_server 9002 sitl       # ArduPilot SITL over MAVLink/UDP
+```
+
 **3. Serve the frontend with COOP/COEP headers** (required: the proxy uses
 `SharedArrayBuffer` to make the async WebSocket look synchronous to embind):
 
@@ -80,6 +88,35 @@ the `?ws=` query parameter, e.g. `http://localhost:8080/frontend/?ws=ws://192.16
 A quick end-to-end check is available at `http://localhost:8080/apps/ws-served/test/test_ws_e2e.html`.
 
 To go back to the fully in-browser app: `cmake --build build-wasm-only`.
+
+## Running against ArduPilot SITL
+
+The `sitl` plant speaks MAVLink 2 over UDP to an ArduPilot **Copter** SITL
+(use the QuadRotor model in the frontend). Start the server with the plant
+selected — it listens, GCS-style, on `0.0.0.0:14550` and learns the vehicle
+from the first valid datagram:
+
+```bash
+./build-server/cds_server 9002 sitl
+```
+
+Point the SITL's MAVLink output at that port. With the ArduPilot dev tools
+running natively:
+
+```bash
+sim_vehicle.py -v ArduCopter -f quad --out=udp:127.0.0.1:14550
+```
+
+Once telemetry flows the plant ghost appears in the 3D view; use the **Plant
+bar** to stage the vehicle (auto `GUIDED → arm → takeoff → climb`) and then
+run the mission. For the full walkthrough against a SITL in **Docker** —
+wiring, stream rates, a co-connected QGroundControl and the staging workflow —
+see [`sitl.md`](sitl.md).
+
+> The MAVLink C headers under `plants/sitl/mavlink/` are vendored and pinned;
+> see [`plants/sitl/mavlink/VENDORED.md`](../plants/sitl/mavlink/VENDORED.md).
+> `plants/sitl/mavlink_pin.hpp` fails the build if a re-vendor drifts the wire
+> contract of the messages the plant uses.
 
 ## Run Jupyter notebooks in VS Code
 
@@ -114,6 +151,10 @@ The repository includes a GitHub Actions workflow ([`.github/workflows/deploy.ym
 │   ├── CMakeLists.txt
 │   ├── core.hpp / core.cpp                     # C-style public interface (stubs → impl)
 │   ├── core_defs.hpp                           # Internal type definitions
+│   ├── System/
+│   │   └── SystemManager.hpp / .cpp            # System owner: model, trajectory, lock boundary
+│   ├── Plant/
+│   │   └── BasePlant.hpp / BasePlant.cpp       # Base plant class + mailbox exchange (impls live outside core)
 │   ├── Models/
 │   │   ├── BaseModel.hpp / BaseModel.cpp       # Abstract model base
 │   │   ├── Rocket.hpp / Rocket.cpp             # 6 DOF rocket model (Euler angles)
@@ -123,6 +164,20 @@ The repository includes a GitHub Actions workflow ([`.github/workflows/deploy.ym
 │       ├── Trajectory.hpp / Trajectory.cpp     # base trajectory class
 │       ├── Point.hpp / Point.cpp               # waypoint-like
 │       └── Poly4.hpp / Poly4.cpp               # 4th order polynomial trajectory
+│
+├── plants/                                     # Concrete plant implementations (plants → core, one way)
+│   ├── CMakeLists.txt                          # cds_plants static library
+│   ├── loopback/
+│   │   └── LoopbackPlant.hpp / .cpp            # SITL loopback: echoes the reference with period/latency/dropouts
+│   ├── sitl/                                   # ArduPilot SITL plant (MAVLink 2 / UDP)
+│   │   ├── SitlPlant.hpp / .cpp               # Link session, telemetry decode, Guided setpoints, frame alignment
+│   │   ├── UdpTransport.hpp / .cpp            # Minimal UDP endpoint (transport seam; serial link is its sibling)
+│   │   ├── mavlink_pin.hpp                    # Sole MAVLink entry point + wire-contract static_asserts (version pin)
+│   │   └── mavlink/                           # VENDORED MAVLink C headers — never hand-edit (see VENDORED.md)
+│   └── test/
+│       ├── CMakeLists.txt                      # Native integration test project
+│       ├── driver.cpp                          # Plant machinery test (standalone + SystemManager)
+│       └── sitl_driver.cpp                     # SITL plant test vs in-process fake ArduCopter over UDP
 │
 ├── apps/                                       # Deployments of the core; each app has its own CMakeLists
 │   ├── common/                                 # Shared by all apps: the ext API "factory"
@@ -151,7 +206,9 @@ The repository includes a GitHub Actions workflow ([`.github/workflows/deploy.ym
 │           ├── test_protocol.py                # e2e protocol test against a real cds_server (runs in CI)
 │           └── test_ws_e2e.html                # Manual in-browser end-to-end check of the ws-served app
 │
-├── libs/                                       # In-house infrastructure libraries (apps → libs, one way)
+├── libs/                                       # In-house infrastructure libraries (apps/core → libs, one way)
+│   ├── sync/
+│   │   └── TripleBuffer.hpp                    # Wait-free SPSC latest-wins mailbox
 │   └── ws/                                     # Dependency-free WebSocket RPC transport
 │       ├── CMakeLists.txt                      # cds_ws_client (emscripten) / cds_ws_server (native)
 │       ├── ws_server.hpp / ws_server.cpp       # Minimal RFC 6455 WebSocket RPC server

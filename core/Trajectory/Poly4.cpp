@@ -128,7 +128,7 @@ std::array<double, 5> Poly4::ComputeAxisCoeffs(double p0, double v0,
     return a;
 }
 
-bool Poly4::GetReference(const core_coord_t& time, Reference_t& ref)
+bool Poly4::GetReference(const core_coord_t& time, Reference_t& ref) const
 {
     // The trajectory factory passes a time already shifted into the local
     // [0, time_s] window, so no offsetting is performed here.

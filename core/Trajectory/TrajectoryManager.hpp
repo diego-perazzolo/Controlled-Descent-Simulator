@@ -51,22 +51,34 @@ namespace CDS
         /* Remove last trajectory item */
         bool RemoveLastItem(void);
 
-        bool GetReference(const core_coord_t& time, Reference_t& ref);
-        
+        /* Get the reference at a time instant. Logically a pure read: const,
+           but it advances the internal seek cursor (mutable). Returns true on error */
+        bool GetReference(const core_coord_t& time, Reference_t& ref) const;
+
+        /* Vertical range (max − min altitude z) of the whole trajectory, found
+           by sampling every item across its duration. Used to size the plant
+           staging altitude (the vehicle must climb enough to cover the
+           trajectory's vertical travel). Returns true on error (empty) */
+        bool GetAltitudeRange(core_coord_t& range) const;
+
         private:
-        
+
         /* Append a trajectory item to the stack */
         bool AppendItem(std::unique_ptr<Trajectory> itemPtr);
-        
+
         /* Switch to the next trajectory item */
-        bool GoNextItem(void);
+        bool GoNextItem(void) const;
 
         /*Switch to the previews trajectory item*/
-        bool GoPrevItem(void);
+        bool GoPrevItem(void) const;
 
         std::vector<std::unique_ptr<Trajectory>> m_trajectoryItems;
-        int m_currentItemIndex;
-        core_coord_t m_absoluteStartTime;
+
+        /* Seek cursor: caching detail of GetReference, not observable state —
+           hence mutable. NOTE: const does NOT mean thread-safe here; every
+           access is serialized by the SystemManager lock */
+        mutable int m_currentItemIndex;
+        mutable core_coord_t m_absoluteStartTime;
         
     };
 }

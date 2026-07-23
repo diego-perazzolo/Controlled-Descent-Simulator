@@ -134,21 +134,36 @@ EMSCRIPTEN_BINDINGS(simulator) {
         .field("quadRotorPar",            &ext_initQuadRotorParams::params)
         .field("quadRotorActuatorLimits", &ext_initQuadRotorParams::actuatorLimits);
 
-    value_object<ext_stepParams>("ext_stepParams")
-        .field("timeStep_s", &ext_stepParams::timeStep_s)
-        .field("userForce",  &ext_stepParams::userForce);
+    value_object<ext_systemParams>("ext_systemParams")
+        .field("timestep_seconds", &ext_systemParams::timestep_seconds)
+        .field("user_forces",      &ext_systemParams::user_forces);
 
-    value_object<ext_stepRet>("ext_stepRet")
-        .field("isError", &ext_stepRet::isError)
-        .field("state",   &ext_stepRet::state)
-        .field("err",     &ext_stepRet::err);
+    value_object<ext_snapshotData>("ext_snapshotData")
+        .field("time_seconds", &ext_snapshotData::time_seconds)
+        .field("state",        &ext_snapshotData::state)
+        .field("err",          &ext_snapshotData::err)
+        .field("isError",      &ext_snapshotData::isError);
+
+    value_object<ext_plantSnapshotData>("ext_plantSnapshotData")
+        .field("time_seconds",   &ext_plantSnapshotData::time_seconds)
+        .field("sequence",       &ext_plantSnapshotData::sequence)
+        .field("state",          &ext_plantSnapshotData::state)
+        .field("isAttached",     &ext_plantSnapshotData::isAttached)
+        .field("isReadyToStart", &ext_plantSnapshotData::isReadyToStart)
+        .field("isError",        &ext_plantSnapshotData::isError);
 
     // --- Functions exposed to JS ---
     function("ext_rocketInit", &ext_initRocket_FFLQR01);
     function("ext_quadRotorInit", &ext_initQuadRotor_FFLQR01);
-    function("ext_step", &ext_step);
     function("ext_trajectory_get_point", &ext_trajectory_get_point);
     function("ext_trajectory_append_poly4", &ext_trajectory_append_poly4);
     function("ext_trajectory_append_point", &ext_trajectory_append_point);
     function("ext_trajectory_remove_last_item", &ext_trajectory_remove_last_item);
+    function("ext_setSystemParams", &ext_setSystemParams);
+    function("ext_getSnapshot", &ext_getSnapshot);
+    function("ext_run", &ext_run);
+    function("ext_stop", &ext_stop);
+    function("ext_getPlantSnapshot", &ext_getPlantSnapshot);
+    function("ext_beginStaging", &ext_beginStaging);
+    function("ext_stopStaging", &ext_stopStaging);
 }

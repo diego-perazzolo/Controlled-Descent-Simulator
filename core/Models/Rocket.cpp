@@ -163,6 +163,8 @@ Rocket::Rocket()
     m_trackingErr.fill(0);
     m_userForces.fill(0);
 
+    m_trajectoryManagerPtr = nullptr;
+
     m_time = 0;
 
 }
@@ -313,6 +315,12 @@ bool Rocket::GetTrackingErrors(core_trackingErrors_t& tErrors)
     tErrors.y   = m_trackingErr[1];
     tErrors.z   = m_trackingErr[2];
     tErrors.yaw = m_trackingErr[3];
+    return false;
+}
+
+bool Rocket::GetCurrentTimeSeconds(core_coord_t& currentTimeSeconds)
+{
+    currentTimeSeconds = m_time;
     return false;
 }
 

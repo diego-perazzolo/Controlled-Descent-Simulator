@@ -29,7 +29,10 @@
 // Author      : Diego Perazzolo
 // Created     : 2026
 // =============================================================================
+#include <mutex>
+
 #include "core.hpp"
+#include "SystemManager.hpp"
 #include "Models/Rocket.hpp"
 #include "Models/QuadRotor.hpp"
 #include "Trajectory/TrajectoryManager.hpp"
@@ -38,168 +41,114 @@ using namespace CDS;
 
 struct
 {
-    BaseModel *pModel;
-    TrajectoryManager *pTrajectoryManager;
+    SystemManager SM;
 } _ctx = {};
 
 /* private types */
 
 /* static functions */
 
+/* global functions */
+
+/* Updates the system of just one tick, which is dt_seconds long. Returns true on error
+    ATTENTION: this function is intended to be called at pace,
+        from a proper Real-Time thread. It is NOT suited to be
+        called from a frontend via ext_... layer. This function
+        handles physics integration, plant interactions, near-safety
+        functionalities; it should be treated accordingly */
+bool g_core_tick(core_coord_t dt_seconds)
+{
+    return _ctx.SM.ExecuteTick(dt_seconds);
+}
+
+/* Get system's tick period expressed in seconds. Returns true on error */
+bool g_core_getTickPeriod(core_coord_t &tickPeriod_second)
+{
+    SystemManager::systemManagerParams_t params;
+    bool ret = _ctx.SM.GetParameters(params);
+    tickPeriod_second = params.timestep_seconds;
+
+    return ret;
+}
+
+/* Attach new plant to the System Manager */
+bool g_core_attachPlant(std::unique_ptr<BasePlant> plant)
+{
+    return _ctx.SM.AttachPlant(std::move(plant));
+}
+
+/* Detach current plant from system manager*/
+bool g_core_detachPlant()
+{
+    return _ctx.SM.DetachPlant();
+}
+
+
 /* public functions */
 
 bool core_init()
 {
-
     return false;
 }
 
 bool core_rocketFfLqr01_init(const core_rocketParams_t rPar)
 {
-    if (_ctx.pModel)
+    // Configure the model. The SystemManager always 
+    // receives a fully-initialized model
+    auto model = std::make_unique<Rocket>();
+    if (model->SetModelParams(rPar))
     {
-        delete _ctx.pModel;
-        _ctx.pModel = nullptr;
+        // Err
+        return true;
     }
 
-    _ctx.pModel = new Rocket();
-
-    // Initializing rocket's parameters
-    return _ctx.pModel->SetModelParams(rPar);
+    return _ctx.SM.InitModel(std::move(model));
 }
 
 bool core_quadRotorFfLqr01_init(const core_quadRotorParams_t rPar)
 {
-    if (_ctx.pModel)
+    // Configure the model. The SystemManager always 
+    // receives a fully-initialized model
+    auto model = std::make_unique<QuadRotor>();
+    if (model->SetModelParams(rPar))
     {
-        delete _ctx.pModel;
-        _ctx.pModel = nullptr;
+        // Err
+        return true;
     }
 
-    _ctx.pModel = new QuadRotor();
-
-    // Initializing quadrotor's parameters
-    return _ctx.pModel->SetModelParams(rPar);
+    return _ctx.SM.InitModel(std::move(model));
 }
 
 bool core_trajectoryInit()
 {
-    if (_ctx.pTrajectoryManager)
-    {
-        delete _ctx.pTrajectoryManager;
-        _ctx.pTrajectoryManager = nullptr;
-    }
-
-    _ctx.pTrajectoryManager = new TrajectoryManager();
-
-    // Default trajectory
-#if 0
-    const core_trajectoryPoly4Params_t poly4Params = {
-        .initialPos = {-50, 50, 80},
-        .initialVel = {0, 5, -50},
-        .finalPos = {0, 0, 0},
-        .finalVel = {0, 0, 0},
-        .finalAcc = {0, 0, 0},
-        .time_s = 20
-    };
-
-    const core_trajectoryPoly4Params_t poly4Params2 = {
-        .initialPos = {0, 0, 0},
-        .initialVel = {10, 0, 0},
-        .finalPos = {-50, 50, 80},
-        .finalVel = {0, 0, 0},
-        .finalAcc = {0, 0, 0},
-        .time_s = 10
-    };
-
-    bool ret = true;
-
-    ret &= core_trajectoryAppendPoly4(poly4Params);
-    ret &= core_trajectoryAppendPoly4(poly4Params2);
-   
-    for(int i = 0; i < 1000; i++)
-    {
-        core_trajectoryPointParams_t pointParams1;
-        const core_coord_t totalTime_s = 10;
-        const core_coord_t timeStep = totalTime_s / 1000;
-        pointParams1.finalPos[0] = 1 * i * timeStep;
-        pointParams1.finalPos[1] = 2 * i * timeStep;
-        pointParams1.finalPos[2] = 3 * i * timeStep;
-        pointParams1.time_s = timeStep;
-
-        ret &= core_trajectoryAppendPoint(pointParams1);
-    }
-#endif
-
-    return false;
+    return _ctx.SM.InitTrajectory();
 }
 
 bool core_trajectoryAppendPoly4(const core_trajectoryPoly4Params_t tPar)
 {
-    if (_ctx.pTrajectoryManager == nullptr || _ctx.pModel == nullptr)
-    {
-        // ERR
-        return true;
-    }
-
-    _ctx.pTrajectoryManager->AppendPoly4(tPar);
-    _ctx.pModel->SetTrajectoryManager(_ctx.pTrajectoryManager);
-
-    return false;
+    return _ctx.SM.MutateTrajectoryManager([tPar](TrajectoryManager &tM)
+                                  { return tM.AppendPoly4(tPar);});
 }
 
 bool core_trajectoryAppendPoint(const core_trajectoryPointParams_t tPar)
 {
-    if (_ctx.pTrajectoryManager == nullptr || _ctx.pModel == nullptr)
-    {
-        // ERR
-        return true;
-    }
-
-    _ctx.pTrajectoryManager->AppendPoint(tPar);
-    _ctx.pModel->SetTrajectoryManager(_ctx.pTrajectoryManager);
-
-    return false;
+    return _ctx.SM.MutateTrajectoryManager([tPar](TrajectoryManager &tM)
+                                  { return tM.AppendPoint(tPar);});
 }
 
 bool core_trajectoryRemoveLastItem(void)
 {
-    if (_ctx.pTrajectoryManager == nullptr)
-    {
-        // ERR
-        return true;
-    }
-
-    return _ctx.pTrajectoryManager->RemoveLastItem();
-}
-
-bool core_performSimulationStep(const core_stepParams_t sPar)
-{
-    return _ctx.pModel->PerformIntegration(sPar);
-}
-
-bool core_getState(core_state_t *pState)
-{
-    if (pState == nullptr)
-    {
-        // nullptr
-        return true;
-    }
-
-    return _ctx.pModel->GetState(*pState);
-}
-
-bool core_getTrackingError(core_trackingErrors_t *pTrackingErr)
-{
-    return _ctx.pModel->GetTrackingErrors(*pTrackingErr);
+    return _ctx.SM.MutateTrajectoryManager([](TrajectoryManager &tM)
+                                  { return tM.RemoveLastItem();});
 }
 
 bool core_getTrajectoryPoint(core_coord_t time, Vec3 &point)
 {
     Reference_t ref;
-    if (_ctx.pTrajectoryManager == nullptr || _ctx.pTrajectoryManager->GetReference(time, ref))
+    if (_ctx.SM.ExecuteOnTrajectoryManager([time, &ref](const TrajectoryManager &tM)
+                                  { return tM.GetReference(time, ref);}))
     {
-        // Error
+        // Err
         return true;
     }
 
@@ -208,4 +157,74 @@ bool core_getTrajectoryPoint(core_coord_t time, Vec3 &point)
     point[2] = ref.pos[2];
 
     return false;
+}
+
+bool core_setSystemParams(const core_systemParams_t &par)
+{
+    SystemManager::userForces_t uF = {par.user_fX, par.user_fY, par.user_fZ};
+
+    bool ret = _ctx.SM.SetParameters({.timestep_seconds = par.timestep_seconds});
+    ret |= _ctx.SM.SetUserForces(uF);
+
+    return ret;
+}
+
+bool core_getSnapshot(core_snapshotData_t &par)
+{
+
+    return _ctx.SM.ExecuteOnModel([&par](BaseModel &model)
+                                  {
+                                    bool ret = model.GetState(par.state);
+                                    ret |= model.GetTrackingErrors(par.errors);
+                                    ret |= model.GetCurrentTimeSeconds(par.time_seconds);
+
+                                    return ret;
+                                });
+}
+
+bool core_getPlantSnapshot(core_plantSnapshotData_t &par)
+{
+    par.isAttached = false;
+
+    return _ctx.SM.ExecuteOnPlant([&par](BasePlant &plant)
+        {
+        /* the lambda only runs with a plant attached */
+        par.isAttached = true;
+        par.isReadyToStart = plant.IsReadyToStart();
+
+        /* one Pull gets time, sequence and state as
+            a single coherent sample */
+        BasePlant::plantMeasurements_t measurements = {};
+        if (plant.PullMeasurements(measurements))
+        {
+            // No sample published yet, error
+            return true;
+        }
+
+        par.time_seconds = measurements.plantTime_seconds;
+        par.sequence = measurements.sequence;
+        par.state = measurements.state;
+
+        return false;
+    });
+}
+
+bool core_run(void)
+{
+    return _ctx.SM.Run();
+}
+
+bool core_stop(void)
+{
+    return _ctx.SM.Stop();
+}
+
+bool core_beginStaging(core_coord_t safetyAltitude)
+{
+    return _ctx.SM.BeginStaging(safetyAltitude);
+}
+
+bool core_stopStaging(void)
+{
+    return _ctx.SM.StopStaging();
 }

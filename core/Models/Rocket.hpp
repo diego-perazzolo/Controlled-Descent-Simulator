@@ -45,6 +45,7 @@ namespace CDS
         virtual bool PerformIntegration(const core_stepParams_t& params) override;
         virtual bool GetState(core_state_t& state) override;
         virtual bool GetTrackingErrors(core_trackingErrors_t& tErrors) override; 
+        virtual bool GetCurrentTimeSeconds(core_coord_t& currentTimeSeconds) override;
 
         using StateVec = std::array<double, 16>;   // augmented state (12 + 4 integrals)
         using InputVec = std::array<double, 4>;    // [F1, T1, T2, T3]
@@ -55,7 +56,7 @@ namespace CDS
         private:
         void* m_modelPtr;
         StateVec m_state;
-        TrajectoryManager* m_trajectoryManagerPtr = nullptr;
+        TrajectoryManager* m_trajectoryManagerPtr;
         TrackingErr m_trackingErr;
         UserForces m_userForces;
         double m_time;

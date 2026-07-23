@@ -15,6 +15,7 @@ if (EMSCRIPTEN)
 endif()
 
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../../../core core)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../../../plants plants)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../../../libs/ws libs_ws)
 
 # ext API generation: re-runs gen_ext.py when ext_api.py changes
@@ -32,5 +33,7 @@ target_include_directories(cds_server PRIVATE
     ${CDS_EXT_COMMON_GEN_DIR}     # ext_comm.hpp, ext_defs.hpp
 )
 
-target_link_libraries(cds_server PRIVATE cds_core cds_ws_server)
+# cds_core arrives transitively through cds_plants (PUBLIC), together with
+# its include dirs: listing it again duplicates it on the link line
+target_link_libraries(cds_server PRIVATE cds_plants cds_ws_server)
 add_dependencies(cds_server cds_gen_ext)

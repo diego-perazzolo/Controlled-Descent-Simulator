@@ -23,8 +23,8 @@
 // THE SOFTWARE.
 //
 // =============================================================================
-// File        : <filename.cpp>
-// Description : <brief description of this file>
+// File        : BaseModel.hpp
+// Description : Header file for BaseModel, implements a pure virtual class
 // Author      : Diego Perazzolo
 // Created     : 2026
 // =============================================================================
@@ -53,7 +53,7 @@ namespace CDS
         virtual bool PerformIntegration(const core_stepParams_t& params) = 0;
         virtual bool GetState(core_state_t& state) = 0; 
         virtual bool GetTrackingErrors(core_trackingErrors_t& tErrors) = 0; 
-
+        virtual bool GetCurrentTimeSeconds(core_coord_t& currentTimeSeconds) = 0;
         /* Private variables */
 
     };

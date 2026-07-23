@@ -105,9 +105,38 @@
 
         /* ── Views ── */
         #view-charts { display: grid; }
-        #view-3d     { display: none; width: 100%; height: calc(100vh - 200px);
+        #view-3d     { display: none; position: relative; width: 100%; height: calc(100vh - 200px);
                        background: #0d0d0d; border-radius: 4px; overflow: hidden; }
         #view-params { display: none; }
+
+        /* ── 3D view source toggles ── */
+        #view3d-sources {
+            position: absolute; top: 10px; left: 10px; z-index: 5;
+            display: flex; gap: 14px; padding: 6px 10px;
+            background: rgba(20, 20, 20, 0.75); border: 1px solid #2a2a2a;
+            border-radius: 4px; font-size: 0.85em;
+        }
+        #view3d-sources label { color: #aaa; display: flex; align-items: center; gap: 5px; cursor: pointer; }
+        #view3d-sources label.disabled { color: #555; cursor: default; }
+        #view3d-sources .swatch {
+            width: 11px; height: 11px; border-radius: 2px; flex: 0 0 auto;
+            border: 1px solid rgba(255, 255, 255, 0.25);
+        }
+        #view3d-sources label.disabled .swatch { opacity: 0.3; }
+
+        /* ── Plant bar (staging controls, shown when a plant is connected) ── */
+        #plantBar {
+            display: none;   /* JS reveals it once a plant is connected */
+            align-items: center; gap: 12px; margin-bottom: 14px; flex-wrap: wrap;
+            padding: 6px 12px; border: 1px solid #234; border-radius: 4px;
+            background: rgba(51, 255, 136, 0.05);
+        }
+        #plantBar .lbl { color: #33ff88; font-size: 0.85em; font-weight: bold; }
+        #plantBar .plant-coeff { color: #888; font-size: 0.85em; display: flex; align-items: center; gap: 5px; }
+        #plantBar #stageCoeff { width: 60px; padding: 6px 8px; }
+        #plantStatus { font-size: 0.85em; color: #888; min-width: 130px; }
+        #plantStatus.ready   { color: #33ff88; }
+        #plantStatus.staging { color: #ffaa33; }
 
         /* ── Numeric grid ── */
         .grid {
@@ -270,6 +299,17 @@
     <span class="lbl">N</span>
 </div>
 
+<!-- ════ Plant bar (staging; shown when a plant is connected) ════ -->
+<div id="plantBar">
+    <span class="lbl">Plant</span>
+    <span id="plantStatus">—</span>
+    <label class="plant-coeff" title="Staging altitude = trajectory vertical range (max − min) + this margin">
+        Altitude&nbsp;margin<input type="number" id="stageSafetyAlt" value="2" min="0" step="1">m
+    </label>
+    <button id="btnBeginStaging">Begin staging</button>
+    <button id="btnStopStaging" disabled>Stop staging</button>
+</div>
+
 <!-- ════ Charts view ════ -->
 <div id="view-charts">
     <div class="grid">
@@ -317,12 +357,20 @@
         <div class="panel chart-panel"><h2>x (m)</h2>        <canvas id="chartX"></canvas></div>
         <div class="panel chart-panel"><h2>y (m)</h2>        <canvas id="chartY"></canvas></div>
         <div class="panel chart-panel"><h2>z (m)</h2>        <canvas id="chartZ"></canvas></div>
+        <div class="panel chart-panel"><h2>yaw (rad)</h2>    <canvas id="chartYaw"></canvas></div>
         <div class="panel chart-panel"><h2>|err| (m)</h2>    <canvas id="chartErr"></canvas></div>
     </div>
 </div>
 
 <!-- ════ 3D view ════ -->
-<div id="view-3d"></div>
+<div id="view-3d">
+    <div id="view3d-sources">
+        <label><span class="swatch" style="background:#ff9900"></span><input type="checkbox" id="chkViewTraj" checked> Reference trajectory</label>
+        <label><span class="swatch" style="background:#0099ff"></span><input type="checkbox" id="chkViewModel" checked> Model</label>
+        <label id="lblViewPlant" class="disabled" title="Enabled when plant snapshots are available">
+            <span class="swatch" style="background:#33ff88"></span><input type="checkbox" id="chkViewPlant" disabled> Plant</label>
+    </div>
+</div>
 
 <!-- ════ Params view ════ -->
 <div id="view-params">
