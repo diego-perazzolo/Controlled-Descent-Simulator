@@ -540,11 +540,15 @@ function make3DRenderer() {
         plantGroup.visible = false;
         scene.add(plantGroup);
 
-        // Trail line
+        // Trail line. frustumCulled = false: these lines update their geometry
+        // every frame without recomputing the bounding sphere, so the cached
+        // (stale) sphere makes the culler drop the whole line when zoomed in —
+        // never cull them, they are cheap and must stay visible at any zoom.
         trailLine = new THREE.Line(
             new THREE.BufferGeometry(),
             new THREE.LineBasicMaterial({ color: 0x0099ff, transparent: true, opacity: 0.55 })
         );
+        trailLine.frustumCulled = false;
         scene.add(trailLine);
 
         // Plant trail line
@@ -552,6 +556,7 @@ function make3DRenderer() {
             new THREE.BufferGeometry(),
             new THREE.LineBasicMaterial({ color: 0x33ff88, transparent: true, opacity: 0.5 })
         );
+        plantTrailLine.frustumCulled = false;
         scene.add(plantTrailLine);
 
         // Trajectory preview
@@ -559,6 +564,7 @@ function make3DRenderer() {
             new THREE.BufferGeometry(),
             new THREE.LineBasicMaterial({ color: 0xff9900, transparent: true, opacity: 0.55 })
         );
+        trajectoryLine.frustumCulled = false;
         scene.add(trajectoryLine);
 
         // Resize observer
