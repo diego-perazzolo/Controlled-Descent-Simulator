@@ -223,6 +223,15 @@ std::vector<uint8_t> server_dispatch(const std::vector<uint8_t>& msg)
             return _respBool(h, ext_stopStaging());
         }
 
+        case WS_MSG_INIT_QUAD_ROTOR_MPC:
+        {
+            reqInitQuadRotorMPC_t req = {};
+            if(_parse(msg, req)) return _respBool(h, true);
+
+            printf("[cds-server] init quadrotor mpc\n");
+            return _respBool(h, ext_initQuadRotor_MPC01(req.p));
+        }
+
         default:
             // Err: unknown message type
             return _respBool(h, true);

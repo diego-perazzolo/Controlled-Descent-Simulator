@@ -166,4 +166,5 @@ EMSCRIPTEN_BINDINGS(simulator) {
     function("ext_getPlantSnapshot", &ext_getPlantSnapshot);
     function("ext_beginStaging", &ext_beginStaging);
     function("ext_stopStaging", &ext_stopStaging);
+    function("ext_quadRotorMpcInit", &ext_initQuadRotor_MPC01);
 }

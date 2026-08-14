@@ -297,3 +297,19 @@ bool ext_stopStaging(void)
 
     return resp.isError != 0;
 }
+
+bool ext_initQuadRotor_MPC01(ext_initQuadRotorParams params)
+{
+    reqInitQuadRotorMPC_t req = {};
+    respBool_t resp = {};
+
+    req.h.type = WS_MSG_INIT_QUAD_ROTOR_MPC;
+    req.p = params;
+
+    if(_rpc(req, resp))
+    {
+        return true;
+    }
+
+    return resp.isError != 0;
+}

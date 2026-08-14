@@ -35,6 +35,7 @@
 #include "SystemManager.hpp"
 #include "Models/Rocket.hpp"
 #include "Models/QuadRotor.hpp"
+#include "Models/QuadRotorMPC.hpp"
 #include "Trajectory/TrajectoryManager.hpp"
 
 using namespace CDS;
@@ -110,6 +111,20 @@ bool core_quadRotorFfLqr01_init(const core_quadRotorParams_t rPar)
     // Configure the model. The SystemManager always 
     // receives a fully-initialized model
     auto model = std::make_unique<QuadRotor>();
+    if (model->SetModelParams(rPar))
+    {
+        // Err
+        return true;
+    }
+
+    return _ctx.SM.InitModel(std::move(model));
+}
+
+bool core_quadRotorMPC01_init(const core_quadRotorParams_t rPar)
+{
+    // Configure the model. The SystemManager always
+    // receives a fully-initialized model
+    auto model = std::make_unique<QuadRotorMPC>();
     if (model->SetModelParams(rPar))
     {
         // Err

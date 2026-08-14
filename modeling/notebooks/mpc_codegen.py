@@ -46,12 +46,13 @@ class MpcCodegen(BaseCodegen):
 
     # ---- shared binding preamble ----
     def _bind_state_input(self, with_userf):
+        # [[maybe_unused]]: translation-invariant dynamics leave position unused, etc.
         SN = [str(s) for s in self._state_syms]; IN = [str(s) for s in self._input_syms]
-        L = [f"    const double {n} = s[{i}];" for i, n in enumerate(SN)]
-        L += [f"    const double {n} = u[{i}];" for i, n in enumerate(IN)]
+        L = [f"    [[maybe_unused]] const double {n} = s[{i}];" for i, n in enumerate(SN)]
+        L += [f"    [[maybe_unused]] const double {n} = u[{i}];" for i, n in enumerate(IN)]
         if with_userf:
             if self._uforce_syms:
-                L += [f"    const double {str(s)} = userF[{i}];" for i, s in enumerate(self._uforce_syms)]
+                L += [f"    [[maybe_unused]] const double {str(s)} = userF[{i}];" for i, s in enumerate(self._uforce_syms)]
             else:
                 L += ["    (void)userF;"]
         return L

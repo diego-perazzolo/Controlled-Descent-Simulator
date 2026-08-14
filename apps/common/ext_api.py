@@ -295,4 +295,9 @@ COMMANDS = [
         req=None, resp="bool",
         doc="Abort auto-staging (hold in place)",
         log="stop staging"),
+
+    Cmd(14, "InitQuadRotorMPC", "ext_initQuadRotor_MPC01", "ext_quadRotorMpcInit",
+        req="ext_initQuadRotorParams", resp="bool",
+        doc="Initialize QuadRotor model: MPC_01 (nonlinear MPC), returns true on error",
+        log="init quadrotor mpc"),
 ]

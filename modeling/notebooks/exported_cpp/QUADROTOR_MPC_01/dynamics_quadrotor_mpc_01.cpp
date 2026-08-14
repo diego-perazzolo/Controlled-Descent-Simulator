@@ -82,26 +82,26 @@ void QUADROTOR_MPC_01::SetParam(ParamName n, double v) {
 QUADROTOR_MPC_01::StateVec QUADROTOR_MPC_01::Dynamics(const StateVec& s, const InputVec& u,
                                     const UserForces& userF) const
 {
-    const double r_x = s[0];
-    const double r_y = s[1];
-    const double r_z = s[2];
-    const double q_w = s[3];
-    const double q_x = s[4];
-    const double q_y = s[5];
-    const double q_z = s[6];
-    const double v_x = s[7];
-    const double v_y = s[8];
-    const double v_z = s[9];
-    const double w_x = s[10];
-    const double w_y = s[11];
-    const double w_z = s[12];
-    const double T1 = u[0];
-    const double T2 = u[1];
-    const double T3 = u[2];
-    const double T4 = u[3];
-    const double uFx = userF[0];
-    const double uFy = userF[1];
-    const double uFz = userF[2];
+    [[maybe_unused]] const double r_x = s[0];
+    [[maybe_unused]] const double r_y = s[1];
+    [[maybe_unused]] const double r_z = s[2];
+    [[maybe_unused]] const double q_w = s[3];
+    [[maybe_unused]] const double q_x = s[4];
+    [[maybe_unused]] const double q_y = s[5];
+    [[maybe_unused]] const double q_z = s[6];
+    [[maybe_unused]] const double v_x = s[7];
+    [[maybe_unused]] const double v_y = s[8];
+    [[maybe_unused]] const double v_z = s[9];
+    [[maybe_unused]] const double w_x = s[10];
+    [[maybe_unused]] const double w_y = s[11];
+    [[maybe_unused]] const double w_z = s[12];
+    [[maybe_unused]] const double T1 = u[0];
+    [[maybe_unused]] const double T2 = u[1];
+    [[maybe_unused]] const double T3 = u[2];
+    [[maybe_unused]] const double T4 = u[3];
+    [[maybe_unused]] const double uFx = userF[0];
+    [[maybe_unused]] const double uFy = userF[1];
+    [[maybe_unused]] const double uFz = userF[2];
 
     StateVec dxdt{};
     const double cse0 = 1.0/m_p.m;
@@ -157,23 +157,23 @@ QUADROTOR_MPC_01::StateVec QUADROTOR_MPC_01::Dynamics(const StateVec& s, const I
 void QUADROTOR_MPC_01::Jacobians(const StateVec& s, const InputVec& u,
                                 double fx[STATE_DIM][STATE_DIM], double fu[STATE_DIM][INPUT_DIM]) const
 {
-    const double r_x = s[0];
-    const double r_y = s[1];
-    const double r_z = s[2];
-    const double q_w = s[3];
-    const double q_x = s[4];
-    const double q_y = s[5];
-    const double q_z = s[6];
-    const double v_x = s[7];
-    const double v_y = s[8];
-    const double v_z = s[9];
-    const double w_x = s[10];
-    const double w_y = s[11];
-    const double w_z = s[12];
-    const double T1 = u[0];
-    const double T2 = u[1];
-    const double T3 = u[2];
-    const double T4 = u[3];
+    [[maybe_unused]] const double r_x = s[0];
+    [[maybe_unused]] const double r_y = s[1];
+    [[maybe_unused]] const double r_z = s[2];
+    [[maybe_unused]] const double q_w = s[3];
+    [[maybe_unused]] const double q_x = s[4];
+    [[maybe_unused]] const double q_y = s[5];
+    [[maybe_unused]] const double q_z = s[6];
+    [[maybe_unused]] const double v_x = s[7];
+    [[maybe_unused]] const double v_y = s[8];
+    [[maybe_unused]] const double v_z = s[9];
+    [[maybe_unused]] const double w_x = s[10];
+    [[maybe_unused]] const double w_y = s[11];
+    [[maybe_unused]] const double w_z = s[12];
+    [[maybe_unused]] const double T1 = u[0];
+    [[maybe_unused]] const double T2 = u[1];
+    [[maybe_unused]] const double T3 = u[2];
+    [[maybe_unused]] const double T4 = u[3];
 
     const double cse0 = 0.5*w_x;
     const double cse1 = -cse0;

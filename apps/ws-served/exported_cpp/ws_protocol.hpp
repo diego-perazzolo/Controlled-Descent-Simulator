@@ -50,24 +50,25 @@ constexpr uint16_t WS_DEFAULT_PORT = 9002;
    carry different bytes, and both sides refuse to talk: a stale
    simulator.wasm against a newer cds_server fails loudly instead
    of corrupting the parsing. */
-constexpr uint8_t WS_PROTOCOL_VERSION = 0x47;
+constexpr uint8_t WS_PROTOCOL_VERSION = 0x85;
 
 /* Message types: request and matching response carry the same type id */
 enum MsgType : uint8_t
 {
-    WS_MSG_INIT_ROCKET        = 1, // -> respBool_t
-    WS_MSG_INIT_QUAD_ROTOR    = 2, // -> respBool_t
-    WS_MSG_TRAJ_GET_POINT     = 3, // -> respTrajGetPoint_t
-    WS_MSG_TRAJ_APPEND_POLY4  = 4, // -> respBool_t
-    WS_MSG_TRAJ_APPEND_POINT  = 5, // -> respBool_t
-    WS_MSG_TRAJ_REMOVE_LAST   = 6, // -> respBool_t
-    WS_MSG_SET_SYSTEM_PARAMS  = 7, // -> respBool_t
-    WS_MSG_GET_SNAPSHOT       = 8, // -> respGetSnapshot_t
-    WS_MSG_RUN                = 9, // -> respBool_t
-    WS_MSG_STOP               = 10, // -> respBool_t
-    WS_MSG_GET_PLANT_SNAPSHOT = 11, // -> respGetPlantSnapshot_t
-    WS_MSG_BEGIN_STAGING      = 12, // -> respBool_t
-    WS_MSG_STOP_STAGING       = 13, // -> respBool_t
+    WS_MSG_INIT_ROCKET         = 1, // -> respBool_t
+    WS_MSG_INIT_QUAD_ROTOR     = 2, // -> respBool_t
+    WS_MSG_TRAJ_GET_POINT      = 3, // -> respTrajGetPoint_t
+    WS_MSG_TRAJ_APPEND_POLY4   = 4, // -> respBool_t
+    WS_MSG_TRAJ_APPEND_POINT   = 5, // -> respBool_t
+    WS_MSG_TRAJ_REMOVE_LAST    = 6, // -> respBool_t
+    WS_MSG_SET_SYSTEM_PARAMS   = 7, // -> respBool_t
+    WS_MSG_GET_SNAPSHOT        = 8, // -> respGetSnapshot_t
+    WS_MSG_RUN                 = 9, // -> respBool_t
+    WS_MSG_STOP                = 10, // -> respBool_t
+    WS_MSG_GET_PLANT_SNAPSHOT  = 11, // -> respGetPlantSnapshot_t
+    WS_MSG_BEGIN_STAGING       = 12, // -> respBool_t
+    WS_MSG_STOP_STAGING        = 13, // -> respBool_t
+    WS_MSG_INIT_QUAD_ROTOR_MPC = 14, // -> respBool_t
 };
 
 #pragma pack(push, 1)
@@ -153,6 +154,12 @@ typedef struct
     header_t h;
 } reqStopStaging_t;
 
+typedef struct
+{
+    header_t h;
+    ext_initQuadRotorParams p;
+} reqInitQuadRotorMPC_t;
+
 /* ------------------------------ responses ------------------------------- */
 
 /* generic boolean response: isError follows the core convention (1 = error) */
@@ -211,6 +218,7 @@ static_assert(sizeof(reqStop_t)              ==  2, "wire layout drift");
 static_assert(sizeof(reqGetPlantSnapshot_t)  ==  2, "wire layout drift");
 static_assert(sizeof(reqBeginStaging_t)      ==  6, "wire layout drift"); // 2 + 1f
 static_assert(sizeof(reqStopStaging_t)       ==  2, "wire layout drift");
+static_assert(sizeof(reqInitQuadRotorMPC_t)  == 50, "wire layout drift"); // 2 + 12f
 static_assert(sizeof(respBool_t)             ==  3, "wire layout drift"); // 2 + u8
 static_assert(sizeof(respTrajGetPoint_t)     == 14, "wire layout drift"); // 2 + 1f + 1f + 1f
 static_assert(sizeof(respGetSnapshot_t)      == 71, "wire layout drift"); // 2 + 1f + 12f + 4f + u8

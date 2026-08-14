@@ -202,6 +202,29 @@ bool ext_initQuadRotor_FFLQR01(ext_initQuadRotorParams params)
     return ret;
 }
 
+bool ext_initQuadRotor_MPC01(ext_initQuadRotorParams params)
+{
+
+    /* Initialize core, return true if error */
+
+    // Struct conversion (same physical params as the FF+LQR quadrotor)
+    core_quadRotorParams_t rPar = _convertExtToCore_quadRotorParams(params.params, params.actuatorLimits);
+
+    // Core initialization
+    bool ret = core_init();
+    RETURN_IF_TRUE(ret);
+
+    // QuadRotor MPC initialization
+    ret = core_quadRotorMPC01_init(rPar);
+    RETURN_IF_TRUE(ret);
+
+    // Trajectory initialization
+    ret = core_trajectoryInit();
+    RETURN_IF_TRUE(ret);
+
+    return ret;
+}
+
 bool ext_trajectory_append_poly4(ext_trajectoryPoly4Params_t params)
 {
     bool ret = false;

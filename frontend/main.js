@@ -11,8 +11,12 @@ const TIMESTEP_MAX_S     = 0.5;
 
 // Available dynamic models. The backend exposes a separate init entry point
 // per model; the trajectory / run / snapshot API is shared between them.
-const MODEL_ROCKET    = 'rocket';
-const MODEL_QUADROTOR = 'quadrotor';
+const MODEL_ROCKET        = 'rocket';
+const MODEL_QUADROTOR     = 'quadrotor';
+const MODEL_QUADROTOR_MPC = 'quadrotor_mpc';   // same airframe, nonlinear MPC controller
+// The two quadrotor variants share airframe params, mesh, panels and camera;
+// they differ only in which backend init entry point they call.
+const isQuadFamily = (m) => m === MODEL_QUADROTOR || m === MODEL_QUADROTOR_MPC;
 
 // Hardcoded fallback for the very first Poly4 when the trajectory list is
 // empty and the user has no rocket state to seed from. Matches the reference
@@ -93,8 +97,9 @@ const QUADROTOR_INIT_PARAMS = {
 
 // Map model id -> its default init params, so boot / model-switch can pick.
 const DEFAULT_INIT_PARAMS = {
-    [MODEL_ROCKET]:    ROCKET_INIT_PARAMS,
-    [MODEL_QUADROTOR]: QUADROTOR_INIT_PARAMS,
+    [MODEL_ROCKET]:        ROCKET_INIT_PARAMS,
+    [MODEL_QUADROTOR]:     QUADROTOR_INIT_PARAMS,
+    [MODEL_QUADROTOR_MPC]: QUADROTOR_INIT_PARAMS,   // MPC reuses the airframe params
 };
 
 // =============================================================================
@@ -300,7 +305,7 @@ function readQuadForm() {
 // Read the params for whatever model is currently selected, in the shape its
 // init entry point expects.
 function readParamsForm() {
-    return currentModel === MODEL_QUADROTOR ? readQuadForm() : readRocketForm();
+    return isQuadFamily(currentModel) ? readQuadForm() : readRocketForm();
 }
 
 function readTimestep() {
@@ -326,9 +331,10 @@ function setError(msg)  { ui.error.textContent  = msg; }
 // the tick thread is configured before the first Run.
 // Returns the backend error code (truthy = failure), matching the old ext_init.
 function initBackend(params) {
-    const err = (currentModel === MODEL_QUADROTOR)
-        ? sim.ext_quadRotorInit(params)
-        : sim.ext_rocketInit(params);
+    let err;
+    if (currentModel === MODEL_QUADROTOR)          err = sim.ext_quadRotorInit(params);
+    else if (currentModel === MODEL_QUADROTOR_MPC) err = sim.ext_quadRotorMpcInit(params);
+    else                                           err = sim.ext_rocketInit(params);
     if (err) return err;
     return sendSystemParams();
 }
@@ -466,7 +472,7 @@ function make3DRenderer() {
 
     // Build the mesh for whichever model is currently selected.
     function buildVehicle() {
-        return currentModel === MODEL_QUADROTOR ? buildQuadrotor() : buildRocket();
+        return isQuadFamily(currentModel) ? buildQuadrotor() : buildRocket();
     }
 
     // Ghost version of the vehicle for the plant: same shape, translucent green
@@ -487,7 +493,7 @@ function make3DRenderer() {
     // so it needs a much closer start and a smaller zoom-in limit than the rocket.
     function applyCameraForModel() {
         if (!camera || !controls) return;
-        if (currentModel === MODEL_QUADROTOR) {
+        if (isQuadFamily(currentModel)) {
             camera.position.set(2.5, 1.5, 2.5);
             controls.minDistance = 0.5;
         } else {
@@ -655,7 +661,7 @@ function make3DRenderer() {
     // match each model's Euler sequence.
     function poseVehicle(group, state) {
         group.position.set(state.x, state.z, state.y);
-        if (currentModel === MODEL_QUADROTOR) {
+        if (isQuadFamily(currentModel)) {
             // Aerospace ZYX: roll about X, pitch about Y, yaw about Z
             // R = Rz(yaw)·Ry(pitch)·Rx(roll) → scene 'YZX' with negated angles.
             group.rotation.set(-state.roll, -state.yaw, -state.pitch, 'YZX');
@@ -1457,7 +1463,7 @@ ui.btnParams.addEventListener('click', () => showView('params'));
 // Model selection (rocket / quadrotor)
 // =============================================================================
 function applyModelPanelVisibility() {
-    const isQuad = currentModel === MODEL_QUADROTOR;
+    const isQuad = isQuadFamily(currentModel);
     if (ui.panelRocket) ui.panelRocket.style.display = isQuad ? 'none' : '';
     if (ui.panelQuad)   ui.panelQuad.style.display   = isQuad ? '' : 'none';
 }
@@ -1466,7 +1472,7 @@ function applyModelPanelVisibility() {
 // new model's default params, and replays the (shared) trajectory so the run
 // stays valid. The trajectory sequence itself is model-agnostic and preserved.
 function switchModel(model) {
-    if (model !== MODEL_ROCKET && model !== MODEL_QUADROTOR) return;
+    if (model !== MODEL_ROCKET && model !== MODEL_QUADROTOR && model !== MODEL_QUADROTOR_MPC) return;
     stop();
     currentModel = model;
 

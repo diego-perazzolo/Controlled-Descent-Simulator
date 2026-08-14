@@ -121,3 +121,6 @@ bool ext_beginStaging(ext_coord_t safetyAltitude);
 
 /* Abort auto-staging (hold in place) */
 bool ext_stopStaging(void);
+
+/* Initialize QuadRotor model: MPC_01 (nonlinear MPC), returns true on error */
+bool ext_initQuadRotor_MPC01(ext_initQuadRotorParams params);
