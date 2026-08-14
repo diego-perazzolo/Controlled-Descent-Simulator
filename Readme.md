@@ -35,6 +35,7 @@ Simulate the controlled 3D flight of a rocket booster and of a quadrotor, with:
 - **3D view** — Three.js scene with vehicle mesh (rocket: body + nose cone + landing legs; quadrotor: frame + rotors), trajectory trail, orbital camera (orbit / pan / zoom)
 - **3D view source toggles** — reference trajectory, model vehicle and plant ghost (translucent, with its own trail) can be shown in any combination; the plant toggle enables itself only while fresh plant snapshots are available
 - **Params tab** — edit all physical and trajectory parameters at runtime; Apply & Reset re-initializes the core without reloading the page
+- **Trajectory save / load** — export the current trajectory sequence to a JSON file and load it back later; the file carries only the (model-agnostic) sequence, so it round-trips between Rocket and QuadRotor. Loading is disabled while the simulation runs
 - **User force buttons** — six hold-to-apply buttons (±X, ±Y, ±Z) inject external perturbation forces, pushed to the backend tick thread in real time on press / release; force magnitude is configurable
 - **Simulation controls** — Start / Stop / Reset
 - **Live simulation time** display

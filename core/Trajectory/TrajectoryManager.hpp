@@ -72,6 +72,13 @@ namespace CDS
         /*Switch to the previews trajectory item*/
         bool GoPrevItem(void) const;
 
+        /* Reset the seek cursor to the start of the sequence. MUST be called
+           after any mutation of m_trajectoryItems: the cursor caches an index
+           into the item list, so a stale index survives a remove/append done
+           without re-initializing the manager (e.g. loading a saved trajectory
+           over an existing one) and reads out of bounds once the list shrinks. */
+        void ResetSeekCursor(void);
+
         std::vector<std::unique_ptr<Trajectory>> m_trajectoryItems;
 
         /* Seek cursor: caching detail of GetReference, not observable state —

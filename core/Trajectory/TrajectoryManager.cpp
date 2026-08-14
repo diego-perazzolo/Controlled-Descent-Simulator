@@ -39,8 +39,13 @@ using namespace CDS;
 
 TrajectoryManager::TrajectoryManager()
 {
+    ResetSeekCursor();
+}
+
+void TrajectoryManager::ResetSeekCursor(void)
+{
+    m_currentItemIndex  = 0;
     m_absoluteStartTime = 0;
-    m_currentItemIndex = 0;
 }
 
 bool TrajectoryManager::AppendPoly4(const core_trajectoryPoly4Params_t& params)
@@ -95,6 +100,7 @@ bool TrajectoryManager::AppendItem(std::unique_ptr<Trajectory> itemPtr)
     }
 
     m_trajectoryItems.push_back(std::move(itemPtr));
+    ResetSeekCursor();   // the cursor may point past the mutated list
 
     return false;
 };
@@ -108,6 +114,7 @@ bool TrajectoryManager::RemoveLastItem(void)
     }
 
     m_trajectoryItems.pop_back();
+    ResetSeekCursor();   // the cursor may point past the mutated list
 
     return false;
 };

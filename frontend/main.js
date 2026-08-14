@@ -138,6 +138,10 @@ const ui = {
     viewCharts: $('view-charts'), view3d: $('view-3d'), viewParams: $('view-params'),
     status:     $('statusBar'), error: $('errorMsg'),
     btnApply:   $('btnApply'),
+    // trajectory save / load
+    btnTrajSave:   $('btnTrajSave'),
+    btnTrajLoad:   $('btnTrajLoad'),
+    trajFileInput: $('trajFileInput'),
     // 3D view source toggles
     chkViewTraj:  $('chkViewTraj'),
     chkViewModel: $('chkViewModel'),
@@ -1085,6 +1089,50 @@ const trajectoryBuilder = (() => {
         emitChange();
     }
 
+    // ---- Export / replace (JSON save / load) ----
+    function getItems() {
+        // Deep copy of the JS-side spec list, for serialization. params hold
+        // only plain data (numbers and {x,y,z}), so a JSON round-trip clones
+        // them safely and drops any accidental references.
+        return items.map(it => ({
+            kind: it.kind,
+            params: JSON.parse(JSON.stringify(it.params)),
+        }));
+    }
+
+    function replaceItems(newItems) {
+        // Replace the whole sequence (used by JSON load). Clear the current
+        // backend + JS sequence, then append the incoming items. Item shape is
+        // validated at the call site; here we only guard backend rejections and
+        // keep the JS list in lockstep with what the backend actually holds.
+        while (items.length > 0) {
+            if (sim.ext_trajectory_remove_last_item()) {   // true == error
+                setError('Trajectory: backend rejected remove during load');
+                renderList();
+                refreshAutofill();
+                emitChange();
+                return false;
+            }
+            items.pop();
+        }
+        let ok = true;
+        for (const it of newItems) {
+            const accepted = (it.kind === 'poly4')
+                ? !sim.ext_trajectory_append_poly4(it.params)
+                : !sim.ext_trajectory_append_point(it.params);
+            if (!accepted) {
+                setError(`Trajectory: backend rejected item ${items.length} during load`);
+                ok = false;
+                break;
+            }
+            items.push(it);
+        }
+        renderList();
+        refreshAutofill();
+        emitChange();
+        return ok;
+    }
+
     // ---- Load preset (boot only) ----
     function loadPreset(preset) {
         // Append a list of items both to the backend and to the JS spec list,
@@ -1123,6 +1171,8 @@ const trajectoryBuilder = (() => {
         replayToBackend,
         loadPreset,
         refreshAutofill,
+        getItems,
+        replaceItems,
     };
 })();
 
@@ -1252,6 +1302,9 @@ function refreshStartEnabled() {
     //   - the trajectory has at least one item (otherwise the backend has
     //     nothing to track and the run is meaningless), AND
     //   - if a plant is connected, it is ready (staged).
+    // Loading a trajectory replays it into the backend, so it is only allowed
+    // while stopped; saving is always safe.
+    if (ui.btnTrajLoad) ui.btnTrajLoad.disabled = running;
     if (running) {
         ui.btnStart.disabled = true;
         return;
@@ -1280,6 +1333,7 @@ function start() {
     ui.btnBeginStaging.disabled = true;   // no staging while the mission runs
     setStatus('Running...');
     setError('');
+    refreshStartEnabled();   // gate the trajectory Load button while running
     // the poll loop is already running (started at boot); it now switches to
     // driving the model/time/charts because `running` is set
 }
@@ -1464,6 +1518,149 @@ ui.btnApply.addEventListener('click', () => {
 trajectoryBuilder.onChange(() => {
     renderer3d?.invalidateTrajectory?.();
     refreshStartEnabled();
+});
+
+// =============================================================================
+// Trajectory save / load (JSON)
+// =============================================================================
+//
+// The saved file carries only the trajectory sequence (the JS spec list), which
+// is model-agnostic: the same file loads under Rocket or QuadRotor. A small
+// header (schema + version) lets the loader reject unrelated JSON and lets the
+// format evolve later.
+//
+const TRAJ_FILE_SCHEMA  = 'cds-trajectory';
+const TRAJ_FILE_VERSION = 1;
+
+function isFiniteNum(v) { return typeof v === 'number' && isFinite(v); }
+function isVec3(v) {
+    return v && typeof v === 'object' &&
+        isFiniteNum(v.x) && isFiniteNum(v.y) && isFiniteNum(v.z);
+}
+
+function validateTrajItem(it, i) {
+    // Returns an error string, or null when the item is well-formed. Mirrors the
+    // two item shapes documented on the trajectory builder.
+    if (!it || typeof it !== 'object') return `item ${i}: not an object`;
+    const p = it.params;
+    if (!p || typeof p !== 'object') return `item ${i}: missing params`;
+    if (!isFiniteNum(p.time_s) || p.time_s <= 0) return `item ${i}: time_s must be > 0`;
+    if (it.kind === 'poly4') {
+        for (const k of ['initialPos', 'initialVel', 'finalPos', 'finalVel', 'finalAcc'])
+            if (!isVec3(p[k])) return `item ${i}: ${k} must be {x,y,z}`;
+        for (const k of ['initialYaw', 'initialYawRate', 'finalYaw', 'finalYawRate', 'finalYawAcc'])
+            if (!isFiniteNum(p[k])) return `item ${i}: ${k} must be a number`;
+        return null;
+    }
+    if (it.kind === 'point') {
+        if (!isVec3(p.finalPos)) return `item ${i}: finalPos must be {x,y,z}`;
+        if (!isFiniteNum(p.finalYaw)) return `item ${i}: finalYaw must be a number`;
+        return null;
+    }
+    return `item ${i}: unknown kind "${it.kind}"`;
+}
+
+function parseTrajectoryFile(text) {
+    // Returns the normalized item list, or throws Error with a user-facing
+    // message. Normalization keeps only the exact fields the embind structs
+    // expect, so stray properties in the file can never reach the backend.
+    let doc;
+    try { doc = JSON.parse(text); }
+    catch { throw new Error('not valid JSON'); }
+    if (!doc || typeof doc !== 'object' || Array.isArray(doc))
+        throw new Error('root must be an object');
+    if (doc.schema !== TRAJ_FILE_SCHEMA)
+        throw new Error(`unexpected schema (want "${TRAJ_FILE_SCHEMA}")`);
+    if (doc.version !== TRAJ_FILE_VERSION)
+        throw new Error(`unsupported version ${doc.version} (want ${TRAJ_FILE_VERSION})`);
+    if (!Array.isArray(doc.items)) throw new Error('items must be an array');
+    if (doc.items.length === 0)    throw new Error('items is empty');
+    doc.items.forEach((it, i) => {
+        const msg = validateTrajItem(it, i);
+        if (msg) throw new Error(msg);
+    });
+    const vec3 = (v) => ({ x: v.x, y: v.y, z: v.z });
+    return doc.items.map((it) => {
+        const p = it.params;
+        if (it.kind === 'poly4') {
+            return { kind: 'poly4', params: {
+                initialPos:     vec3(p.initialPos),
+                initialYaw:     p.initialYaw,
+                initialVel:     vec3(p.initialVel),
+                initialYawRate: p.initialYawRate,
+                finalPos:       vec3(p.finalPos),
+                finalYaw:       p.finalYaw,
+                finalVel:       vec3(p.finalVel),
+                finalYawRate:   p.finalYawRate,
+                finalAcc:       vec3(p.finalAcc),
+                finalYawAcc:    p.finalYawAcc,
+                time_s:         p.time_s,
+            } };
+        }
+        return { kind: 'point', params: {
+            finalPos: vec3(p.finalPos),
+            finalYaw: p.finalYaw,
+            time_s:   p.time_s,
+        } };
+    });
+}
+
+function timestampSlug() {
+    const d = new Date();
+    const p = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}`
+         + `-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+}
+
+function saveTrajectory() {
+    const items = trajectoryBuilder.getItems();
+    if (items.length === 0) {
+        setError('Nothing to save: trajectory sequence is empty.');
+        return;
+    }
+    const doc = { schema: TRAJ_FILE_SCHEMA, version: TRAJ_FILE_VERSION, items };
+    const blob = new Blob([JSON.stringify(doc, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `trajectory-${timestampSlug()}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    setError('');
+}
+
+function loadTrajectoryFromFile(file) {
+    if (running) {   // defensive: the button is gated, but never replay live
+        setError('Stop the simulation before loading a trajectory.');
+        return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+        let items;
+        // Parse + validate fully before touching the current sequence, so a bad
+        // file never destroys the trajectory the user already has.
+        try { items = parseTrajectoryFile(String(reader.result)); }
+        catch (e) {
+            setError(`Trajectory load failed: ${e.message}`);
+            return;
+        }
+        if (!trajectoryBuilder.replaceItems(items)) return;   // replaceItems set the error
+        renderer3d?.invalidateTrajectory?.();
+        setStatus(`Trajectory loaded (${items.length} item${items.length === 1 ? '' : 's'}).`);
+        setError('');
+    };
+    reader.onerror = () => setError('Trajectory load failed: could not read file.');
+    reader.readAsText(file);
+}
+
+ui.btnTrajSave.addEventListener('click', saveTrajectory);
+ui.btnTrajLoad.addEventListener('click', () => ui.trajFileInput.click());
+ui.trajFileInput.addEventListener('change', (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (file) loadTrajectoryFromFile(file);
+    e.target.value = '';   // reset so re-selecting the same file fires 'change'
 });
 
 // =============================================================================
