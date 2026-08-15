@@ -54,6 +54,7 @@
 
 #include "TripleBuffer.hpp"
 #include "P2Quantile.hpp"
+#include "LogRing.hpp" // generic wait-free MPSC ring (reused for raw samples)
 
 // --------------------------------------------------------------------------- //
 // Compile-time configuration (override with -D before including)               //
@@ -71,9 +72,50 @@
 #ifndef CDS_PROFILE_ENABLED
 #define CDS_PROFILE_ENABLED 1
 #endif
+// Ring capacity for the raw-sample stream (power of two). Only used while raw
+// logging is on; drained off the tick path to a CSV file.
+#ifndef CDS_PROFILE_RAW_CAPACITY
+#define CDS_PROFILE_RAW_CAPACITY 8192
+#endif
 
 namespace cds_profile
 {
+
+// -----------------------------------------------------------------------------
+// Usage
+//
+//   #include "profile.hpp"
+//
+//   // 1. Register a module once. Profiling is opt-in per module: enable it from
+//   //    the frontend, or with registry().setEnabled(id, true):
+//   static const auto mpc = cds_profile::registry().module("mpc");
+//
+//   // 2a. Time a block (RAII) -- reported in microseconds:
+//   {
+//       CDS_PROFILE(mpc, "solve");
+//       solver.solve(...);            // the wall-clock duration of this block
+//   }
+//
+//   // 2b. Record an arbitrary value (a residual, a norm, an iteration count) --
+//   //     reported raw; folds into the same aggregate as a timed scope:
+//   CDS_PROFILE_VALUE(mpc, "resid", residualNorm);
+//
+//   // Each scope keeps count / mean / stddev / min / max and streaming
+//   // p50,p95,p99 (P-square). Prefer the percentiles over mean/max when the
+//   // data is spiky or bimodal (e.g. a solve that runs only every Nth tick --
+//   // give the two regimes their own scopes to keep each one unimodal). When no
+//   // module is enabled the cost on the tick is ~zero.
+//
+//   // The tick thread stays wait-free: record() only updates fixed aggregates
+//   // (and, if raw logging is on, pushes one RawSample). Reading is off-thread:
+//   //   registry().publish();            // writer (tick): hand off a snapshot
+//   //   registry().pump();               // one reader: refresh the UI cache
+//   //   registry().snapshot(out);        // any reader: mean / percentiles
+//   //   registry().resetAll();           // clear stats (drop warm-up outliers)
+//   //   registry().setRawLogging(true);  // stream every sample to drainRaw() -> CSV
+//   //
+//   // CDS_PROFILE_ENABLED=0 compiles every scope out.
+// -----------------------------------------------------------------------------
 
     typedef std::uint16_t moduleId_t;
     typedef std::uint32_t scopeId_t;
@@ -116,6 +158,14 @@ namespace cds_profile
         ScopeStats  stats[CDS_PROFILE_MAX_SCOPES];
     };
 
+    // One raw measurement, for the CSV stream (statistical analysis offline).
+    struct RawSample
+    {
+        std::uint64_t timestampNs;
+        scopeId_t     scope;
+        double        value; // ns for a timed scope, raw for a value scope
+    };
+
     // ------------------------------------------------------------------------ //
     // The registry: module table, flat scope table (scope -> module + name +    //
     // live aggregate), and the wait-free snapshot mailbox. One process-wide      //
@@ -125,7 +175,8 @@ namespace cds_profile
     {
         public:
 
-        Registry() : m_moduleCount(0), m_scopeCount(0), m_cache{}, m_cacheValid(false)
+        Registry() : m_moduleCount(0), m_scopeCount(0), m_cache{}, m_cacheValid(false),
+                     m_rawEnabled(false)
         {
             for (std::size_t i = 0; i < CDS_PROFILE_MAX_SCOPES; ++i) resetStats(m_scopes[i].stats);
         }
@@ -218,6 +269,17 @@ namespace cds_profile
             st.p50 = sc.pq[0].estimate();
             st.p95 = sc.pq[1].estimate();
             st.p99 = sc.pq[2].estimate();
+
+            // raw-sample stream (opt-in): wait-free push, dropped if the ring is
+            // full — drained off the tick path to a CSV file
+            if (m_rawEnabled.load(std::memory_order_relaxed))
+            {
+                m_rawRing.Produce([&](RawSample& r) {
+                    r.timestampNs = nowNs();
+                    r.scope = s;
+                    r.value = v;
+                });
+            }
         }
 
         std::size_t moduleCount() const { return m_moduleCount; }
@@ -283,9 +345,26 @@ namespace cds_profile
             return false;
         }
 
+        /* Toggle the raw-sample stream. When on, every record() also pushes a
+           RawSample into the ring for drainRaw() to write out. Any thread. */
+        void setRawLogging(bool on) { m_rawEnabled.store(on, std::memory_order_relaxed); }
+        bool rawLogging() const { return m_rawEnabled.load(std::memory_order_relaxed); }
+
+        /* Consumer side: drain all pending raw samples, calling f(const RawSample&)
+           on each. Returns how many were drained. Single consumer thread. */
+        template <typename F>
+        std::size_t drainRaw(F&& f) { return m_rawRing.Drain(f); }
+
         private:
 
         static void resetStats(ScopeStats& s) { s = ScopeStats{}; }
+
+        static std::uint64_t nowNs()
+        {
+            return static_cast<std::uint64_t>(
+                std::chrono::duration_cast<std::chrono::nanoseconds>(
+                    std::chrono::steady_clock::now().time_since_epoch()).count());
+        }
 
         struct Module
         {
@@ -321,6 +400,9 @@ namespace cds_profile
         Snapshot   m_cache;      // UI-facing snapshot, filled by pump()
         bool       m_cacheValid; // false until the first pump()
         std::mutex m_cacheMutex; // guards the cache (touched off the tick path)
+
+        cds_log::LogRing<RawSample, CDS_PROFILE_RAW_CAPACITY> m_rawRing;
+        std::atomic<bool>                                    m_rawEnabled;
     };
 
     inline Registry& registry()

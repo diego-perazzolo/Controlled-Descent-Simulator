@@ -38,18 +38,23 @@
 // =============================================================================
 #pragma once
 
+#include <atomic>
 #include <cstdio>
+#include <cstring>
+#include <mutex>
 
 #include "log.hpp"
 
 namespace cds_log
 {
 
-    // formats a line into "[LEVEL] module: message\n" on a C stream
+    // formats a line into "YYYY-MM-DD HH:MM:SS.uuuuuu [LEVEL] module: message\n"
     inline void writeLine(std::FILE* stream, const LogLine& line)
     {
-        std::fprintf(stream, "[%-5s] %s: %.*s\n",
-                     levelName(line.level), line.moduleName,
+        char ts[28];
+        formatTimestamp(ts, sizeof(ts), line.timestampNs);
+        std::fprintf(stream, "%s [%-5s] %s: %.*s\n",
+                     ts, levelName(line.level), line.moduleName,
                      static_cast<int>(line.text.size()), line.text.data());
     }
 
@@ -68,30 +73,60 @@ namespace cds_log
         std::FILE* m_stream;
     };
 
-    // Owns a file opened in append mode; flushes each line so a crash keeps the
-    // log. isOpen() reports whether the path could be opened. Native builds only.
+    // A togglable file sink: opens its path (append) lazily on the first write
+    // while enabled, flushes each line so a crash keeps the log. setEnabled()
+    // and setPath() are safe to call from another thread than Write() (which
+    // runs in the drain). Disabled and pathless by default. Native builds only
+    // (the wasm build has no real filesystem). Reachable process-wide via
+    // fileSink() so an ext command can toggle the same instance the app
+    // registered.
     class FileSink : public Sink
     {
         public:
 
-        explicit FileSink(const char* path) : m_file(std::fopen(path, "a")) {}
+        FileSink() : m_file(nullptr), m_enabled(false) { m_path[0] = '\0'; }
         ~FileSink() override { if (m_file) std::fclose(m_file); }
 
         FileSink(const FileSink&) = delete;
         FileSink& operator=(const FileSink&) = delete;
 
-        bool isOpen() const { return m_file != nullptr; }
+        void setPath(const char* path)
+        {
+            std::lock_guard<std::mutex> lk(m_mutex);
+            std::strncpy(m_path, path ? path : "", sizeof(m_path) - 1);
+            m_path[sizeof(m_path) - 1] = '\0';
+            if (m_file) { std::fclose(m_file); m_file = nullptr; } // reopen at the new path
+        }
+
+        void setEnabled(bool on) { m_enabled.store(on, std::memory_order_relaxed); }
+        bool enabled() const { return m_enabled.load(std::memory_order_relaxed); }
 
         void Write(const LogLine& line) override
         {
-            if (!m_file) return;
+            if (!m_enabled.load(std::memory_order_relaxed)) return;
+            std::lock_guard<std::mutex> lk(m_mutex);
+            if (!m_file)
+            {
+                if (m_path[0] == '\0') return;
+                m_file = std::fopen(m_path, "a");
+                if (!m_file) return;
+            }
             writeLine(m_file, line);
             std::fflush(m_file);
         }
 
         private:
 
-        std::FILE* m_file;
+        char              m_path[256];
+        std::FILE*        m_file;
+        std::atomic<bool> m_enabled;
+        std::mutex        m_mutex;
     };
+
+    inline FileSink& fileSink()
+    {
+        static FileSink instance;
+        return instance;
+    }
 
 } // namespace cds_log

@@ -69,8 +69,10 @@ bool ext_trajectory_remove_last_item(void);
 /* --- logger / profiler inspection (libs/log, libs/profile) --- */
 
 /* Drain a batch of recent log lines from the UI buffer. `lines` packs `count`
-   newline-separated 'LEVEL\tmodule\ttext' records; `dropped` counts lines lost
-   to UI-buffer overflow since the last call. Parse on the JS side */
+   newline-separated 'timestamp\tLEVEL\tmodule\ttext' records (timestamp is local
+   wall-clock "YYYY-MM-DD HH:MM:SS.uuuuuu", microsecond precision); `dropped`
+   counts lines lost to UI-buffer overflow since the last call. Parse on the JS
+   side */
 ext_logBatch ext_getLogBatch(void);
 
 /* List modules, one record per newline. getLogModules:
@@ -91,6 +93,16 @@ bool ext_setProfileEnabled(ext_profileEnableParams params);
    'module\tscope\tkind\tcount\tmean\tstd\tmin\tmax\tp50\tp95\tp99'. kind is
    'us' (a timed scope, values in microseconds) or 'val' (a value scope, raw) */
 ext_profileTable ext_getProfileTable(void);
+
+/* Reset all profiler statistics (clears cold-start outliers), returns true on
+   error */
+bool ext_resetProfile(void);
+
+/* Toggle the server-side diagnostics files (no-op in the wasm build, which has
+   no real filesystem): logFile mirrors the log to a file (cds.log), profileRaw
+   streams every raw profiler sample to a CSV (cds_profile_raw.csv) for offline
+   analysis. Returns true on error */
+bool ext_setDiagFiles(ext_diagFiles params);
 ```
 
 ## Key types
@@ -125,6 +137,7 @@ ext_moduleList                 { list (char[1200]), count }
 ext_profileTable               { table (char[3600]), count }
 ext_logLevelParams             { module, level, sampleN }
 ext_profileEnableParams        { module, enabled (bool) }
+ext_diagFiles                  { logFile (bool), profileRaw (bool) }
 ```
 
 ## Protocol version

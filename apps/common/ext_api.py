@@ -282,6 +282,15 @@ COMM = [
             F("module"),
             F("enabled", type="bool"),
         ]),
+
+    Struct("ext_diagFiles", file="comm",
+        doc="request: toggle the server-side diagnostics files (no-op on wasm,\n"
+            "which has no real filesystem). logFile: mirror the log to a file;\n"
+            "profileRaw: stream every raw profiler sample to a CSV for analysis",
+        fields=[
+            F("logFile", type="bool"),
+            F("profileRaw", type="bool"),
+        ]),
 ]
 
 # --------------------------------------------------------------------------- #
@@ -375,4 +384,12 @@ COMMANDS = [
     Cmd(20, "GetProfileTable", "ext_getProfileTable", "ext_getProfileTable",
         req=None, resp="ext_profileTable",
         doc="Get the profiler stats table from the latest published snapshot"),
+
+    Cmd(21, "ResetProfile", "ext_resetProfile", "ext_resetProfile",
+        req=None, resp="bool",
+        doc="Reset all profiler statistics (clears cold-start outliers), returns true on error"),
+
+    Cmd(22, "SetDiagFiles", "ext_setDiagFiles", "ext_setDiagFiles",
+        req="ext_diagFiles", resp="bool",
+        doc="Toggle server-side log-to-file and raw-profiler-CSV, returns true on error"),
 ]

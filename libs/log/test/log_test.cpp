@@ -96,6 +96,10 @@ int main()
     CHECK(registry().module("ilqr") == ilqr); // idempotent
     CHECK(registry().count() == 2);
 
+    // the default level is Warn; these tests exercise Info/Debug, so lower it
+    registry().setLevel(ilqr, Level::Info);
+    registry().setLevel(rk4, Level::Info);
+
     // ---- (1) deferred formatting: value captured at log time, not at drain ----
     int iter = 41;
     double resid = 1.5;

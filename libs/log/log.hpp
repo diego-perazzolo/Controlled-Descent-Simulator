@@ -48,7 +48,9 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
+#include <ctime>
 #include <mutex>
 #include <string_view>
 #include <tuple>
@@ -102,6 +104,37 @@
 namespace cds_log
 {
 
+// -----------------------------------------------------------------------------
+// Usage
+//
+//   #include "log.hpp"          // sinks live in LogSinks.hpp / LogUiSink.hpp
+//
+//   // 1. Register a module once (a named channel); cache the id in a static:
+//   static const auto net = cds_log::registry().module("net");
+//
+//   // 2. Log with std::format "{}" syntax (format specs work: {:.3f}, {:04d}):
+//   CDS_LOG_INFO (net, "connected to {}:{}", host, port);
+//   CDS_LOG_WARN (net, "retry {} of {}", attempt, maxAttempts);
+//   CDS_LOG_ERROR(net, "giving up: {}", reason);
+//   // Levels: TRACE < DEBUG < INFO < WARN < ERROR. The default runtime level is
+//   // WARN, so INFO and below are dropped until raised per module (from the
+//   // frontend). A dropped line is never formatted.
+//
+//   // 3. High-rate call sites: the _SAMPLED variants emit 1 message in N, where
+//   //    N is the module's frontend-set divisor and each call site counts on
+//   //    its own. WARN/ERROR have no sampled variant (never dropped):
+//   CDS_LOG_DEBUG_SAMPLED(net, "rx seq={}", seq);
+//
+//   // The hot path only serialises the arguments into a lock-free ring -- it
+//   // never formats and never blocks; the std::format runs later in drain() on
+//   // the consumer side, where each line gets a wall-clock microsecond stamp.
+//   // Raising CDS_LOG_COMPILE_LEVEL strips lower levels at compile time.
+//
+//   // Sinks and draining are wired by the app, not the call site:
+//   //   registry().addSink(&sink);   // ConsoleSink / FileSink / uiSink()
+//   //   registry().drain();          // drain thread (server) / tick end (wasm)
+// -----------------------------------------------------------------------------
+
     typedef std::uint16_t moduleId_t;
     static constexpr moduleId_t INVALID_MODULE = static_cast<moduleId_t>(-1);
 
@@ -127,6 +160,26 @@ namespace cds_log
             case Level::Off:   return "OFF";
         }
         return "?";
+    }
+
+    // Wall-clock timestamps: the log records carry system_clock nanoseconds
+    // since the epoch (captured on the hot path), which this renders as local
+    // time "YYYY-MM-DD HH:MM:SS.uuuuuu" with microsecond precision. Needs a
+    // buffer of at least 27 bytes; truncates into a smaller one.
+    inline void formatTimestamp(char* buf, std::size_t cap, std::uint64_t ns)
+    {
+        if (cap == 0) return;
+        const std::time_t secs = static_cast<std::time_t>(ns / 1000000000ULL);
+        const unsigned    us   = static_cast<unsigned>((ns % 1000000000ULL) / 1000);
+        std::tm tmv{};
+#if defined(_WIN32)
+        localtime_s(&tmv, &secs);
+#else
+        localtime_r(&secs, &tmv);
+#endif
+        const std::size_t n = std::strftime(buf, cap, "%Y-%m-%d %H:%M:%S", &tmv);
+        if (n > 0 && n < cap) std::snprintf(buf + n, cap - n, ".%06u", us);
+        else buf[cap - 1] = '\0';
     }
 
     // ------------------------------------------------------------------------ //
@@ -354,8 +407,9 @@ namespace cds_log
 
         /* Register a module by name (idempotent) or find an existing one.
            Returns its id, or INVALID_MODULE if the table is full. The default
-           runtime level is Info. Called rarely (typically once per call site,
-           cached in a static). Thread-safe. */
+           runtime level is Warn (only Warn/Error emit until the frontend raises
+           it). Called rarely (typically once per call site, cached in a static).
+           Thread-safe. */
         moduleId_t module(const char* name)
         {
             std::lock_guard<std::mutex> lk(m_regMutex);
@@ -370,7 +424,7 @@ namespace cds_log
             if (n >= CDS_LOG_MAX_MODULES) return INVALID_MODULE;
             std::strncpy(m_modules[n].name, name, CDS_LOG_NAME_MAX - 1);
             m_modules[n].name[CDS_LOG_NAME_MAX - 1] = '\0';
-            m_modules[n].level.store(Level::Info, std::memory_order_relaxed);
+            m_modules[n].level.store(Level::Warn, std::memory_order_relaxed);
             m_modules[n].sampleN.store(1, std::memory_order_relaxed);
             m_count.store(n + 1, std::memory_order_release);
             return static_cast<moduleId_t>(n);
@@ -379,6 +433,10 @@ namespace cds_log
         bool enabled(moduleId_t m, Level l) const
         {
             if (m == INVALID_MODULE || l == Level::Off) return false;
+            // reject ids not yet registered: guards against a static-init-order
+            // window where a module id (default 0) is used before its module()
+            // has run, whose slot would otherwise read a value-initialised level
+            if (m >= m_count.load(std::memory_order_acquire)) return false;
             return static_cast<std::uint8_t>(l) >=
                    static_cast<std::uint8_t>(m_modules[m].level.load(std::memory_order_relaxed));
         }
@@ -474,9 +532,10 @@ namespace cds_log
 
         static std::uint64_t nowNs()
         {
+            // wall clock (not steady): the timestamp is for human-readable dates
             return static_cast<std::uint64_t>(
                 std::chrono::duration_cast<std::chrono::nanoseconds>(
-                    std::chrono::steady_clock::now().time_since_epoch()).count());
+                    std::chrono::system_clock::now().time_since_epoch()).count());
         }
 
         struct Module

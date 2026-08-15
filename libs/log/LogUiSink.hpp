@@ -62,9 +62,10 @@ namespace cds_log
 
         struct Line
         {
-            Level level;
-            char  module[CDS_LOG_NAME_MAX];
-            char  text[CDS_LOG_LINE_MAX];
+            std::uint64_t timestampNs;
+            Level         level;
+            char          module[CDS_LOG_NAME_MAX];
+            char          text[CDS_LOG_LINE_MAX];
         };
 
         RecentLinesSink() : m_head(0), m_tail(0), m_dropped(0) {}
@@ -74,6 +75,7 @@ namespace cds_log
         {
             std::lock_guard<std::mutex> lk(m_mutex);
             Line& slot = m_buf[m_head % CDS_LOG_UI_CAPACITY];
+            slot.timestampNs = line.timestampNs;
             slot.level = line.level;
             copyStr(slot.module, sizeof(slot.module), line.moduleName,
                     line.moduleName ? std::strlen(line.moduleName) : 0);

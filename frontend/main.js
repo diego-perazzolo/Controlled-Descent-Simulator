@@ -1504,6 +1504,19 @@ const diagnostics = (() => {
         con.innerHTML = ''; totalDropped = 0; dropped.textContent = '';
     });
 
+    // profiler reset + server-side file toggles
+    $('btnResetProfile').addEventListener('click', () => {
+        if (!sim) return;
+        sim.ext_resetProfile();
+        refreshProfileStats();
+    });
+    const chkRawCsv = $('chkRawCsv'), chkLogFile = $('chkLogFile');
+    function pushFileToggles() {
+        if (sim) sim.ext_setDiagFiles({ logFile: chkLogFile.checked, profileRaw: chkRawCsv.checked });
+    }
+    chkRawCsv.addEventListener('change', pushFileToggles);
+    chkLogFile.addEventListener('change', pushFileToggles);
+
     function appendLog(batch) {
         if (batch.dropped > 0) {
             totalDropped += batch.dropped;
@@ -1517,8 +1530,9 @@ const diagnostics = (() => {
         // build ONE html string for the whole batch: a single parse, instead of
         // createElement + innerHTML per line (that is what froze the UI)
         let html = '';
-        for (const [lvl, mod, ...rest] of lines) {
-            html += `<span class="ln"><span class="lv lv-${esc(lvl)}">${esc(lvl)}</span>` +
+        for (const [ts, lvl, mod, ...rest] of lines) {
+            html += `<span class="ln"><span class="ts">${esc(ts || '')}</span> ` +
+                    `<span class="lv lv-${esc(lvl)}">${esc(lvl)}</span>` +
                     `<span class="mod">${esc(mod || '')}</span> ${esc(rest.join('\t'))}</span>`;
         }
         con.insertAdjacentHTML('beforeend', html);

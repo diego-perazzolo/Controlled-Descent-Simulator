@@ -68,4 +68,21 @@ namespace cds_profile
         }
     }
 
+    // CSV of the raw sample stream, for offline statistical analysis. `value`
+    // is raw (nanoseconds for a timed scope, the recorded value for a value
+    // scope — `kind` says which). Write the header once, then a line per sample.
+    inline void writeRawHeader(std::FILE* stream)
+    {
+        std::fprintf(stream, "timestamp_ns,module,scope,kind,value\n");
+    }
+
+    inline void writeRawSample(std::FILE* stream, Registry& reg, const RawSample& r)
+    {
+        std::fprintf(stream, "%llu,%s,%s,%s,%.6f\n",
+                     static_cast<unsigned long long>(r.timestampNs),
+                     reg.moduleName(reg.scopeModule(r.scope)), reg.scopeName(r.scope),
+                     reg.scopeIsValue(r.scope) ? "val" : "ns",
+                     r.value);
+    }
+
 } // namespace cds_profile

@@ -169,12 +169,15 @@ static void _tick_generator(void)
     cds_profile::registry().publish();
 }
 
-/* Consumer side of the logger: drains queued records to the sinks and, when
-   CDS_PROFILE_FILE is set, periodically rewrites the profiler report. Runs off
-   the tick path, so blocking I/O here is fine. */
-static void _drain_generator(const char *profilePath)
+/* Consumer side of the diagnostics: drains queued log records to the sinks,
+   streams the profiler raw samples to a CSV (opened lazily on the first sample,
+   drained whenever raw logging is on), and — when CDS_PROFILE_FILE is set —
+   periodically rewrites the profiler aggregate report. Runs off the tick path,
+   so blocking I/O here is fine. */
+static void _drain_generator(const char *profilePath, const char *rawPath)
 {
     auto lastProfileDump = Clock::now();
+    std::FILE *rawCsv = nullptr;
     while (_run_drain_thread)
     {
         cds_log::registry().drain();
@@ -182,6 +185,17 @@ static void _drain_generator(const char *profilePath)
         /* single designated reader of the profiler mailbox: refresh the UI cache
            that the file dump and the ext command both read */
         cds_profile::registry().pump();
+
+        /* raw profiler samples -> CSV for offline analysis */
+        cds_profile::registry().drainRaw([&](const cds_profile::RawSample &s) {
+            if (!rawCsv)
+            {
+                rawCsv = std::fopen(rawPath, "w");
+                if (rawCsv) cds_profile::writeRawHeader(rawCsv);
+            }
+            if (rawCsv) cds_profile::writeRawSample(rawCsv, cds_profile::registry(), s);
+        });
+        if (rawCsv) std::fflush(rawCsv);
 
         if (profilePath)
         {
@@ -203,6 +217,7 @@ static void _drain_generator(const char *profilePath)
 
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
+    if (rawCsv) std::fclose(rawCsv);
 }
 
 int main(int argc, char **argv)
@@ -219,22 +234,24 @@ int main(int argc, char **argv)
     /* optional second arg selects the plant: "loopback" (default) or "sitl" */
     const char *plantKind = (argc > 2) ? argv[2] : "loopback";
 
-    /* Logger sinks: console always; a file too if CDS_LOG_FILE is set. Declared
-       here so they outlive the drain thread that writes through them. */
+    /* Logger sinks: console always, the recent-lines UI buffer, and the file
+       sink. The file sink is toggled from the frontend; its path comes from
+       CDS_LOG_FILE (default cds.log) and it starts enabled only if that env was
+       set. All are process-wide singletons so the ext commands toggle the very
+       instances registered here. */
     cds_log::ConsoleSink consoleSink(stderr);
     cds_log::registry().addSink(&consoleSink);
-    cds_log::registry().addSink(&cds_log::uiSink()); // recent-lines buffer for the frontend
+    cds_log::registry().addSink(&cds_log::uiSink());
 
     const char *logPath = std::getenv("CDS_LOG_FILE");
-    std::unique_ptr<cds_log::FileSink> fileSink;
-    if (logPath)
-    {
-        fileSink = std::make_unique<cds_log::FileSink>(logPath);
-        if (fileSink->isOpen()) cds_log::registry().addSink(fileSink.get());
-        else std::fprintf(stderr, "cds_server: cannot open log file '%s'\n", logPath);
-    }
+    cds_log::fileSink().setPath(logPath ? logPath : "cds.log");
+    if (logPath) cds_log::fileSink().setEnabled(true);
+    cds_log::registry().addSink(&cds_log::fileSink());
 
     const char *profilePath = std::getenv("CDS_PROFILE_FILE");
+    const char *rawPath = std::getenv("CDS_PROFILE_RAW_FILE");
+    if (rawPath) cds_profile::registry().setRawLogging(true); // env preset
+    if (!rawPath) rawPath = "cds_profile_raw.csv";
 
     /* Thread "Real-time", used for providing ticks to the System */
     std::thread rt([]
@@ -246,7 +263,7 @@ int main(int argc, char **argv)
                 });
 
     /* Consumer thread: drains logs to the sinks and dumps the profiler report */
-    std::thread drain([profilePath] { _drain_generator(profilePath); });
+    std::thread drain([profilePath, rawPath] { _drain_generator(profilePath, rawPath); });
 
     auto shutdown = [&](int code) -> int
     {

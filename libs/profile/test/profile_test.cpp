@@ -122,6 +122,25 @@ int main()
     CHECK(registry().scopeIsValue(resid) == true);
     CHECK(registry().scopeIsValue(backward) == false);
 
+    // ---- (3d) raw-sample stream: off by default, on records every sample ----
+    CHECK(registry().rawLogging() == false);
+    for (int i = 0; i < 3; ++i) { CDS_PROFILE(solver, "backward"); burn(200); }
+    std::size_t rawDrained = registry().drainRaw([](const RawSample&) {});
+    CHECK(rawDrained == 0); // nothing streamed while off
+
+    registry().setRawLogging(true);
+    for (int i = 0; i < 10; ++i) { CDS_PROFILE(solver, "backward"); burn(200); }
+    std::uint64_t seen = 0;
+    double lastVal = -1.0;
+    rawDrained = registry().drainRaw([&](const RawSample& r) {
+        ++seen;
+        lastVal = r.value;
+        CHECK(r.scope == backward);
+    });
+    CHECK(rawDrained == 10 && seen == 10);
+    CHECK(lastVal > 0.0);
+    registry().setRawLogging(false);
+
     // ---- (4) snapshot round-trips: publish (writer) -> pump (reader) -> read ----
     registry().publish();
     CHECK(registry().pump() == false); // a snapshot was moved into the cache

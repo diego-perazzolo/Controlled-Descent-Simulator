@@ -132,6 +132,15 @@ typedef struct
     bool enabled;
 } ext_profileEnableParams;
 
+/* request: toggle the server-side diagnostics files (no-op on wasm,
+which has no real filesystem). logFile: mirror the log to a file;
+profileRaw: stream every raw profiler sample to a CSV for analysis */
+typedef struct
+{
+    bool logFile;
+    bool profileRaw;
+} ext_diagFiles;
+
 /* Initialize Rocket model: FF_LQR_01, returns true on error */
 bool ext_initRocket_FFLQR01(ext_initRocketParams params);
 
@@ -191,3 +200,9 @@ bool ext_setProfileEnabled(ext_profileEnableParams params);
 
 /* Get the profiler stats table from the latest published snapshot */
 ext_profileTable ext_getProfileTable(void);
+
+/* Reset all profiler statistics (clears cold-start outliers), returns true on error */
+bool ext_resetProfile(void);
+
+/* Toggle server-side log-to-file and raw-profiler-CSV, returns true on error */
+bool ext_setDiagFiles(ext_diagFiles params);

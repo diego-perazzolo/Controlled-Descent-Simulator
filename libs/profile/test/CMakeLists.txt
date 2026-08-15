@@ -15,6 +15,7 @@ target_compile_options(profile_test PRIVATE -Wall -Wextra)
 target_include_directories(profile_test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/..        # libs/profile (profile.hpp)
     ${CMAKE_CURRENT_SOURCE_DIR}/../../sync # libs/sync (TripleBuffer.hpp)
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../log  # libs/log (LogRing.hpp, reused)
 )
 
 find_package(Threads REQUIRED)

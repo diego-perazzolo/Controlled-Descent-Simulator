@@ -179,6 +179,10 @@ EMSCRIPTEN_BINDINGS(simulator) {
         .field("module",  &ext_profileEnableParams::module)
         .field("enabled", &ext_profileEnableParams::enabled);
 
+    value_object<ext_diagFiles>("ext_diagFiles")
+        .field("logFile",    &ext_diagFiles::logFile)
+        .field("profileRaw", &ext_diagFiles::profileRaw);
+
     // --- Functions exposed to JS ---
     function("ext_rocketInit", &ext_initRocket_FFLQR01);
     function("ext_quadRotorInit", &ext_initQuadRotor_FFLQR01);
@@ -200,4 +204,6 @@ EMSCRIPTEN_BINDINGS(simulator) {
     function("ext_getProfileModules", &ext_getProfileModules);
     function("ext_setProfileEnabled", &ext_setProfileEnabled);
     function("ext_getProfileTable", &ext_getProfileTable);
+    function("ext_resetProfile", &ext_resetProfile);
+    function("ext_setDiagFiles", &ext_setDiagFiles);
 }

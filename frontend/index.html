@@ -128,6 +128,7 @@
             font-family: inherit; font-size: 0.8em; line-height: 1.5; white-space: pre-wrap;
         }
         #logConsole .ln { display: block; }
+        #logConsole .ts { color: #567; }
         #logConsole .lv { display: inline-block; width: 46px; font-weight: bold; }
         #logConsole .mod { color: #6cf; }
         .lv-TRACE { color: #667; } .lv-DEBUG { color: #789; } .lv-INFO { color: #8a8; }
@@ -718,11 +719,18 @@
             <tbody></tbody>
         </table>
         <div class="diag-empty" id="profileStatsEmpty">Enable a profiler module to see its scopes (times in µs, values raw).</div>
+        <div class="diag-bar">
+            <button id="btnResetProfile">Reset stats</button>
+            <label title="Server-side: stream every raw sample to cds_profile_raw.csv">
+                <input type="checkbox" id="chkRawCsv"> raw samples → CSV (server)</label>
+        </div>
     </div>
 
     <div class="diag-bar">
         <strong style="color:#555;">Log stream</strong>
         <label><input type="checkbox" id="logAutoscroll" checked> autoscroll</label>
+        <label title="Server-side: mirror the log to cds.log">
+            <input type="checkbox" id="chkLogFile"> to file (server)</label>
         <button id="btnLogClear">Clear</button>
         <span id="logDropped"></span>
     </div>

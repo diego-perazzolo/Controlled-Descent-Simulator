@@ -259,15 +259,26 @@ def run_tests(s):
     assert len(p) == 3606, f"profile table size {len(p)}"
     print("get profile table OK")
 
-    # setters on an out-of-range module (none registered yet) must return error
+    # setters on a clearly out-of-range module must return error (the core
+    # registers a couple of modules at startup, so index 999 is safely invalid).
     # setLogLevel carries {module, level, sampleN}
-    p = rpc(s, header(MSG["SET_LOG_LEVEL"]) + struct.pack("<fff", 0.0, 0.0, 1.0))
+    p = rpc(s, header(MSG["SET_LOG_LEVEL"]) + struct.pack("<fff", 999.0, 0.0, 1.0))
     assert struct.unpack("<BBB", p)[2] == 1, "set log level should reject out-of-range module"
     print("set log level out-of-range rejected OK")
 
-    p = rpc(s, header(MSG["SET_PROFILE_ENABLED"]) + struct.pack("<fB", 0.0, 1))
+    p = rpc(s, header(MSG["SET_PROFILE_ENABLED"]) + struct.pack("<fB", 999.0, 1))
     assert struct.unpack("<BBB", p)[2] == 1, "set profile enabled should reject out-of-range module"
     print("set profile enabled out-of-range rejected OK")
+
+    # reset profiler stats: always succeeds
+    p = rpc(s, header(MSG["RESET_PROFILE"]))
+    assert struct.unpack("<BBB", p)[2] == 0, "reset profile failed"
+    print("reset profile OK")
+
+    # toggle diag files off (two uint8 bools): server-side, always succeeds
+    p = rpc(s, header(MSG["SET_DIAG_FILES"]) + struct.pack("<BB", 0, 0))
+    assert struct.unpack("<BBB", p)[2] == 0, "set diag files failed"
+    print("set diag files OK")
 
     # close politely
     s.sendall(bytes([0x88, 0x80]) + os.urandom(4))

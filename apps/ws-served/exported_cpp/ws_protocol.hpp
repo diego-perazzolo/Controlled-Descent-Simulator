@@ -50,7 +50,7 @@ constexpr uint16_t WS_DEFAULT_PORT = 9002;
    carry different bytes, and both sides refuse to talk: a stale
    simulator.wasm against a newer cds_server fails loudly instead
    of corrupting the parsing. */
-constexpr uint8_t WS_PROTOCOL_VERSION = 0xBF;
+constexpr uint8_t WS_PROTOCOL_VERSION = 0xDB;
 
 /* Message types: request and matching response carry the same type id */
 enum MsgType : uint8_t
@@ -75,6 +75,8 @@ enum MsgType : uint8_t
     WS_MSG_GET_PROFILE_MODULES = 18, // -> respGetProfileModules_t
     WS_MSG_SET_PROFILE_ENABLED = 19, // -> respBool_t
     WS_MSG_GET_PROFILE_TABLE   = 20, // -> respGetProfileTable_t
+    WS_MSG_RESET_PROFILE       = 21, // -> respBool_t
+    WS_MSG_SET_DIAG_FILES      = 22, // -> respBool_t
 };
 
 #pragma pack(push, 1)
@@ -199,6 +201,18 @@ typedef struct
     header_t h;
 } reqGetProfileTable_t;
 
+typedef struct
+{
+    header_t h;
+} reqResetProfile_t;
+
+typedef struct
+{
+    header_t h;
+    uint8_t logFile;
+    uint8_t profileRaw;
+} reqSetDiagFiles_t;
+
 /* ------------------------------ responses ------------------------------- */
 
 /* generic boolean response: isError follows the core convention (1 = error) */
@@ -290,6 +304,8 @@ static_assert(sizeof(reqSetLogLevel_t)        == 14, "wire layout drift"); // 2 
 static_assert(sizeof(reqGetProfileModules_t)  ==  2, "wire layout drift");
 static_assert(sizeof(reqSetProfileEnabled_t)  ==  7, "wire layout drift"); // 2 + 1f + u8
 static_assert(sizeof(reqGetProfileTable_t)    ==  2, "wire layout drift");
+static_assert(sizeof(reqResetProfile_t)       ==  2, "wire layout drift");
+static_assert(sizeof(reqSetDiagFiles_t)       ==  4, "wire layout drift"); // 2 + u8 + u8
 static_assert(sizeof(respBool_t)              ==  3, "wire layout drift"); // 2 + u8
 static_assert(sizeof(respTrajGetPoint_t)      == 14, "wire layout drift"); // 2 + 1f + 1f + 1f
 static_assert(sizeof(respGetSnapshot_t)       == 71, "wire layout drift"); // 2 + 1f + 12f + 4f + u8

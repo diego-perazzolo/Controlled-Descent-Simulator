@@ -39,6 +39,7 @@
 
 #include "log.hpp"
 #include "LogUiSink.hpp"
+#include "LogSinks.hpp"
 #include "profile.hpp"
 
 /* Immediately return if ret == true */
@@ -360,15 +361,18 @@ ext_logBatch ext_getLogBatch(void)
     std::size_t count = 0;
 
     /* stop pulling while a full max-size line may not fit, so snprintf never
-       truncates a record mid-way */
-    const std::size_t maxLine = CDS_LOG_NAME_MAX + CDS_LOG_LINE_MAX + 8;
+       truncates a record mid-way (+32 leaves room for the timestamp field) */
+    const std::size_t maxLine = CDS_LOG_NAME_MAX + CDS_LOG_LINE_MAX + 40;
     while (sizeof(out.lines) - off > maxLine)
     {
         cds_log::RecentLinesSink::Line line;
         if (!cds_log::uiSink().Pop(line)) break;
+        char ts[28];
+        cds_log::formatTimestamp(ts, sizeof(ts), line.timestampNs);
+        // timestamp \t LEVEL \t module \t text
         const int w = std::snprintf(out.lines + off, sizeof(out.lines) - off,
-                                    "%s\t%s\t%s\n",
-                                    cds_log::levelName(line.level), line.module, line.text);
+                                    "%s\t%s\t%s\t%s\n",
+                                    ts, cds_log::levelName(line.level), line.module, line.text);
         if (w > 0) off += static_cast<std::size_t>(w);
         ++count;
     }
@@ -480,4 +484,18 @@ ext_profileTable ext_getProfileTable(void)
     out.table[off] = '\0';
     out.count = static_cast<ext_coord_t>(count);
     return out;
+}
+
+bool ext_resetProfile(void)
+{
+    cds_profile::registry().resetAll();
+    return false;
+}
+
+bool ext_setDiagFiles(ext_diagFiles params)
+{
+    // server-side only: on wasm there is no real filesystem, so these are no-ops
+    cds_log::fileSink().setEnabled(params.logFile);
+    cds_profile::registry().setRawLogging(params.profileRaw);
+    return false;
 }

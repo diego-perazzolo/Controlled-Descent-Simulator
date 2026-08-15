@@ -410,3 +410,35 @@ ext_profileTable ext_getProfileTable(void)
 
     return resp.p;
 }
+
+bool ext_resetProfile(void)
+{
+    reqResetProfile_t req = {};
+    respBool_t resp = {};
+
+    req.h.type = WS_MSG_RESET_PROFILE;
+
+    if(_rpc(req, resp))
+    {
+        return true;
+    }
+
+    return resp.isError != 0;
+}
+
+bool ext_setDiagFiles(ext_diagFiles params)
+{
+    reqSetDiagFiles_t req = {};
+    respBool_t resp = {};
+
+    req.h.type = WS_MSG_SET_DIAG_FILES;
+    req.logFile = params.logFile ? 1 : 0;
+    req.profileRaw = params.profileRaw ? 1 : 0;
+
+    if(_rpc(req, resp))
+    {
+        return true;
+    }
+
+    return resp.isError != 0;
+}

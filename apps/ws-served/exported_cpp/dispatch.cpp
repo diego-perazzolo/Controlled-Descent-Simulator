@@ -296,6 +296,26 @@ std::vector<uint8_t> server_dispatch(const std::vector<uint8_t>& msg)
             return _serialize(resp);
         }
 
+        case WS_MSG_RESET_PROFILE:
+        {
+            reqResetProfile_t req = {};
+            if(_parse(msg, req)) return _respBool(h, true);
+
+            return _respBool(h, ext_resetProfile());
+        }
+
+        case WS_MSG_SET_DIAG_FILES:
+        {
+            reqSetDiagFiles_t req = {};
+            if(_parse(msg, req)) return _respBool(h, true);
+
+            ext_diagFiles par = {};
+            par.logFile = req.logFile != 0;
+            par.profileRaw = req.profileRaw != 0;
+
+            return _respBool(h, ext_setDiagFiles(par));
+        }
+
         default:
             // Err: unknown message type
             return _respBool(h, true);
