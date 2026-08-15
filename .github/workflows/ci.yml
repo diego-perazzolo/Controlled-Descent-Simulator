@@ -16,8 +16,11 @@ jobs:
 
       - name: Codegen sanity (modeling)
         run: |
-          python3 -c "import ast; [ast.parse(open('modeling/notebooks/'+f).read()) \
-            for f in ('base_codegen.py','rocket_codegen.py','quad_codegen.py')]"
+          python3 -c "import ast; [ast.parse(open(f).read()) for f in ( \
+            'modeling/notebooks/base_codegen.py', \
+            'modeling/notebooks/model/quad_codegen.py', \
+            'modeling/notebooks/model/rocket_codegen.py', \
+            'modeling/notebooks/model/mpc_codegen.py')]"
 
       - name: Build native core server
         run: |
@@ -30,6 +33,21 @@ jobs:
           cmake --build build-plants-test
           ./build-plants-test/driver
           ./build-plants-test/sitl_driver
+
+      - name: Control solver + MPC model tests (native)
+        run: |
+          cmake -S libs/control/test -B build-ilqr-test -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-ilqr-test
+          ./build-ilqr-test/ilqr_test
+          cmake -S core/Models/test -B build-mpc-model-test -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-mpc-model-test
+          ./build-mpc-model-test/mpc_model_test
+
+      - name: Solver C++/Python conformance certificate
+        run: |
+          cmake -S libs/control/bind -B build-ilqr-bind -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-ilqr-bind
+          python3 libs/control/bind/ilqr_conformance.py build-ilqr-bind
 
       - name: Protocol end-to-end test
         run: python3 apps/ws-served/test/test_protocol.py ./build-server/cds_server

@@ -24,6 +24,10 @@ bool ext_initRocket_FFLQR01(ext_initRocketParams params);       /* JS: ext_rocke
 /* Initialize the QuadRotor model (FF_LQR_01), returns true on error */
 bool ext_initQuadRotor_FFLQR01(ext_initQuadRotorParams params); /* JS: ext_quadRotorInit */
 
+/* Initialize the QuadRotor model driven by a nonlinear MPC (MPC_01); reuses the
+   QuadRotor params/limits (rotor inertia is unused), returns true on error */
+bool ext_initQuadRotor_MPC01(ext_initQuadRotorParams params);   /* JS: ext_quadRotorMpcInit */
+
 /* Set system parameters (tick period, user forces), returns true on error */
 bool ext_setSystemParams(ext_systemParams params);
 

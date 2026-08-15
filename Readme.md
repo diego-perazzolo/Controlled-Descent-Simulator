@@ -2,9 +2,10 @@
 
 A real-time, interactive simulator of **controlled flight and descent**, built with a C++ physics core compiled to **WebAssembly** and a vanilla JS frontend. Runs entirely in the browser — no server required. Alternatively, the same core can run natively in a **WebSocket server** (`cds_server`) with the browser acting as a thin client; each deployment is an app under `apps/` selected at build time (see [docs/build.md](docs/build.md)).
 
-Two vehicle models are available, selectable at runtime:
+Three vehicle models are available, selectable at runtime:
 - **Rocket** — powered descent of a single-stage booster (SpaceX Falcon 9 style)
-- **QuadRotor** — quaternion-based 6-DOF quadrotor with differential-flatness feedforward
+- **QuadRotor** — quaternion-based 6-DOF quadrotor with differential-flatness feedforward + LQR
+- **QuadRotor (MPC)** — the same quadrotor driven by a nonlinear, control-limited **MPC** (iLQR/DDP) that re-optimizes the motor thrusts over a receding horizon
 
 **[Live Demo](https://diego-perazzolo.github.io/Controlled-Descent-Simulator/frontend/)**
 
@@ -30,7 +31,7 @@ Simulate the controlled 3D flight of a rocket booster and of a quadrotor, with:
 
 ### Frontend
 
-- **Model selector** — switch between Rocket and QuadRotor at runtime; each model has its own parameter panel
+- **Model selector** — switch between Rocket, QuadRotor and QuadRotor (MPC) at runtime; each model has its own parameter panel
 - **Charts view** — real-time strip charts for x, y, z position, yaw attitude and position error magnitude
 - **3D view** — Three.js scene with vehicle mesh (rocket: body + nose cone + landing legs; quadrotor: frame + rotors), trajectory trail, orbital camera (orbit / pan / zoom)
 - **3D view source toggles** — reference trajectory, model vehicle and plant ghost (translucent, with its own trail) can be shown in any combination; the plant toggle enables itself only while fresh plant snapshots are available
@@ -44,7 +45,8 @@ Simulate the controlled 3D flight of a rocket booster and of a quadrotor, with:
 
 #### Communication Layer (`apps/common`)
 - `ext_rocketInit(params)` — initializes the Rocket model with parameters and actuator limits
-- `ext_quadRotorInit(params)` — initializes the QuadRotor model with parameters and actuator limits
+- `ext_quadRotorInit(params)` — initializes the QuadRotor model (FF + LQR) with parameters and actuator limits
+- `ext_quadRotorMpcInit(params)` — initializes the QuadRotor model driven by the nonlinear MPC (reuses the QuadRotor params/limits)
 - `ext_setSystemParams(params)` — sets the tick period and user forces used by the backend tick thread
 - `ext_run()` / `ext_stop()` — start / stop the simulation; integration advances on a backend tick thread
 - `ext_getSnapshot()` — returns the simulated time, full state and tracking errors (position + yaw)
@@ -63,13 +65,14 @@ Simulate the controlled 3D flight of a rocket booster and of a quadrotor, with:
   - **SITL (ArduCopter)** — drives an ArduPilot Copter SITL over MAVLink 2 / UDP: telemetry (`LOCAL_POSITION_NED` + `ATTITUDE`) comes back as measurements, the trajectory reference streams out as `SET_POSITION_TARGET_LOCAL_NED` Guided-mode setpoints. The NED↔ENU frame conversion is confined to the plant, the MAVLink headers are vendored and version-pinned, and the frame is aligned to the trajectory start at mission Start. **Auto-staging** brings the vehicle up to a stable hover (GUIDED → arm → takeoff → climb to the trajectory's vertical range plus a safety margin; if already airborne it climbs in place instead of taking off) and Start is gated until it is staged. Mission stop / detach commands a safety hold in place. For the end-to-end walkthrough against a SITL in Docker, see [docs/sitl.md](docs/sitl.md)
 
 #### Physics Engine
-- **6 DOF rigid body dynamics** (3 translational + 3 rotational) for both models
+- **6 DOF rigid body dynamics** (3 translational + 3 rotational) for all models
 - **Rocket** — Euler-angle attitude; augmented state with 4 error integrators (x, y, z, yaw); inputs: main thrust + 3 torques
 - **QuadRotor** — quaternion attitude (13 physical states) + 4 error integrators; inputs: 4 per-rotor thrusts (QuadX allocation); differential-flatness feedforward with heading-frame LQR correction
+- **QuadRotor (MPC)** — the same 13-state quaternion model (no integrators), driven by a nonlinear **control-limited MPC**: an iLQR/DDP solver re-optimizes the 4 motor thrusts over a receding horizon each tick, honoring the actuator box natively
 - Forces: thrust, gravity, aerodynamic drag (parametric coefficients `c`, `cz`), user-injected perturbations
-- ODE integration: **Runge-Kutta 4 (RK4)**
-- Parametric controller (LQR with FF on all actuators, actuator saturation)
-- Model dynamics and controller gains are **generated as C++** from the Jupyter notebooks
+- ODE integration: **Runge-Kutta 4 (RK4)** (shared header in `libs/integrate`)
+- Controllers: parametric **LQR + feedforward** (actuator saturation), and a nonlinear **MPC** (control-limited iLQR/DDP, shared solver in `libs/control`)
+- Model dynamics (and the LQR gains) are **generated as C++** from the Jupyter notebooks; the MPC solver is hand-written C++, validated against a Python reference
 
 ### Screenshots
 
@@ -109,7 +112,7 @@ Simulate the controlled 3D flight of a rocket booster and of a quadrotor, with:
 │  │             Core (C++) — SystemManager            │  │
 │  │ ┌────────┐  ┌───────┐  ┌──────────┐  ┌──────────┐ │  │
 │  │ │ Models │  │ Plant │  │Controller│  │Trajectory│ │  │
-│  │ │Rkt/Quad│  │mailbox│  │ FF + LQR │  │ Manager  │ │  │
+│  │ │Rkt/Quad│  │mailbox│  │FF/LQR/MPC│  │ Manager  │ │  │
 │  │ └────────┘  └───────┘  └──────────┘  └──────────┘ │  │
 │  └──────────────────────┬────────────────────────────┘  │
 │                         │                               │
@@ -153,6 +156,9 @@ wx, wy, wz                — body angular rates (rad/s)
 IntX, IntY, IntZ, IntPsi  — tracking-error integrators
 ```
 
+The **QuadRotor (MPC)** variant uses the same 13 physical states **without** the 4
+integrators — the MPC needs no integral action.
+
 ### Forces and Torques
 - **Rocket**: main thrust + 3 control torques; **QuadRotor**: 4 per-rotor thrusts mapped to collective thrust + 3 torques (QuadX allocation)
 - Gravity: `F_g = m·g` along −Z
@@ -163,8 +169,9 @@ IntX, IntY, IntZ, IntPsi  — tracking-error integrators
 Runge-Kutta 4 (RK4); the step `dt` is provided by the backend tick thread
 (wall-clock paced at the configured tick period, clamped after stalls).
 
-### Controller
-LQR on tracking error (position + yaw, with error integrators), feedforward on all actuators (differential flatness for the QuadRotor), actuator saturation; all derived in the Jupyter notebooks and exported as C++
+### Controllers
+- **LQR + feedforward** — on tracking error (position + yaw, with error integrators), feedforward on all actuators (differential flatness for the QuadRotor), actuator saturation; derived in the Jupyter notebooks and exported as C++
+- **Nonlinear MPC** (QuadRotor) — a control-limited iLQR/DDP solver re-optimizes the motor thrusts over a receding horizon each tick, with the actuator box enforced *inside* the optimization. The generic solver is hand-written, model-agnostic C++ (`libs/control`), validated against a Python reference; the quad-specific tracking cost lives with the model
 
 ---
 
@@ -199,7 +206,7 @@ app and exposed to JavaScript via embind. Functions, types and JS usage are docu
 /
 ├── core/        # The physics core (models, controller, trajectory), a static library
 ├── apps/        # Deployments of the core: common/ (ext API + bindings), wasm-only/, ws-served/
-├── libs/        # In-house infrastructure libraries (ws: WebSocket RPC transport)
+├── libs/        # In-house infrastructure (sync, ws, integrate: RK4, control: iLQR/MPC solver)
 ├── frontend/    # Shared web UI — runs whichever app was built last into build/
 ├── modeling/    # Jupyter/SymPy notebooks + C++ code generation
 ├── tools/       # Dev utilities (serve.py: COOP/COEP dev server)
@@ -235,6 +242,7 @@ client), app switching, notebook setup and deployment are documented in
 - [x] ws-served app: core on a native WebSocket server, browser as thin client
 - [x] SITL plant over MAVLink/UDP (ArduCopter): link, telemetry, Guided-mode setpoints, auto arm/takeoff staging
 - [x] Save / load of parameters and trajectories from the frontend
+- [x] Nonlinear model-predictive control (control-limited iLQR/DDP) for the QuadRotor: shared C++ solver (`libs/control`) with a Python reference and conformance certificate
 - [ ] Real hardware interface (MAVLink over serial to a Pixhawk): the SITL plant's link layer is the same, only the transport changes
 
 ---

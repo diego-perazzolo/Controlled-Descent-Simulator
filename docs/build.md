@@ -139,6 +139,25 @@ python -m ipykernel install --user --name=rocket-modeling --display-name="Python
 
 Now it is possible to open the notebook in VS Code, select the previously created python kernel and run the notebook
 
+## Native tests
+
+Standalone native tests (no browser, no emsdk). From the repo root:
+
+```bash
+# generic iLQR solver — self-contained (double integrator, no core/quaternions)
+cmake -S libs/control/test -B build-ilqr-test -DCMAKE_BUILD_TYPE=Release && cmake --build build-ilqr-test
+./build-ilqr-test/ilqr_test
+
+# QuadRotor MPC — the model + solver end to end (Poly4 tracking + gust rejection)
+cmake -S core/Models/test -B build-mpc-model-test -DCMAKE_BUILD_TYPE=Release && cmake --build build-mpc-model-test
+./build-mpc-model-test/mpc_model_test
+
+# solver C++<->Python conformance (ctypes, no numpy): certifies the C++ result is a
+# constrained optimum (box-projected KKT residual ~0) on a synthetic benchmark
+cmake -S libs/control/bind -B build-ilqr-bind -DCMAKE_BUILD_TYPE=Release && cmake --build build-ilqr-bind
+python3 libs/control/bind/ilqr_conformance.py build-ilqr-bind
+```
+
 ## GitHub Pages
 
 The repository includes a GitHub Actions workflow ([`.github/workflows/deploy.yml`](../.github/workflows/deploy.yml)) that automatically builds the WASM in Release mode and deploys to GitHub Pages on every push to `main`.
@@ -158,7 +177,9 @@ The repository includes a GitHub Actions workflow ([`.github/workflows/deploy.ym
 │   ├── Models/
 │   │   ├── BaseModel.hpp / BaseModel.cpp       # Abstract model base
 │   │   ├── Rocket.hpp / Rocket.cpp             # 6 DOF rocket model (Euler angles)
-│   │   └── QuadRotor.hpp / QuadRotor.cpp       # 6 DOF quadrotor model (quaternion)
+│   │   ├── QuadRotor.hpp / QuadRotor.cpp       # 6 DOF quadrotor model (quaternion, FF + LQR)
+│   │   ├── QuadRotorMPC.hpp / .cpp             # Quadrotor driven by the nonlinear MPC (libs/control solver)
+│   │   └── test/mpc_model_test.cpp             # Native model + solver acid test (tracking + gust)
 │   └── Trajectory/
 │       ├── TrajectoryManager.hpp / .cpp        # trajectory composition
 │       ├── Trajectory.hpp / Trajectory.cpp     # base trajectory class
@@ -209,6 +230,12 @@ The repository includes a GitHub Actions workflow ([`.github/workflows/deploy.ym
 ├── libs/                                       # In-house infrastructure libraries (apps/core → libs, one way)
 │   ├── sync/
 │   │   └── TripleBuffer.hpp                    # Wait-free SPSC latest-wins mailbox
+│   ├── integrate/
+│   │   └── rk4.hpp                             # Generic fixed-control RK4 step (header-only, domain-agnostic)
+│   ├── control/                                # Hand-written model-agnostic controllers (AGENTS.md rule 10)
+│   │   ├── ilqr.hpp                            # Generic control-limited iLQR/DDP solver (header-only)
+│   │   ├── test/ilqr_test.cpp                  # Self-contained solver acid test (double integrator)
+│   │   └── bind/                               # C-ABI shim + ilqr_conformance.py (C++↔Python KKT certificate)
 │   └── ws/                                     # Dependency-free WebSocket RPC transport
 │       ├── CMakeLists.txt                      # cds_ws_client (emscripten) / cds_ws_server (native)
 │       ├── ws_server.hpp / ws_server.cpp       # Minimal RFC 6455 WebSocket RPC server
@@ -221,16 +248,19 @@ The repository includes a GitHub Actions workflow ([`.github/workflows/deploy.ym
 ├── modeling/
 │   ├── requirements.txt                        # Python requirements
 │   └── notebooks/
-│       ├── dynamics_rocket_FFLQR01.ipynb       # Rocket dynamics with LQR + FF for trajectory tracking
-│       ├── dynamics_quadRotor_FFLQR01.ipynb    # QuadRotor dynamics with LQR + flatness FF
-│       ├── base_codegen.py                     # Shared C++ code-generation base
-│       ├── rocket_codegen.py                   # Rocket-specific codegen (derives from base)
-│       ├── quad_codegen.py                     # QuadRotor-specific codegen (derives from base)
-│       └── exported_cpp/
-│           ├── ROCKET_FF_LQR_01/
-│           │   └── dynamics_rocket_ff_lqr_01.cpp / .hpp        # Generated rocket dynamics + controller
-│           └── QUADROTOR_FF_LQR_01/
-│               └── dynamics_quadrotor_ff_lqr_01.cpp / .hpp     # Generated quadrotor dynamics + controller
+│       ├── base_codegen.py                     # Shared C++ code-generation base (used by all model codegens)
+│       ├── model/                              # Per-vehicle: dynamics detail -> codegen -> integration demos
+│       │   ├── dynamics_rocket_FFLQR01.ipynb   # Rocket dynamics with LQR + FF
+│       │   ├── dynamics_quadRotor_FFLQR01.ipynb# QuadRotor dynamics with LQR + flatness FF
+│       │   ├── dynamics_quadRotor_MPC01.ipynb  # QuadRotor prediction model for the nonlinear MPC
+│       │   └── rocket_codegen.py / quad_codegen.py / mpc_codegen.py   # per-model codegen (derive from base)
+│       ├── control/                            # Vehicle-agnostic controller development (mirrors libs/control)
+│       │   ├── ilqr.ipynb                      # Generic iLQR derivation + C++ conformance test
+│       │   └── ilqr_ref.py                     # Single Python source of the iLQR reference
+│       └── exported_cpp/                       # GENERATED — never hand-edit (stays at the notebooks root)
+│           ├── ROCKET_FF_LQR_01/               # dynamics_rocket_ff_lqr_01.cpp / .hpp
+│           ├── QUADROTOR_FF_LQR_01/            # dynamics_quadrotor_ff_lqr_01.cpp / .hpp
+│           └── QUADROTOR_MPC_01/               # dynamics_quadrotor_mpc_01.cpp / .hpp (prediction model only)
 │
 ├── frontend/
 │   ├── index.html
