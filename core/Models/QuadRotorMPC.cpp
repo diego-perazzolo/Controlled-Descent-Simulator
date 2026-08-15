@@ -25,11 +25,16 @@
 // =============================================================================
 // File        : QuadRotorMPC.cpp
 // Description : Quadrotor 6-DOF (quaternion) runtime model with a nonlinear MPC.
-//               The control-limited iLQR/DDP solver is folded here as private
-//               machinery (anonymous namespace); the model tick samples the
-//               reference over the horizon, solves warm-started, applies the
-//               first command as a ZOH, and integrates the plant by the measured
-//               step. Mirrors modeling/notebooks/dynamics_quadRotor_MPC01.ipynb.
+//               The control-limited iLQR/DDP solver is the generic, reusable
+//               CDS::control::solve (libs/control/ilqr.hpp); this file only holds
+//               the quad-specific pieces the solver needs -- the Gauss-Newton
+//               tracking cost (with the error-quaternion Jacobian) and the
+//               quaternion renormalisation -- as private machinery. Each tick it
+//               samples the reference over the horizon, builds the cost closures,
+//               solves warm-started, applies the first command as a ZOH, and
+//               integrates the plant by the measured step. Controller knobs
+//               (weights, horizon, dt) are hard-wired for now.
+//               Mirrors modeling/notebooks/dynamics_quadRotor_MPC01.ipynb.
 // Author      : Diego Perazzolo
 // Created     : 2026
 // =============================================================================
@@ -42,6 +47,7 @@
 
 #include "dynamics_quadrotor_mpc_01.hpp"
 #include "rk4.hpp"
+#include "ilqr.hpp"
 
 // State indexes (match CDS::Dynamics::QUADROTOR_MPC_01::StateName)
 #define IDX_X   0
@@ -61,14 +67,15 @@
 namespace CDS {
 
 // =============================================================================
-//  Folded MPC solver -- control-limited iLQR / DDP (Tassa, Erez & Todorov 2014).
-//  Private to this translation unit. Controller knobs are hard-wired here.
+//  Quad-specific MPC machinery -- private to this translation unit. The generic
+//  iLQR solver lives in libs/control/ilqr.hpp; here we only supply the tracking
+//  cost (Gauss-Newton residuals, incl. the error-quaternion Jacobian), the
+//  quaternion renormalisation, and the hard-wired controller tuning.
 // =============================================================================
 namespace {
 
 using Model = Dynamics::QUADROTOR_MPC_01;
 
-constexpr int N   = static_cast<int>(QuadRotorMPC::HORIZON);   // prediction horizon
 constexpr std::size_t NX = 13;
 constexpr std::size_t NU = 4;
 constexpr std::size_t NR = 12;   // state-residual dimension
@@ -77,14 +84,10 @@ constexpr std::size_t NR = 12;   // state-residual dimension
 constexpr double DT_MPC    = 0.02;   // MPC prediction step [s]
 constexpr int    MAX_ITERS = 12;     // iLQR iterations per tick (warm-started)
 
-using V13   = std::array<double, NX>;
-using V4    = std::array<double, NU>;
-using V12   = std::array<double, NR>;
-using M13   = std::array<V13, NX>;
-using M13x4 = std::array<V4,  NX>;
-using M4    = std::array<V4,  NU>;
-using M4x13 = std::array<V13, NU>;
-using M12x13= std::array<V13, NR>;
+using V13    = std::array<double, NX>;
+using V4     = std::array<double, NU>;
+using V12    = std::array<double, NR>;
+using M12x13 = std::array<V13, NR>;
 
 struct Weights { double wp, wq, wv, ww, wu, wterm; };
 struct StageRef { std::array<double,3> p; std::array<double,4> q; std::array<double,3> v; std::array<double,3> w; };
@@ -106,9 +109,7 @@ inline void normalizeQuat(V13& x)
     if (n > 1e-12){ const double s=1.0/n; x[3]*=s; x[4]*=s; x[5]*=s; x[6]*=s; }
 }
 
-// ---- cost: residuals, gradient, Gauss-Newton Hessian (SS4 of the notebook) ----
-struct Costs { V13 lx{}; M13 lxx{}; V4 lu{}; M4 luu{}; double val{0}; };
-
+// ---- cost: residuals + Gauss-Newton Jacobian (SS4 of the notebook) ----
 void stateResidualAndJacobian(const V13& x, const StageRef& ref, const Weights& w, V12& r, M12x13& J)
 {
     for (auto& row : J) row.fill(0.0);
@@ -131,203 +132,34 @@ void stateResidualAndJacobian(const V13& x, const StageRef& ref, const Weights& 
     J[5][3]= c*a3;  J[5][4]=-c*a2;  J[5][5]= c*a1;  J[5][6]= c*a0;
 }
 
-double stateCostValue(const V13& x, const StageRef& ref, const Weights& w)
+// ---- per-stage cost payload for the generic solver (state GN + control ridge) ----
+control::StageCost<NX,NU> quadStageCost(const V13& x, const V4& u, const StageRef& ref, const V4& uref, const Weights& w)
 {
-    V12 r; M12x13 J; stateResidualAndJacobian(x, ref, w, r, J);
-    double s=0.0; for (double ri : r) s+=ri*ri; return 0.5*s;
-}
-
-Costs stageCosts(const V13& x, const V4& u, const StageRef& ref, const V4& uref, const Weights& w)
-{
-    Costs c;
+    control::StageCost<NX,NU> c;
     V12 r; M12x13 J; stateResidualAndJacobian(x, ref, w, r, J);
     for (std::size_t j=0;j<NX;++j){
         double g=0.0; for (std::size_t i=0;i<NR;++i) g+=J[i][j]*r[i]; c.lx[j]=g;
         for (std::size_t k=0;k<NX;++k){ double h=0.0; for (std::size_t i=0;i<NR;++i) h+=J[i][j]*J[i][k]; c.lxx[j][k]=h; }
     }
     double su=0.0;
-    for (std::size_t a=0;a<NU;++a){ const double ru=w.wu*(u[a]-uref[a]); c.lu[a]=w.wu*ru; c.luu[a].fill(0.0); c.luu[a][a]=w.wu*w.wu; su+=ru*ru; }
+    for (std::size_t a=0;a<NU;++a){ const double ru=w.wu*(u[a]-uref[a]); c.lu[a]=w.wu*ru; c.luu[a][a]=w.wu*w.wu; su+=ru*ru; }
     double sr=0.0; for (double ri : r) sr+=ri*ri;
     c.val=0.5*(sr+su);
     return c;
 }
 
-// ---- RK4 sensitivity: discrete Jacobians A = dF/dx, B = dF/du (pure RK4) ----
-void sensitivity(const Model& model, const V13& x, const V4& u, double dt, M13& A, M13x4& B)
+// ---- terminal cost payload: W_TERM * state-only Gauss-Newton cost ----
+control::TerminalCost<NX> quadTermCost(const V13& x, const StageRef& ref, const Weights& w)
 {
-    const std::array<double,3> zero{{0,0,0}};
-    auto dyn = [&](const V13& s){ return model.Dynamics(s, u, zero); };
-    const V13 k1 = dyn(x);
-    V13 x2, x3, x4;
-    for (std::size_t i=0;i<NX;++i) x2[i]=x[i]+0.5*dt*k1[i];
-    const V13 k2 = dyn(x2);
-    for (std::size_t i=0;i<NX;++i) x3[i]=x[i]+0.5*dt*k2[i];
-    const V13 k3 = dyn(x3);
-    for (std::size_t i=0;i<NX;++i) x4[i]=x[i]+dt*k3[i];
-
-    double fx1[NX][NX], fu1[NX][NU], fx2[NX][NX], fu2[NX][NU];
-    double fx3[NX][NX], fu3[NX][NU], fx4[NX][NX], fu4[NX][NU];
-    model.Jacobians(x,  u, fx1, fu1);
-    model.Jacobians(x2, u, fx2, fu2);
-    model.Jacobians(x3, u, fx3, fu3);
-    model.Jacobians(x4, u, fx4, fu4);
-
-    auto stepA = [&](const double fx[NX][NX], double cc, const M13& Aprev, M13& Aout){
-        for (std::size_t i=0;i<NX;++i) for (std::size_t j=0;j<NX;++j){
-            double s=fx[i][j]; for (std::size_t m=0;m<NX;++m) s+=fx[i][m]*(cc*Aprev[m][j]); Aout[i][j]=s; } };
-    auto stepB = [&](const double fx[NX][NX], const double fu[NX][NU], double cc, const M13x4& Bprev, M13x4& Bout){
-        for (std::size_t i=0;i<NX;++i) for (std::size_t a=0;a<NU;++a){
-            double s=fu[i][a]; for (std::size_t m=0;m<NX;++m) s+=fx[i][m]*(cc*Bprev[m][a]); Bout[i][a]=s; } };
-    M13 A1,A2,A3,A4; M13x4 B1,B2,B3,B4;
-    for (std::size_t i=0;i<NX;++i){ for (std::size_t j=0;j<NX;++j) A1[i][j]=fx1[i][j];
-                                    for (std::size_t a=0;a<NU;++a) B1[i][a]=fu1[i][a]; }
-    stepA(fx2,0.5*dt,A1,A2); stepB(fx2,fu2,0.5*dt,B1,B2);
-    stepA(fx3,0.5*dt,A2,A3); stepB(fx3,fu3,0.5*dt,B2,B3);
-    stepA(fx4,dt,    A3,A4); stepB(fx4,fu4,dt,    B3,B4);
-    const double s6=dt/6.0;
-    for (std::size_t i=0;i<NX;++i){
-        for (std::size_t j=0;j<NX;++j) A[i][j]=(i==j?1.0:0.0)+s6*(A1[i][j]+2*A2[i][j]+2*A3[i][j]+A4[i][j]);
-        for (std::size_t a=0;a<NU;++a) B[i][a]=s6*(B1[i][a]+2*B2[i][a]+2*B3[i][a]+B4[i][a]);
+    control::TerminalCost<NX> c;
+    V12 r; M12x13 J; stateResidualAndJacobian(x, ref, w, r, J);
+    for (std::size_t j=0;j<NX;++j){
+        double g=0.0; for (std::size_t i=0;i<NR;++i) g+=J[i][j]*r[i]; c.lx[j]=w.wterm*g;
+        for (std::size_t k=0;k<NX;++k){ double h=0.0; for (std::size_t i=0;i<NR;++i) h+=J[i][j]*J[i][k]; c.lxx[j][k]=w.wterm*h; }
     }
-}
-
-// ---- small SPD (Cholesky) solve for the free sub-block, up to 4x4, multi-RHS ----
-bool solveSPD(const double H[NU][NU], int nf, const double R[NU][NX], int nc, double X[NU][NX])
-{
-    double L[NU][NU]={{0}};
-    for (int i=0;i<nf;++i) for (int j=0;j<=i;++j){
-        double s=H[i][j]; for (int k=0;k<j;++k) s-=L[i][k]*L[j][k];
-        if (i==j){ if (s<=1e-12) return false; L[i][j]=std::sqrt(s); } else L[i][j]=s/L[j][j];
-    }
-    for (int c=0;c<nc;++c){
-        double y[NU];
-        for (int i=0;i<nf;++i){ double s=R[i][c]; for (int k=0;k<i;++k) s-=L[i][k]*y[k]; y[i]=s/L[i][i]; }
-        for (int i=nf-1;i>=0;--i){ double s=y[i]; for (int k=i+1;k<nf;++k) s-=L[k][i]*X[k][c]; X[i][c]=s/L[i][i]; }
-    }
-    return true;
-}
-
-// ---- box-constrained QP (projected Newton) ----
-void boxQP(const M4& H, const V4& g, const V4& lo, const V4& hi, V4& x, bool freeMask[NU])
-{
-    for (std::size_t a=0;a<NU;++a) x[a]=std::min(std::max(0.0, lo[a]), hi[a]);
-    for (int it=0; it<40; ++it){
-        V4 grad; for (std::size_t a=0;a<NU;++a){ double s=g[a]; for (std::size_t b=0;b<NU;++b) s+=H[a][b]*x[b]; grad[a]=s; }
-        bool clamped[NU]; int nf=0; int fidx[NU];
-        for (std::size_t a=0;a<NU;++a){
-            clamped[a]=((x[a]<=lo[a] && grad[a]>0)||(x[a]>=hi[a] && grad[a]<0));
-            freeMask[a]=!clamped[a]; if (freeMask[a]) fidx[nf++]=static_cast<int>(a);
-        }
-        if (nf==0) break;
-        double Hf[NU][NU]; double Rf[NU][NX];
-        for (int i=0;i<nf;++i){
-            double gf=g[fidx[i]]; for (std::size_t b=0;b<NU;++b) if (clamped[b]) gf+=H[fidx[i]][b]*x[b];
-            Rf[i][0]=-gf; for (int j=0;j<nf;++j) Hf[i][j]=H[fidx[i]][fidx[j]];
-        }
-        double Xf[NU][NX];
-        if (!solveSPD(Hf, nf, Rf, 1, Xf)) break;
-        V4 step{}; double maxstep=0.0;
-        for (int i=0;i<nf;++i){ step[fidx[i]]=Xf[i][0]-x[fidx[i]]; maxstep=std::max(maxstep,std::fabs(step[fidx[i]])); }
-        if (maxstep<1e-10) break;
-        auto obj=[&](const V4& z){ double s=0; for (std::size_t a=0;a<NU;++a){ double Hz=0; for (std::size_t b=0;b<NU;++b) Hz+=H[a][b]*z[b]; s+=0.5*z[a]*Hz+g[a]*z[a]; } return s; };
-        const double c0=obj(x); double a=1.0; V4 xn;
-        for (int ls=0; ls<20; ++ls){
-            for (std::size_t k=0;k<NU;++k) xn[k]=std::min(std::max(x[k]+a*step[k], lo[k]), hi[k]);
-            if (obj(xn)<=c0){ x=xn; break; }
-            a*=0.5; if (ls==19) x=xn;
-        }
-    }
-}
-
-// ---- receding-horizon solve: warm-started iLQR, writes first command, shifts warm start ----
-void solveMpc(const Model& model, const V13& x0, const std::array<StageRef,N+1>& refs,
-              const V4& uref, double tmin, double tmax, int maxIters,
-              std::array<V4,N>& warmStart, V4& u0)
-{
-    const std::array<double,3> zero{{0,0,0}};
-    auto Fd = [&](const V13& x, const V4& u){
-        V13 xn = integrate::rk4_step<NX>(x, DT_MPC, [&](const V13& s){ return model.Dynamics(s, u, zero); });
-        normalizeQuat(xn); return xn;
-    };
-    auto trajCost = [&](const std::array<V13,N+1>& xs, const std::array<V4,N>& us){
-        double J=0.0; for (int k=0;k<N;++k) J+=stageCosts(xs[k], us[k], refs[k], uref, W).val;
-        J += W.wterm*stateCostValue(xs[N], refs[N], W); return J;
-    };
-
-    std::array<V4,N>   us = warmStart;
-    std::array<V13,N+1> xs; xs[0]=x0;
-    for (int k=0;k<N;++k) xs[k+1]=Fd(xs[k], us[k]);
-    double J = trajCost(xs, us);
-
-    std::array<V4,N>    kff; std::array<M4x13,N> K; double mu=1e-3;
-
-    for (int iter=0; iter<maxIters; ++iter){
-        // terminal value V = wterm * (state gradient/Hessian at xs[N])
-        V13 Vx; M13 Vxx;
-        { Costs cN = stageCosts(xs[N], uref, refs[N], uref, W);
-          for (std::size_t i=0;i<NX;++i){ Vx[i]=W.wterm*cN.lx[i];
-              for (std::size_t j=0;j<NX;++j) Vxx[i][j]=W.wterm*cN.lxx[i][j]; } }
-
-        for (int k=N-1; k>=0; --k){
-            M13 A; M13x4 B; sensitivity(model, xs[k], us[k], DT_MPC, A, B);
-            Costs c = stageCosts(xs[k], us[k], refs[k], uref, W);
-
-            M4x13 BtVxx; M13 AtVxx;
-            for (std::size_t a=0;a<NU;++a) for (std::size_t j=0;j<NX;++j){ double s=0; for (std::size_t i=0;i<NX;++i) s+=B[i][a]*Vxx[i][j]; BtVxx[a][j]=s; }
-            for (std::size_t p=0;p<NX;++p) for (std::size_t j=0;j<NX;++j){ double s=0; for (std::size_t i=0;i<NX;++i) s+=A[i][p]*Vxx[i][j]; AtVxx[p][j]=s; }
-
-            V13 Qx; V4 Qu; M13 Qxx; M4 Quu; M4x13 Qux;
-            for (std::size_t p=0;p<NX;++p){ double s=c.lx[p]; for (std::size_t i=0;i<NX;++i) s+=A[i][p]*Vx[i]; Qx[p]=s; }
-            for (std::size_t a=0;a<NU;++a){ double s=c.lu[a]; for (std::size_t i=0;i<NX;++i) s+=B[i][a]*Vx[i]; Qu[a]=s; }
-            for (std::size_t p=0;p<NX;++p) for (std::size_t q=0;q<NX;++q){ double s=c.lxx[p][q]; for (std::size_t m=0;m<NX;++m) s+=AtVxx[p][m]*A[m][q]; Qxx[p][q]=s; }
-            for (std::size_t a=0;a<NU;++a) for (std::size_t b=0;b<NU;++b){ double s=c.luu[a][b]; for (std::size_t m=0;m<NX;++m) s+=BtVxx[a][m]*B[m][b]; if (a==b) s+=mu; Quu[a][b]=s; }
-            for (std::size_t a=0;a<NU;++a) for (std::size_t j=0;j<NX;++j){ double s=0; for (std::size_t m=0;m<NX;++m) s+=BtVxx[a][m]*A[m][j]; Qux[a][j]=s; }
-
-            V4 lo, hi; for (std::size_t a=0;a<NU;++a){ lo[a]=tmin-us[k][a]; hi[a]=tmax-us[k][a]; }
-            V4 ki; bool freeMask[NU]; boxQP(Quu, Qu, lo, hi, ki, freeMask);
-
-            M4x13 Ki; for (auto& row : Ki) row.fill(0.0);
-            int nf=0, fidx[NU]; for (std::size_t a=0;a<NU;++a) if (freeMask[a]) fidx[nf++]=static_cast<int>(a);
-            if (nf>0){
-                double Hf[NU][NU], Rf[NU][NX], Xf[NU][NX];
-                for (int i=0;i<nf;++i){ for (int j=0;j<nf;++j) Hf[i][j]=Quu[fidx[i]][fidx[j]];
-                    for (std::size_t j=0;j<NX;++j) Rf[i][j]=-Qux[fidx[i]][j]; }
-                if (solveSPD(Hf, nf, Rf, static_cast<int>(NX), Xf))
-                    for (int i=0;i<nf;++i) for (std::size_t j=0;j<NX;++j) Ki[fidx[i]][j]=Xf[i][j];
-            }
-            kff[k]=ki; K[k]=Ki;
-
-            V4 Quuk; for (std::size_t a=0;a<NU;++a){ double s=0; for (std::size_t b=0;b<NU;++b) s+=Quu[a][b]*ki[b]; Quuk[a]=s; }
-            for (std::size_t p=0;p<NX;++p){ double s=Qx[p];
-                for (std::size_t a=0;a<NU;++a) s+=Ki[a][p]*Quuk[a]+Ki[a][p]*Qu[a]+Qux[a][p]*ki[a]; Vx[p]=s; }
-            M4x13 QuuK; for (std::size_t a=0;a<NU;++a) for (std::size_t j=0;j<NX;++j){ double s=0; for (std::size_t b=0;b<NU;++b) s+=Quu[a][b]*Ki[b][j]; QuuK[a][j]=s; }
-            M13 Vnew;
-            for (std::size_t p=0;p<NX;++p) for (std::size_t q=0;q<NX;++q){ double s=Qxx[p][q];
-                for (std::size_t a=0;a<NU;++a) s+=Ki[a][p]*QuuK[a][q]+Ki[a][p]*Qux[a][q]+Qux[a][p]*Ki[a][q]; Vnew[p][q]=s; }
-            for (std::size_t p=0;p<NX;++p) for (std::size_t q=0;q<NX;++q) Vxx[p][q]=0.5*(Vnew[p][q]+Vnew[q][p]);
-        }
-
-        static const double alphas[]={1.0,0.5,0.25,0.125,0.0625,0.03,0.015,0.007};
-        bool accepted=false;
-        for (double a : alphas){
-            std::array<V13,N+1> xn; std::array<V4,N> un; xn[0]=xs[0];
-            for (int k=0;k<N;++k){
-                V4 du;
-                for (std::size_t j=0;j<NU;++j){
-                    double fb=0; for (std::size_t p=0;p<NX;++p) fb+=K[k][j][p]*(xn[k][p]-xs[k][p]);
-                    du[j]=a*kff[k][j]+fb; un[k][j]=std::min(std::max(us[k][j]+du[j], tmin), tmax);
-                }
-                xn[k+1]=Fd(xn[k], un[k]);
-            }
-            double Jn=trajCost(xn, un);
-            if (Jn<J){ xs=xn; us=un; J=Jn; accepted=true; break; }
-        }
-        if (accepted) mu=std::max(mu*0.7,1e-6); else { mu*=4.0; if (mu>1e3) break; }
-    }
-
-    for (std::size_t j=0;j<NU;++j) u0[j]=std::min(std::max(us[0][j], tmin), tmax);
-    for (int k=0;k<N-1;++k) warmStart[k]=us[k+1];
-    warmStart[N-1]=us[N-1];
+    double sr=0.0; for (double ri : r) sr+=ri*ri;
+    c.val=w.wterm*0.5*sr;
+    return c;
 }
 
 // ---- plant advance: one RK4 step at the measured dt with the applied command ----
@@ -412,10 +244,10 @@ bool QuadRotorMPC::PerformIntegration(const core_stepParams_t& params)
     if (dynamics == nullptr || m_trajectoryManagerPtr == nullptr) { return true; }
 
     // ---- sample the reference over the horizon (preview) ----
-    std::array<StageRef, N + 1> refs;
+    std::array<StageRef, QuadRotorMPC::HORIZON + 1> refs;
     Reference_t ref0;
     if (m_trajectoryManagerPtr->GetReference(m_time, ref0)) { return true; }
-    for (int k = 0; k <= N; ++k)
+    for (std::size_t k = 0; k <= QuadRotorMPC::HORIZON; ++k)
     {
         Reference_t r;
         if (m_trajectoryManagerPtr->GetReference(m_time + k * DT_MPC, r))
@@ -435,8 +267,9 @@ bool QuadRotorMPC::PerformIntegration(const core_stepParams_t& params)
     const double mg = dynamics->GetParam(PN::Mass) * dynamics->GetParam(PN::Gravity);
     const double Th = mg / 4.0;
     const V4 uref{{Th, Th, Th, Th}};
-    const double tmin = dynamics->GetParam(PN::ThrustMin);
-    const double tmax = dynamics->GetParam(PN::ThrustMax);
+    V4 lo, hi;
+    lo.fill(dynamics->GetParam(PN::ThrustMin));
+    hi.fill(dynamics->GetParam(PN::ThrustMax));
     if (!m_seeded) { for (auto& u : m_warmStart) u = uref; m_seeded = true; }
 
     // ---- tracking errors (position + heading) w.r.t. the current reference ----
@@ -448,10 +281,21 @@ bool QuadRotorMPC::PerformIntegration(const core_stepParams_t& params)
     double eyaw = ref0.yaw - yaw; eyaw = std::atan2(std::sin(eyaw), std::cos(eyaw));
     m_trackingErr[3] = eyaw;
 
-    // ---- solve, apply first command as ZOH, integrate plant by the measured step ----
-    V4 u0;
-    solveMpc(*dynamics, m_state, refs, uref, tmin, tmax, MAX_ITERS, m_warmStart, u0);
+    // ---- solve: build the quad closures and hand off to the generic iLQR ----
+    // The MPC predicts with no external force (userF = 0); the plant is advanced
+    // below with the true user force. (Offset-free force estimation lands here.)
+    const std::array<double,3> predForce{{0.0, 0.0, 0.0}};
+    auto fdyn  = [&](const V13& x, const V4& u){ return dynamics->Dynamics(x, u, predForce); };
+    auto jac   = [&](const V13& x, const V4& u, double fx[NX][NX], double fu[NX][NU]){ dynamics->Jacobians(x, u, fx, fu); };
+    auto proj  = [](V13& s){ normalizeQuat(s); };
+    auto scost = [&](const V13& x, const V4& u, std::size_t k){ return quadStageCost(x, u, refs[k], uref, W); };
+    auto tcost = [&](const V13& x){ return quadTermCost(x, refs[QuadRotorMPC::HORIZON], W); };
 
+    V4 u0;
+    control::solve<NX, NU, QuadRotorMPC::HORIZON>(
+        m_state, fdyn, jac, proj, scost, tcost, lo, hi, DT_MPC, MAX_ITERS, m_warmStart, u0);
+
+    // ---- apply first command as ZOH, integrate plant by the measured step ----
     m_userForces[0] = params.user_fX;
     m_userForces[1] = params.user_fY;
     m_userForces[2] = params.user_fZ;

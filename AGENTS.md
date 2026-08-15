@@ -66,6 +66,21 @@ conventions, invariants, verification commands and the review procedure.
    wall-anchored by design — do not replace it with the nominal tick period,
    and do not reintroduce integer `duration_cast` in the elapsed measurement
    (sub-unit iterations truncate to zero and silently freeze the simulation).
+10. **Controllers are generic C++ plus a Python conformance certificate.**
+    Hand-written control algorithms (iLQR today, LQR next) live in
+    `libs/control` as model- and protocol-agnostic, header-only infrastructure —
+    parameterised by the model and cost through callables, never carrying
+    vehicle-specific code. Every such controller MUST ship a runnable,
+    dependency-light **C++↔Python conformance certificate**: a
+    `libs/control/bind/` C-ABI shim plus a stdlib-only script that certifies the
+    C++ result against an independent Python oracle on a synthetic benchmark
+    (for iLQR, that the returned command sequence is a constrained optimum — a
+    ~0 box-projected KKT residual). A controller without a green conformance is
+    not done. Model-specific pieces (the tracking cost, the reference sampling)
+    live with the model under `core/Models`, not in `libs/control`. This mirrors
+    the generate-vs-hand-write split: symbolic model artifacts are generated
+    (codegen), algorithmic controllers are hand-written in C++ and validated
+    from Python.
 
 ## Naming
 
@@ -97,9 +112,10 @@ cmake -S apps/ws-served/server -B build-server -DCMAKE_BUILD_TYPE=Release && cma
 clang++ -std=c++20 -fsyntax-only \
   -Icore -Icore/System -Icore/Plant -Icore/Models -Icore/Trajectory \
   -Iapps/common/exported_cpp -Iapps/ws-served/exported_cpp \
-  -Iapps/ws-served/server -Ilibs/ws -Ilibs/sync \
+  -Iapps/ws-served/server -Ilibs/ws -Ilibs/sync -Ilibs/integrate -Ilibs/control \
   -Imodeling/notebooks/exported_cpp/ROCKET_FF_LQR_01 \
-  -Imodeling/notebooks/exported_cpp/QUADROTOR_FF_LQR_01 <file.cpp>
+  -Imodeling/notebooks/exported_cpp/QUADROTOR_FF_LQR_01 \
+  -Imodeling/notebooks/exported_cpp/QUADROTOR_MPC_01 <file.cpp>
 
 # Frontend syntax check (main.js is an ES module)
 cp frontend/main.js /tmp/main_check.mjs && node --check /tmp/main_check.mjs
@@ -116,12 +132,32 @@ cmake --build build-plants-test
 ./build-plants-test/driver        # mailboxes, freshness, lifecycle
 ./build-plants-test/sitl_driver   # SITL plant vs in-process fake ArduCopter
 
-# Python codegen sanity
-python3 -c "import ast; [ast.parse(open('modeling/notebooks/'+f).read()) \
-  for f in ('base_codegen.py','rocket_codegen.py','quad_codegen.py')]"
+# generic iLQR solver test (native, self-contained: no core, no quaternions)
+cmake -S libs/control/test -B build-ilqr-test -DCMAKE_BUILD_TYPE=Release
+cmake --build build-ilqr-test
+./build-ilqr-test/ilqr_test        # double-integrator: loose-box reach + tight-box feasibility
 
-# Notebook JSON validity
-python3 -c "import json; json.load(open('modeling/notebooks/<nb>.ipynb'))"
+# controller C++<->Python conformance (golden rule 10; iLQR today). ctypes, no
+# numpy: certifies the C++ solution against an independent Python oracle on a
+# synthetic model (for iLQR: a constrained optimum, box-projected KKT residual ~0)
+cmake -S libs/control/bind -B build-ilqr-bind -DCMAKE_BUILD_TYPE=Release
+cmake --build build-ilqr-bind
+python3 libs/control/bind/ilqr_conformance.py build-ilqr-bind
+
+# QuadRotorMPC model test (native, exercises the model + solver end to end)
+cmake -S core/Models/test -B build-mpc-model-test -DCMAKE_BUILD_TYPE=Release
+cmake --build build-mpc-model-test
+./build-mpc-model-test/mpc_model_test   # Poly4 tracking + gust rejection
+
+# Python codegen sanity (base_codegen shared at root; model codegens under model/)
+python3 -c "import ast; [ast.parse(open(f).read()) for f in ( \
+  'modeling/notebooks/base_codegen.py', \
+  'modeling/notebooks/model/quad_codegen.py', \
+  'modeling/notebooks/model/rocket_codegen.py', \
+  'modeling/notebooks/model/mpc_codegen.py')]"
+
+# Notebook JSON validity (notebooks live under model/ or control/)
+python3 -c "import json; json.load(open('modeling/notebooks/model/<nb>.ipynb'))"
 ```
 
 ## Review procedure

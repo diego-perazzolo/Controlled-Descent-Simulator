@@ -33,6 +33,7 @@ target_include_directories(cds_core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/Models
     ${CMAKE_CURRENT_SOURCE_DIR}/Trajectory
     ${CMAKE_CURRENT_SOURCE_DIR}/../libs/integrate
+    ${CMAKE_CURRENT_SOURCE_DIR}/../libs/control
     ${CMAKE_CURRENT_SOURCE_DIR}/../modeling/notebooks/exported_cpp/
     ${CMAKE_CURRENT_SOURCE_DIR}/../modeling/notebooks/exported_cpp/ROCKET_FF_LQR_01/
     ${CMAKE_CURRENT_SOURCE_DIR}/../modeling/notebooks/exported_cpp/QUADROTOR_FF_LQR_01/

@@ -234,7 +234,7 @@ client), app switching, notebook setup and deployment are documented in
 - [x] Notebook-driven C++ code generation (shared codegen base, per-model generators)
 - [x] ws-served app: core on a native WebSocket server, browser as thin client
 - [x] SITL plant over MAVLink/UDP (ArduCopter): link, telemetry, Guided-mode setpoints, auto arm/takeoff staging
-- [ ] Save / load of parameters and trajectories from the frontend
+- [x] Save / load of parameters and trajectories from the frontend
 - [ ] Real hardware interface (MAVLink over serial to a Pixhawk): the SITL plant's link layer is the same, only the transport changes
 
 ---

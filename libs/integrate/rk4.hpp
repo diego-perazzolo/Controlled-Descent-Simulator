@@ -40,6 +40,21 @@
 
 namespace CDS { namespace integrate {
 
+// -----------------------------------------------------------------------------
+// Example (standalone) -- advance a damped oscillator x'' = -x - 0.1 x' by one
+// step. The state is [position, velocity]; the caller builds the derivative
+// closure (capturing any control/forces) and reprojects afterwards if needed:
+//
+//   using State = std::array<double, 2>;
+//   State x{{1.0, 0.0}};
+//   const double u = 0.0;                              // constant control, if any
+//   auto deriv = [&](const State& s) -> State {
+//       return {{ s[1], -s[0] - 0.1 * s[1] + u }};     // dx/dt = f(x, u)
+//   };
+//   x = CDS::integrate::rk4_step<2>(x, 0.01, deriv);   // advance by dt = 0.01 s
+//   // If the state has a constraint (e.g. a unit quaternion), reproject x here.
+// -----------------------------------------------------------------------------
+
 // Advance x by dt with classic RK4, holding the control fixed over the step.
 // `deriv` maps a state to its time-derivative:
 //   std::array<double, N> deriv(const std::array<double, N>& x)

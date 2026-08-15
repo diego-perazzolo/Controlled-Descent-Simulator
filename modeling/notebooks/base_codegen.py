@@ -49,7 +49,10 @@ class CodegenConfig:
 
     @property
     def export_dir(self):
-        return os.path.join(self.out_dir, self.model_name)   # exported_cpp/QUADROTOR_FF_LQR_01/
+        base = self.out_dir
+        if not os.path.isabs(base):                          # anchor a relative out_dir at the
+            base = os.path.join(os.path.dirname(os.path.abspath(__file__)), base)  # notebooks root
+        return os.path.join(base, self.model_name)           # (not the cwd: notebooks live in model/)
 
 
 class BaseCodegen:
