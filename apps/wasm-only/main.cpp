@@ -41,6 +41,9 @@
 
 using Clock = std::chrono::steady_clock;
 
+static const auto logger = cds_log::registry().module("Main");
+static const auto profile = cds_profile::registry().module("Main");
+
 static Clock::time_point _lastTime;
 static int _is_sys_init = 0;
 
@@ -87,6 +90,7 @@ static void _tick_generator(void)
             dt_seconds = dtMax_seconds;
         }
 
+        CDS_PROFILE(profile, "Ticking");
         /* Actually tick the system */
         g_core_tick(dt_seconds);
 

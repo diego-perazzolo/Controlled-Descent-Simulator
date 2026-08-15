@@ -31,6 +31,9 @@
 // =============================================================================
 
 #include "Rocket.hpp"
+#include "log.hpp"
+#include "profile.hpp"
+
 #include <cmath>
 #include <array>
 
@@ -83,6 +86,9 @@
 
 namespace CDS {
 
+static const auto logger = cds_log::registry().module("Rocket");
+static const auto profile = cds_profile::registry().module("Rocket");
+
 // =============================================================================
 // rk4_step()
 // Advances the state by one timestep dt using classic RK4.
@@ -96,33 +102,41 @@ static bool rk4_step(void* pDynamics, Rocket::StateVec&     x,
 
     if(pDynamics == nullptr)
     {
-        // ERR
+        CDS_LOG_ERROR(logger, "Model not initialized");
         return true;
     }
 
     Dynamics::ROCKET_FF_LQR_01* pDyn = static_cast<Dynamics::ROCKET_FF_LQR_01*>(pDynamics);
      
     // Compute control at current state (held constant over the step)
-    const Rocket::InputVec u = pDyn->ExecuteControl(x, ref);
+    Rocket::InputVec u;
+    {
+      CDS_PROFILE(profile, "Execute control");
+      u = pDyn->ExecuteControl(x, ref);
+    }
 
     // Four RK4 slope evaluations
-    const Rocket::StateVec k1 = pDyn->Dynamics(x, u, ref, userF);
+    {
+        CDS_PROFILE(profile, "RK4 integration");
 
-    Rocket::StateVec x2{};
-    for (size_t i = 0; i < 16; ++i) x2[i] = x[i] + k1[i] * dt * 0.5;
-    const Rocket::StateVec k2 = pDyn->Dynamics(x2, u, ref, userF);
-
-    Rocket::StateVec x3{};
-    for (size_t i = 0; i < 16; ++i) x3[i] = x[i] + k2[i] * dt * 0.5;
-    const Rocket::StateVec k3 = pDyn->Dynamics(x3, u, ref, userF);
-
-    Rocket::StateVec x4{};
-    for (size_t i = 0; i < 16; ++i) x4[i] = x[i] + k3[i] * dt;
-    const Rocket::StateVec k4 = pDyn->Dynamics(x4, u, ref, userF);
-
-    // Weighted sum
-    for (size_t i = 0; i < 16; ++i)
+        const Rocket::StateVec k1 = pDyn->Dynamics(x, u, ref, userF);
+        
+        Rocket::StateVec x2{};
+        for (size_t i = 0; i < 16; ++i) x2[i] = x[i] + k1[i] * dt * 0.5;
+        const Rocket::StateVec k2 = pDyn->Dynamics(x2, u, ref, userF);
+        
+        Rocket::StateVec x3{};
+        for (size_t i = 0; i < 16; ++i) x3[i] = x[i] + k2[i] * dt * 0.5;
+        const Rocket::StateVec k3 = pDyn->Dynamics(x3, u, ref, userF);
+        
+        Rocket::StateVec x4{};
+        for (size_t i = 0; i < 16; ++i) x4[i] = x[i] + k3[i] * dt;
+        const Rocket::StateVec k4 = pDyn->Dynamics(x4, u, ref, userF);
+        
+        // Weighted sum
+        for (size_t i = 0; i < 16; ++i)
         x[i] = x[i] + (k1[i] + 2.0*k2[i] + 2.0*k3[i] + k4[i]) * dt / 6.0;
+    }
 
     return false;
 }
@@ -184,7 +198,7 @@ bool Rocket::SetModelParams(const std::any& params)
 
     if(dynamics == nullptr || params.type() != typeid(core_rocketParams_t&))
     {
-        // Err
+        CDS_LOG_ERROR(logger, "Cannot set model params");
         return true;
     }
 
@@ -214,7 +228,7 @@ bool Rocket::SetTrajectoryManager(TrajectoryManager* pTrajectoryManager)
 
     if(pTrajectoryManager == nullptr || pTrajectoryManager->GetReference(m_time, ref))
     {
-        // Error
+        CDS_LOG_ERROR(logger, "Trajectory error");
         return true;
     }
 
@@ -231,7 +245,7 @@ bool Rocket::PerformIntegration(const core_stepParams_t& params)
     Reference_t ref;
     if(m_trajectoryManagerPtr == nullptr || m_trajectoryManagerPtr->GetReference(m_time, ref))
     {
-        // ERR
+        CDS_LOG_ERROR(logger, "Trajectory error");
         return true;
     }
 
@@ -277,7 +291,7 @@ bool Rocket::PerformIntegration(const core_stepParams_t& params)
     // Runge Kutta 4
     if(rk4_step(m_modelPtr, m_state, ref, m_userForces, params.timestep))
     {
-        // Err
+        CDS_LOG_ERROR(logger, "Cannot integrate model");
         return true;
     }
 

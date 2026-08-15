@@ -31,6 +31,8 @@
 // =============================================================================
 
 #include "SitlPlant.hpp"
+#include "log.hpp"
+#include "profile.hpp"
 
 /* sole gateway to the vendored MAVLink headers: compiling it here keeps the
    protocol pins guarding every build of this library */
@@ -48,6 +50,10 @@ using FpSeconds = std::chrono::duration<double>;
 
 namespace
 {
+
+    static const auto logger = cds_log::registry().module("SITL plant");
+    static const auto profile = cds_profile::registry().module("SITL plant");
+
     /* our identity on the wire: a ground-control-station peer. System id 254,
        not the 255 that ground stations (QGroundControl, MAVProxy) default to:
        sharing 255/190 with a co-connected GCS makes the flight controller
@@ -198,6 +204,7 @@ struct SitlPlant::Link
              haveAttTime(false), lastAttBootMs(0),
              stageSkipTakeoff(false)
     {
+        CDS_LOG_INFO(logger, "Link created");
     }
 
     /* seconds elapsed since the loop epoch */
@@ -222,26 +229,27 @@ SitlPlant::SitlPlant() : m_params({.host = "0.0.0.0",
                          m_stageAltitude(0.0),
                          m_stageYaw(0.0)
 {
-
+    CDS_LOG_INFO(logger, "Plant created");
 }
 
 SitlPlant::~SitlPlant()
 {
     Stop();
     Disconnect();
+    CDS_LOG_INFO(logger, "Plant released");
 }
 
 bool SitlPlant::SetPlantParams(const std::any& params)
 {
     if (m_thread.joinable())
     {
-        // Cannot reconfigure while connected, error
+        CDS_LOG_ERROR(logger, "Cannot reconfigure plant while it is running");
         return true;
     }
 
     if (params.type() != typeid(sitlParams_t&))
     {
-        // Err
+        CDS_LOG_ERROR(logger, "Wrong params type");
         return true;
     }
 
@@ -252,10 +260,11 @@ bool SitlPlant::SetPlantParams(const std::any& params)
         p.linkTimeout_seconds <= 0 ||
         p.stabilityVelThreshold_ms <= 0 || p.stabilityHoldTime_seconds <= 0)
     {
-        // Invalid parameters, error
+        CDS_LOG_ERROR(logger, "Invalid parameter value");
         return true;
     }
 
+    CDS_LOG_INFO(logger, "Params succesfully set");
     m_params = p;
     return false;
 }
@@ -264,13 +273,13 @@ bool SitlPlant::Connect(void)
 {
     if (m_thread.joinable())
     {
-        // Already connected, error
+        CDS_LOG_ERROR(logger, "Plant already connected");
         return true;
     }
 
     m_threadRun = true;
     m_thread = std::thread(&SitlPlant::_commLoop, this);
-
+    CDS_LOG_INFO(logger, "Starting connection");
     return false;
 }
 
@@ -279,6 +288,7 @@ bool SitlPlant::Disconnect(void)
     /* idempotent: disconnecting a disconnected plant is not an error */
     if (!m_thread.joinable())
     {
+        CDS_LOG_WARN(logger, "Disconnect: no plant is currently connected");
         return false;
     }
 
@@ -289,6 +299,8 @@ bool SitlPlant::Disconnect(void)
     m_linkState = linkState_t::DISCONNECTED;
     m_stagingState = stagingState_t::IDLE;
 
+    CDS_LOG_INFO(logger, "Plant disconnected");
+
     return false;
 }
 
@@ -296,22 +308,23 @@ bool SitlPlant::Start(void)
 {
     if (!m_thread.joinable())
     {
-        // Mission on a disconnected link, error
+        CDS_LOG_ERROR(logger, "Cannot start mission on a disconnected plant");
         return true;
     }
 
     if (m_missionRun)
     {
-        // Already started, error
+        CDS_LOG_ERROR(logger, "Mission is already started");
         return true;
     }
 
     if (m_stagingState != stagingState_t::STAGED)
     {
-        // Vehicle not staged (not airborne in a stable hover), error
+        CDS_LOG_ERROR(logger, "Plant is not staged");
         return true;
     }
 
+    CDS_LOG_INFO(logger, "Mission started");
     m_missionRun = true;
     return false;
 }
@@ -326,6 +339,7 @@ bool SitlPlant::Stop(void)
        command the vehicle below ground. The mission-stop edge holds it. */
     m_stageRequested = false;
     m_stagingState = stagingState_t::IDLE;
+    CDS_LOG_INFO(logger, "Mission stopped");
     return false;
 }
 
@@ -333,13 +347,13 @@ bool SitlPlant::BeginStaging(double altitude_m, double headingYaw)
 {
     if (!m_thread.joinable())
     {
-        // Cannot stage a disconnected link, error
+        CDS_LOG_ERROR(logger, "Plant is disconnected, cannot stage");
         return true;
     }
 
     if (altitude_m <= 0.0)
     {
-        // Invalid staging altitude, error
+        CDS_LOG_ERROR(logger, "Invalid staging altitude: {}m", altitude_m);
         return true;
     }
 
@@ -349,6 +363,8 @@ bool SitlPlant::BeginStaging(double altitude_m, double headingYaw)
        after a maneuver (the vehicle climbs back to the altitude) */
     m_stagingState = stagingState_t::IDLE;
     m_stageRequested = true;
+
+    CDS_LOG_INFO(logger, "Begin staging");
     return false;
 }
 
@@ -357,6 +373,7 @@ bool SitlPlant::StopStaging(void)
     /* clears the request; the communication loop aborts any in-progress (or
        completed) staging back to IDLE and holds the vehicle in place */
     m_stageRequested = false;
+    CDS_LOG_INFO(logger, "Stop staging");
     return false;
 }
 
@@ -381,6 +398,8 @@ void SitlPlant::_commLoop(void)
 
     while (m_threadRun)
     {
+        CDS_PROFILE(profile, "Communication loop");
+
         if (!link.transport.IsOpen())
         {
             if (link.transport.Open(m_params.host, m_params.port,
@@ -507,6 +526,7 @@ void SitlPlant::_commLoop(void)
 
 void SitlPlant::_processInbound(Link& link)
 {
+    CDS_PROFILE(profile, "Receiving messages");
     uint8_t buffer[2048];
     sockaddr_in from = {};
 
@@ -767,6 +787,8 @@ void SitlPlant::_processInbound(Link& link)
 
 void SitlPlant::_sendHeartbeat(Link& link)
 {
+    CDS_LOG_DEBUG(logger, "Send heartbeat");
+
     mavlink_message_t message;
     mavlink_msg_heartbeat_pack(OUR_SYSTEM_ID, OUR_COMPONENT_ID, &message,
                                MAV_TYPE_GCS, MAV_AUTOPILOT_INVALID,
@@ -780,6 +802,8 @@ void SitlPlant::_sendHeartbeat(Link& link)
 
 void SitlPlant::_requestTelemetryStreams(Link& link)
 {
+    CDS_LOG_INFO(logger, "Request telemetry streams");
+
     const float interval_us =
         static_cast<float>(m_params.telemetryPeriod_seconds * 1e6);
 
@@ -804,6 +828,8 @@ void SitlPlant::_requestTelemetryStreams(Link& link)
 
 void SitlPlant::_sendSetpoint(Link& link, const plantCommands_t& commands)
 {
+    CDS_LOG_DEBUG(logger, "Send setpoint");
+
     /* target pose in CDS/ENU: reference position plus the mission offset, so
        the trajectory frame maps onto the vehicle's frame. Heading is commanded
        absolutely (the reference yaw): the vehicle was staged to the
@@ -841,6 +867,7 @@ void SitlPlant::_sendSetpoint(Link& link, const plantCommands_t& commands)
 
 void SitlPlant::_sendHold(Link& link)
 {
+    CDS_LOG_INFO(logger, "Send hold");
     /* "stay exactly here": the vehicle's last reported NED pose with zero
        velocity. Offset-independent (a hold at the current position is the
        same in any frame origin), so it is safe even mid-mission */
@@ -864,6 +891,7 @@ void SitlPlant::_sendHold(Link& link)
 
 void SitlPlant::_sendClimbSetpoint(Link& link)
 {
+    CDS_LOG_DEBUG(logger, "Send climb setpoint");
     /* climb in place to the staging altitude and yaw to the staging heading:
        current NED horizontal position, target altitude, zero velocity, target
        heading — a GUIDED position target ArduCopter honours in flight (unlike
@@ -909,16 +937,19 @@ void SitlPlant::_sendStageCommand(Link& link, stagingState_t state)
     {
         case stagingState_t::SET_MODE:
             /* DO_SET_MODE: custom mode enabled, ArduCopter GUIDED */
+            CDS_LOG_INFO(logger, "Guided mode");
             _sendCommandLong(link, MAV_CMD_DO_SET_MODE,
                              MAV_MODE_FLAG_CUSTOM_MODE_ENABLED,
                              ARDUCOPTER_GUIDED_MODE);
             break;
         case stagingState_t::ARM:
             /* COMPONENT_ARM_DISARM: param1 = 1 (arm) */
+            CDS_LOG_INFO(logger, "Armed mode");
             _sendCommandLong(link, MAV_CMD_COMPONENT_ARM_DISARM, 1.0f);
             break;
         case stagingState_t::TAKEOFF:
             /* NAV_TAKEOFF: param7 = altitude above the takeoff point */
+            CDS_LOG_INFO(logger, "Take off");
             _sendCommandLong(link, MAV_CMD_NAV_TAKEOFF,
                              0, 0, 0, 0, 0, 0,
                              static_cast<float>(m_stageAltitude.load()));
@@ -945,6 +976,7 @@ void SitlPlant::_runStaging(Link& link)
                 _sendHold(link);
             }
             m_stagingState = stagingState_t::IDLE;
+            CDS_LOG_INFO(logger, "Staging going idle");
         }
         return;
     }
@@ -955,6 +987,7 @@ void SitlPlant::_runStaging(Link& link)
             /* kick off the sequence */
             link.stageSkipTakeoff = false;
             m_stagingState = stagingState_t::SET_MODE;
+            CDS_LOG_INFO(logger, "Staging going set mode");
             _sendStageCommand(link, stagingState_t::SET_MODE);
             break;
 
@@ -998,6 +1031,7 @@ void SitlPlant::_runStaging(Link& link)
                  m_params.stabilityHoldTime_seconds))
             {
                 m_stagingState = stagingState_t::STAGED;
+                CDS_LOG_INFO(logger, "Staging completed");
             }
             break;
 

@@ -48,6 +48,9 @@
 #include "dynamics_quadrotor_mpc_01.hpp"
 #include "rk4.hpp"
 #include "ilqr.hpp"
+#include "log.hpp"
+#include "profile.hpp"
+
 
 // State indexes (match CDS::Dynamics::QUADROTOR_MPC_01::StateName)
 #define IDX_X   0
@@ -65,6 +68,9 @@
 #define IDX_WZ  12
 
 namespace CDS {
+
+static const auto logger = cds_log::registry().module("Quadrotor MPC");
+static const auto profile = cds_profile::registry().module("Quadrotor MPC");
 
 // =============================================================================
 //  Quad-specific MPC machinery -- private to this translation unit. The generic
@@ -162,8 +168,8 @@ control::TerminalCost<NX> quadTermCost(const V13& x, const StageRef& ref, const 
     return c;
 }
 
-// ---- plant advance: one RK4 step at the measured dt with the applied command ----
-V13 plantStep(const Model& model, const V13& x, const V4& u, const std::array<double,3>& uF, double dt)
+// ---- One RK4 step at the measured dt with the applied command ----
+V13 integrateAndNormalize(const Model& model, const V13& x, const V4& u, const std::array<double,3>& uF, double dt)
 {
     V13 xn = integrate::rk4_step<NX>(x, dt, [&](const V13& s){ return model.Dynamics(s, u, uF); });
     normalizeQuat(xn);
@@ -206,7 +212,7 @@ bool QuadRotorMPC::SetModelParams(const std::any& params)
     auto dynamics = (Dynamics::QUADROTOR_MPC_01*) m_modelPtr;
     if (dynamics == nullptr || params.type() != typeid(core_quadRotorParams_t&))
     {
-        // Err
+        CDS_LOG_ERROR(logger, "Model not initialized or wrong params type");
         return true;
     }
     const auto& p = std::any_cast<const core_quadRotorParams_t&>(params);
@@ -232,7 +238,7 @@ bool QuadRotorMPC::SetTrajectoryManager(TrajectoryManager* pTrajectoryManager)
     Reference_t ref;
     if (pTrajectoryManager == nullptr || pTrajectoryManager->GetReference(m_time, ref))
     {
-        // Error
+        CDS_LOG_ERROR(logger, "Trajectory not initialized");
         return true;
     }
     m_trajectoryManagerPtr = pTrajectoryManager;
@@ -267,6 +273,7 @@ bool QuadRotorMPC::PerformIntegration(const core_stepParams_t& params)
     //      instead of freezing). ----
     if (!m_seeded || (m_time - m_lastSolveTime) >= DT_MPC)
     {
+        CDS_PROFILE(profile, "Total MPC execution");
         // hover command and actuator box from the model params
         using PN = Dynamics::QUADROTOR_MPC_01::ParamName;
         const double mg = dynamics->GetParam(PN::Mass) * dynamics->GetParam(PN::Gravity);
@@ -305,8 +312,11 @@ bool QuadRotorMPC::PerformIntegration(const core_stepParams_t& params)
         auto tcost = [&](const V13& x){ return quadTermCost(x, refs[QuadRotorMPC::HORIZON], W); };
 
         V4 u0;
-        control::solve<NX, NU, QuadRotorMPC::HORIZON>(
-            m_state, fdyn, jac, proj, scost, tcost, lo, hi, DT_MPC, MAX_ITERS, m_warmStart, u0);
+        {
+            CDS_PROFILE(profile, "MPC solve");
+            control::solve<NX, NU, QuadRotorMPC::HORIZON>(
+                m_state, fdyn, jac, proj, scost, tcost, lo, hi, DT_MPC, MAX_ITERS, m_warmStart, u0);
+        }
 
         m_lastU0        = u0;
         m_lastSolveTime = m_time;
@@ -317,7 +327,10 @@ bool QuadRotorMPC::PerformIntegration(const core_stepParams_t& params)
     m_userForces[0] = params.user_fX;
     m_userForces[1] = params.user_fY;
     m_userForces[2] = params.user_fZ;
-    m_state = plantStep(*dynamics, m_state, m_lastU0, m_userForces, params.timestep);
+    {
+        CDS_PROFILE(profile, "Rk4 integration");
+        m_state = integrateAndNormalize(*dynamics, m_state, m_lastU0, m_userForces, params.timestep);
+    }
 
     m_time += params.timestep;
     return false;

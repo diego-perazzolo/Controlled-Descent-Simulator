@@ -32,6 +32,8 @@
 // =============================================================================
 
 #include "QuadRotor.hpp"
+#include "log.hpp"
+#include "profile.hpp"
 #include <cmath>
 #include <array>
 
@@ -84,6 +86,9 @@
 
 namespace CDS {
 
+static const auto logger = cds_log::registry().module("Quadrotor");
+static const auto profile = cds_profile::registry().module("Quadrotor");
+
 // -----------------------------------------------------------------------------
 // _normalize_quaternion()
 // RK4 does not preserve the unit-norm constraint of the attitude quaternion
@@ -114,7 +119,7 @@ static bool rk4_step(void* pDynamics, QuadRotor::StateVec& x,
 {
     if (pDynamics == nullptr)
     {
-        // ERR
+        CDS_LOG_ERROR(logger, "Model not initialized");
         return true;
     }
 
@@ -122,32 +127,39 @@ static bool rk4_step(void* pDynamics, QuadRotor::StateVec& x,
         static_cast<Dynamics::QUADROTOR_FF_LQR_01*>(pDynamics);
 
     // Compute control at current state (held constant over the step)
-    const QuadRotor::InputVec u = pDyn->ExecuteControl(x, ref);
+    QuadRotor::InputVec u; 
+    {
+        CDS_PROFILE(profile, "Execute control");
+        u = pDyn->ExecuteControl(x, ref);
+    }
 
     // Four RK4 slope evaluations
-    const QuadRotor::StateVec k1 = pDyn->Dynamics(x, u, ref, userF);
-
-    QuadRotor::StateVec x2{};
-    for (size_t i = 0; i < QUAD_STATE_DIM; ++i) x2[i] = x[i] + k1[i] * dt * 0.5;
-    const QuadRotor::StateVec k2 = pDyn->Dynamics(x2, u, ref, userF);
-
-    QuadRotor::StateVec x3{};
-    for (size_t i = 0; i < QUAD_STATE_DIM; ++i) x3[i] = x[i] + k2[i] * dt * 0.5;
-    const QuadRotor::StateVec k3 = pDyn->Dynamics(x3, u, ref, userF);
-
-    QuadRotor::StateVec x4{};
-    for (size_t i = 0; i < QUAD_STATE_DIM; ++i) x4[i] = x[i] + k3[i] * dt;
-    const QuadRotor::StateVec k4 = pDyn->Dynamics(x4, u, ref, userF);
-
-    // Weighted sum
-    for (size_t i = 0; i < QUAD_STATE_DIM; ++i)
+    {
+        CDS_PROFILE(profile, "RK4 integration");
+        const QuadRotor::StateVec k1 = pDyn->Dynamics(x, u, ref, userF);
+        
+        QuadRotor::StateVec x2{};
+        for (size_t i = 0; i < QUAD_STATE_DIM; ++i) x2[i] = x[i] + k1[i] * dt * 0.5;
+        const QuadRotor::StateVec k2 = pDyn->Dynamics(x2, u, ref, userF);
+        
+        QuadRotor::StateVec x3{};
+        for (size_t i = 0; i < QUAD_STATE_DIM; ++i) x3[i] = x[i] + k2[i] * dt * 0.5;
+        const QuadRotor::StateVec k3 = pDyn->Dynamics(x3, u, ref, userF);
+        
+        QuadRotor::StateVec x4{};
+        for (size_t i = 0; i < QUAD_STATE_DIM; ++i) x4[i] = x[i] + k3[i] * dt;
+        const QuadRotor::StateVec k4 = pDyn->Dynamics(x4, u, ref, userF);
+        
+        // Weighted sum
+        for (size_t i = 0; i < QUAD_STATE_DIM; ++i)
         x[i] = x[i] + (k1[i] + 2.0*k2[i] + 2.0*k3[i] + k4[i]) * dt / 6.0;
-
-    // Keep the attitude quaternion on the unit sphere
-    _normalize_quaternion(x);
-
-    return false;
-}
+        
+        // Keep the attitude quaternion on the unit sphere
+        _normalize_quaternion(x);
+    }
+        
+        return false;
+    }
 
 static void _init_dynamicsState(Reference_t& ref, QuadRotor::StateVec& state)
 {
@@ -210,7 +222,7 @@ bool QuadRotor::SetModelParams(const std::any& params)
 
     if (dynamics == nullptr || params.type() != typeid(core_quadRotorParams_t&))
     {
-        // Err
+        CDS_LOG_ERROR(logger, "Model not initialized or wrong params type");
         return true;
     }
 
@@ -239,7 +251,7 @@ bool QuadRotor::SetTrajectoryManager(TrajectoryManager* pTrajectoryManager)
 
     if (pTrajectoryManager == nullptr || pTrajectoryManager->GetReference(m_time, ref))
     {
-        // Error
+        CDS_LOG_ERROR(logger, "Trajectory not initialized");
         return true;
     }
 
@@ -256,7 +268,7 @@ bool QuadRotor::PerformIntegration(const core_stepParams_t& params)
     if (m_trajectoryManagerPtr == nullptr || 
         m_trajectoryManagerPtr->GetReference(m_time, ref))
     {
-        // ERR
+        CDS_LOG_ERROR(logger, "Cannot get trajectory reference");
         return true;
     }
 
@@ -280,7 +292,7 @@ bool QuadRotor::PerformIntegration(const core_stepParams_t& params)
     // Runge Kutta 4 (control is computed inside, at the current state)
     if (rk4_step(m_modelPtr, m_state, ref, m_userForces, params.timestep))
     {
-        // Err
+        CDS_LOG_ERROR(logger, "Cannot perform model integration");
         return true;
     }
 

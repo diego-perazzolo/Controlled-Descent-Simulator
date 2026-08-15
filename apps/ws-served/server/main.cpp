@@ -59,6 +59,9 @@ static int _is_sys_init = 0;
 static std::atomic<bool> _run_rt_thread{true};
 static std::atomic<bool> _run_drain_thread{true};
 
+static const auto logger = cds_log::registry().module("Main");
+static const auto profile = cds_profile::registry().module("Main");
+
 extern bool g_core_tick(core_coord_t dt_seconds);                  // global function from core.cpp
 extern bool g_core_getTickPeriod(core_coord_t &tickPeriod_second); // global function from core.cpp
 extern bool g_core_attachPlant(std::unique_ptr<CDS::BasePlant> plant); // global function from core.cpp
@@ -163,6 +166,7 @@ static void _tick_generator(void)
 
     /* Actually tick the system */
     g_core_tick(dt_seconds);
+    CDS_PROFILE(profile, "Ticking");
 
     /* Publish the profiler aggregates for readers (frontend / file dump):
        wait-free, done on the writer (this tick) thread */
@@ -180,6 +184,7 @@ static void _drain_generator(const char *profilePath, const char *rawPath)
     std::FILE *rawCsv = nullptr;
     while (_run_drain_thread)
     {
+        CDS_PROFILE(profile, "Profiler write to file thread");
         cds_log::registry().drain();
 
         /* single designated reader of the profiler mailbox: refresh the UI cache
@@ -283,13 +288,13 @@ int main(int argc, char **argv)
     if (!plant || g_core_attachPlant(std::move(plant)))
     {
         // Unknown/misconfigured plant, or attach failed
-        std::fprintf(stderr, "cds_server: cannot create plant '%s'\n", plantKind);
+        CDS_LOG_ERROR(logger, "Cannot create plant {}", plantKind);
         return shutdown(1);
     }
 
     if (server.Run())
     {
-        // Err
+        CDS_LOG_ERROR(logger, "Cannot rin WebSocket server, shutting down");
         return shutdown(1);
     }
 

@@ -32,12 +32,18 @@
 // =============================================================================
 
 #include "LoopbackPlant.hpp"
+#include "log.hpp"
+#include "profile.hpp"
+
 #include <chrono>
 
 using namespace plants;
 
 using Clock = std::chrono::steady_clock;
 using FpSeconds = std::chrono::duration<double>;
+
+static const auto logger = cds_log::registry().module("Loopback plant");
+static const auto profile = cds_profile::registry().module("Loopback plant");
 
 LoopbackPlant::LoopbackPlant() : m_params({.samplePeriod_seconds = 0.01,
                                            .latency_seconds = 0.0,
@@ -47,26 +53,27 @@ LoopbackPlant::LoopbackPlant() : m_params({.samplePeriod_seconds = 0.01,
                                  m_rng(std::random_device{}()),
                                  m_dist(0.0, 1.0)
 {
-
+    CDS_LOG_INFO(logger, "Plant created");
 }
 
 LoopbackPlant::~LoopbackPlant()
 {
     Stop();
     Disconnect();
+    CDS_LOG_INFO(logger, "Plant released");
 }
 
 bool LoopbackPlant::SetPlantParams(const std::any& params)
 {
     if (m_thread.joinable())
     {
-        // Cannot reconfigure while connected, error
+        CDS_LOG_ERROR(logger, "Cannot reconfigure plant while it is running");
         return true;
     }
 
     if (params.type() != typeid(loopbackParams_t&))
     {
-        // Err
+        CDS_LOG_ERROR(logger, "Wrong params type");
         return true;
     }
 
@@ -75,10 +82,11 @@ bool LoopbackPlant::SetPlantParams(const std::any& params)
     if (p.samplePeriod_seconds <= 0 || p.latency_seconds < 0 ||
         p.dropRate < 0 || p.dropRate >= 1)
     {
-        // Invalid parameters, error
+        CDS_LOG_ERROR(logger, "Invalid parameter value");
         return true;
     }
 
+    CDS_LOG_INFO(logger, "Plant params succesfully set");
     m_params = p;
     return false;
 }
@@ -87,12 +95,14 @@ bool LoopbackPlant::Connect(void)
 {
     if (m_thread.joinable())
     {
-        // Already connected, error
+        CDS_LOG_ERROR(logger, "Plant already connected");
         return true;
     }
 
     m_threadRun = true;
     m_thread = std::thread(&LoopbackPlant::_commLoop, this);
+
+    CDS_LOG_INFO(logger, "Starting connection");
 
     return false;
 }
@@ -102,6 +112,7 @@ bool LoopbackPlant::Disconnect(void)
     /* idempotent: disconnecting a disconnected plant is not an error */
     if (!m_thread.joinable())
     {
+        CDS_LOG_WARN(logger, "Disconnect: no plant is currently connected");
         return false;
     }
 
@@ -109,6 +120,7 @@ bool LoopbackPlant::Disconnect(void)
     m_threadRun = false;
     m_thread.join();
 
+    CDS_LOG_INFO(logger, "Plant disconnected");
     return false;
 }
 
@@ -116,16 +128,17 @@ bool LoopbackPlant::Start(void)
 {
     if (!m_thread.joinable())
     {
-        // Mission on a disconnected link, error
+        CDS_LOG_ERROR(logger, "Cannot start mission on a disconnected plant");
         return true;
     }
 
     if (m_missionRun)
     {
-        // Already started, error
+        CDS_LOG_ERROR(logger, "Mission is already started");
         return true;
     }
 
+    CDS_LOG_INFO(logger, "Mission started");
     m_missionRun = true;
     return false;
 }
@@ -133,6 +146,7 @@ bool LoopbackPlant::Start(void)
 bool LoopbackPlant::Stop(void)
 {
     /* idempotent: stopping a stopped mission is not an error */
+    CDS_LOG_INFO(logger, "Mission stopped");
     m_missionRun = false;
     return false;
 }
@@ -150,6 +164,9 @@ void LoopbackPlant::_commLoop(void)
     while (m_threadRun)
     {
         std::this_thread::sleep_for(FpSeconds(m_params.samplePeriod_seconds));
+
+        // measure the per-cycle work only, not the pacing sleep above
+        CDS_PROFILE(profile, "Communication loop");
         const double tNow = FpSeconds(Clock::now() - start).count();
 
         if (!m_missionRun)
