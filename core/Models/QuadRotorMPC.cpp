@@ -218,7 +218,7 @@ QuadRotorMPC::QuadRotorMPC()
     m_seeded = false;
     m_lastSolveTime = 0;
 
-    recorder.activate(); // this model owns the data recorder while it lives
+    recorder.activateAsModel(); // this model owns the model data recorder while it lives
 }
 
 QuadRotorMPC::~QuadRotorMPC()

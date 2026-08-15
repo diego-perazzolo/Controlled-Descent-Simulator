@@ -36,11 +36,13 @@
 //               the profiler raw stream): losing rows is always observable.
 //
 //               Row width N and value type T are compile-time template params so
-//               every model has its exact row with no padding (quad quaternion:
-//               T=double, N=32). Because differently-shaped models are distinct
-//               Recorder<T,N> types, the process-wide drain/toggle talk to the
-//               currently-running model through the type-erased IRecorder base
-//               and a single activeRecorder() slot -- one model records at a time.
+//               every model/plant has its exact row with no padding (quad
+//               quaternion: T=double, N=32; a plant: T=double, N=14). Because
+//               differently-shaped owners are distinct Recorder<T,N> types, the
+//               process-wide drain/toggle talk to them through the type-erased
+//               IRecorder base and two active slots -- one MODEL and one PLANT
+//               record at a time (the model simulates while a plant is the real
+//               system under control).
 //
 //               Layering: infrastructure only. Depends on libs/log/LogRing.hpp
 //               and the standard library; never includes app or core headers
@@ -52,7 +54,7 @@
 //     static cds_record::Recorder<double, 32> g_rec("Quadrotor MPC",
 //         { "t_sim", "x","y","z", "qw","qx","qy","qz", ... });
 //     ...
-//     g_rec.activate();                 // make this the active recorder
+//     g_rec.activateAsModel();          // (a plant calls activateAsPlant())
 //     g_rec.clearMeta();                // at run start, then describe the run:
 //     g_rec.addMeta("mass_kg", p.m);
 //     ...
@@ -144,15 +146,17 @@ namespace cds_record
         virtual std::uint64_t dropped() const = 0;
     };
 
-    // Process-wide slot for the active recorder. Set by a model when it becomes
-    // the running one; read by the drain thread and the ext adapter.
-    inline std::atomic<IRecorder*>& activeSlot()
-    {
-        static std::atomic<IRecorder*> slot{nullptr};
-        return slot;
-    }
-    inline IRecorder* activeRecorder() { return activeSlot().load(std::memory_order_acquire); }
-    inline void setActiveRecorder(IRecorder* r) { activeSlot().store(r, std::memory_order_release); }
+    // Process-wide active-recorder slots. Two record at the same time: one MODEL
+    // and one PLANT (during a plant mission the core model simulates while the
+    // plant is the real system under control). Each holds the running owner's
+    // recorder; the drain thread and the ext adapter read both. One model and
+    // one plant run at a time, so a single slot per category suffices.
+    inline std::atomic<IRecorder*>& modelSlot() { static std::atomic<IRecorder*> s{nullptr}; return s; }
+    inline std::atomic<IRecorder*>& plantSlot() { static std::atomic<IRecorder*> s{nullptr}; return s; }
+    inline IRecorder* activeModelRecorder() { return modelSlot().load(std::memory_order_acquire); }
+    inline IRecorder* activePlantRecorder() { return plantSlot().load(std::memory_order_acquire); }
+    inline void setActiveModelRecorder(IRecorder* r) { modelSlot().store(r, std::memory_order_release); }
+    inline void setActivePlantRecorder(IRecorder* r) { plantSlot().store(r, std::memory_order_release); }
 
     // ------------------------------------------------------------------------ //
     // The recorder: fixed-width wide telemetry for one model shape (T,N). The    //
@@ -185,8 +189,10 @@ namespace cds_record
 
         const char* name() const override { return m_name; }
 
-        // Make this the process-wide active recorder (the running model calls it).
-        void activate() { setActiveRecorder(this); }
+        // Register this as the running model's / plant's recorder (the owner
+        // calls the matching one when it becomes active).
+        void activateAsModel() { setActiveModelRecorder(this); }
+        void activateAsPlant() { setActivePlantRecorder(this); }
 
         void setEnabled(bool on) override { m_enabled.store(on, std::memory_order_relaxed); }
         bool enabled() const override     { return m_enabled.load(std::memory_order_relaxed); }

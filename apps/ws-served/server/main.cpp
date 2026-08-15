@@ -177,15 +177,38 @@ static void _tick_generator(void)
     cds_profile::registry().publish();
 }
 
+/* Drive one data recorder's CSV lifecycle: open a fresh unique file when it
+   turns on, flush pending rows, write the "# dropped N rows" trailer and close
+   when it turns off (or its owner changes). f/owner are the drain-thread-local
+   file state for this recorder slot. */
+static void _driveRecorderCsv(cds_record::IRecorder *rec, const char *basePath,
+                              std::FILE *&f, cds_record::IRecorder *&owner)
+{
+    const bool on = rec && rec->enabled();
+    if (on && !f)
+    {
+        f = std::fopen(cds_log::uniqueFilePath(basePath).c_str(), "w");
+        if (f) { rec->writeHeader(f); owner = rec; }
+    }
+    if (f && owner) { owner->drainRows(f); std::fflush(f); }
+    if (f && (!on || rec != owner))
+    {
+        if (owner) owner->writeTrailer(f);
+        std::fclose(f); f = nullptr; owner = nullptr;
+    }
+}
+
 /* Consumer side of the diagnostics: drains queued log records to the sinks,
-   streams the profiler raw samples and the per-tick data recorder to their CSVs,
-   and — when CDS_PROFILE_FILE is set — periodically rewrites the profiler
-   aggregate report. Runs off the tick path, so blocking I/O here is fine.
+   streams the profiler raw samples and the per-tick data recorders (one for the
+   active model, one for the active plant) to their CSVs, and — when
+   CDS_PROFILE_FILE is set — periodically rewrites the profiler aggregate report.
+   Runs off the tick path, so blocking I/O here is fine.
 
    Every output file gets a unique name (uniqueFilePath) so successive runs never
-   overwrite each other; the two streaming sinks (raw CSV, record CSV) go further
-   and reopen a FRESH file each time serialization is toggled back on. */
-static void _drain_generator(const char *profilePath, const char *rawPath, const char *recordPath)
+   overwrite each other; the streaming sinks (raw CSV, record CSVs) go further and
+   reopen a FRESH file each time serialization is toggled back on. */
+static void _drain_generator(const char *profilePath, const char *rawPath,
+                             const char *recordPath, const char *recordPlantPath)
 {
     auto lastProfileDump = Clock::now();
     // The aggregate report is rewritten in place; give it one unique name per run.
@@ -193,8 +216,10 @@ static void _drain_generator(const char *profilePath, const char *rawPath, const
                                                : std::string();
 
     std::FILE *rawCsv = nullptr;
-    std::FILE *recCsv = nullptr;
-    cds_record::IRecorder *recOwner = nullptr; // recorder that opened recCsv
+    std::FILE *recCsv = nullptr;        // model recorder CSV
+    std::FILE *plantCsv = nullptr;      // plant recorder CSV
+    cds_record::IRecorder *recOwner = nullptr;
+    cds_record::IRecorder *plantOwner = nullptr;
 
     while (_run_drain_thread)
     {
@@ -223,26 +248,11 @@ static void _drain_generator(const char *profilePath, const char *rawPath, const
         }
         if (!rawOn && rawCsv) { std::fclose(rawCsv); rawCsv = nullptr; }
 
-        /* per-tick data recorder -> wide black-box CSV. Same lifecycle, with a
-           metadata header on open and an explicit "# dropped N rows" trailer on
-           close. Rotate the file if the active model (owner) changes too. */
-        cds_record::IRecorder *rec = cds_record::activeRecorder();
-        const bool recOn = rec && rec->enabled();
-        if (recOn && !recCsv)
-        {
-            recCsv = std::fopen(cds_log::uniqueFilePath(recordPath).c_str(), "w");
-            if (recCsv) { rec->writeHeader(recCsv); recOwner = rec; }
-        }
-        if (recCsv && recOwner)
-        {
-            recOwner->drainRows(recCsv);
-            std::fflush(recCsv);
-        }
-        if (recCsv && (!recOn || rec != recOwner))
-        {
-            if (recOwner) recOwner->writeTrailer(recCsv);
-            std::fclose(recCsv); recCsv = nullptr; recOwner = nullptr;
-        }
+        /* per-tick data recorders -> wide black-box CSVs (model + plant), each
+           with a metadata header on open and a "# dropped N rows" trailer on
+           close, rotating on toggle or owner change. */
+        _driveRecorderCsv(cds_record::activeModelRecorder(), recordPath, recCsv, recOwner);
+        _driveRecorderCsv(cds_record::activePlantRecorder(), recordPlantPath, plantCsv, plantOwner);
 
         if (!reportPath.empty())
         {
@@ -269,6 +279,11 @@ static void _drain_generator(const char *profilePath, const char *rawPath, const
     {
         if (recOwner) recOwner->writeTrailer(recCsv);
         std::fclose(recCsv);
+    }
+    if (plantCsv)
+    {
+        if (plantOwner) plantOwner->writeTrailer(plantCsv);
+        std::fclose(plantCsv);
     }
 }
 
@@ -310,6 +325,8 @@ int main(int argc, char **argv)
        (no recorder is active until a model registers one). */
     const char *recordPath = std::getenv("CDS_RECORD_FILE");
     if (!recordPath) recordPath = "out_data/cds_record.csv";
+    const char *recordPlantPath = std::getenv("CDS_RECORD_PLANT_FILE");
+    if (!recordPlantPath) recordPlantPath = "out_data/cds_record_plant.csv";
 
     /* Thread "Real-time", used for providing ticks to the System */
     std::thread rt([]
@@ -321,7 +338,9 @@ int main(int argc, char **argv)
                 });
 
     /* Consumer thread: drains logs to the sinks and dumps the profiler report */
-    std::thread drain([profilePath, rawPath, recordPath] { _drain_generator(profilePath, rawPath, recordPath); });
+    std::thread drain([profilePath, rawPath, recordPath, recordPlantPath] {
+        _drain_generator(profilePath, rawPath, recordPath, recordPlantPath);
+    });
 
     auto shutdown = [&](int code) -> int
     {

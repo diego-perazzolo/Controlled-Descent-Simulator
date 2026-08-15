@@ -226,7 +226,7 @@ QuadRotor::QuadRotor()
 
     m_time = 0;
 
-    recorder.activate(); // this model owns the data recorder while it lives
+    recorder.activateAsModel(); // this model owns the model data recorder while it lives
 }
 
 QuadRotor::~QuadRotor()

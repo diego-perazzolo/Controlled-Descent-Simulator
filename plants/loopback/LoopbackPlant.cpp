@@ -34,8 +34,11 @@
 #include "LoopbackPlant.hpp"
 #include "log.hpp"
 #include "profile.hpp"
+#include "Recorder.hpp"
 
+#include <array>
 #include <chrono>
+#include <cstdint>
 
 using namespace plants;
 
@@ -45,6 +48,33 @@ using FpSeconds = std::chrono::duration<double>;
 static const auto logger = cds_log::registry().module("Loopback plant");
 static const auto profile = cds_profile::registry().module("Loopback plant");
 
+// Plant data recorder (black-box wide CSV, server-side): every published
+// measurement — plant time, sample sequence, and the full 12-field core state.
+// One plant records at a time (the active-plant slot); it runs alongside the
+// active model recorder during a mission.
+static cds_record::Recorder<double, 14, 4096> recorder("Loopback plant", {{
+    "t_plant", "seq",
+    "x", "y", "z", "x_dot", "y_dot", "z_dot",
+    "roll", "pitch", "yaw", "roll_dot", "pitch_dot", "yaw_dot",
+}});
+
+// Record one published sample (called on the communication thread right after
+// PublishMeasurements). seq mirrors the publish count so telemetry gaps show.
+static void _recordSample(const core_state_t& s, double t)
+{
+#if CDS_RECORD_ENABLED
+    static std::uint64_t seq = 0;
+    const std::array<double, 14> row{{
+        t, static_cast<double>(seq++),
+        s.x, s.y, s.z, s.x_dot, s.y_dot, s.z_dot,
+        s.roll, s.pitch, s.yaw, s.roll_dot, s.pitch_dot, s.yaw_dot,
+    }};
+    recorder.record(row);
+#else
+    (void)s; (void)t;
+#endif
+}
+
 LoopbackPlant::LoopbackPlant() : m_params({.samplePeriod_seconds = 0.01,
                                            .latency_seconds = 0.0,
                                            .dropRate = 0.0}),
@@ -53,6 +83,7 @@ LoopbackPlant::LoopbackPlant() : m_params({.samplePeriod_seconds = 0.01,
                                  m_rng(std::random_device{}()),
                                  m_dist(0.0, 1.0)
 {
+    recorder.activateAsPlant(); // this plant owns the plant data recorder
     CDS_LOG_INFO(logger, "Plant created");
 }
 
@@ -88,6 +119,14 @@ bool LoopbackPlant::SetPlantParams(const std::any& params)
 
     CDS_LOG_INFO(logger, "Plant params succesfully set");
     m_params = p;
+
+    // Recorder run metadata for this plant.
+    recorder.clearMeta();
+    recorder.addMeta("plant", "Loopback");
+    recorder.addMeta("sample_period_s", p.samplePeriod_seconds);
+    recorder.addMeta("latency_s", p.latency_seconds);
+    recorder.addMeta("drop_rate", p.dropRate);
+
     return false;
 }
 
@@ -185,6 +224,7 @@ void LoopbackPlant::_commLoop(void)
                 idle.z_dot = 0;
                 idle.yaw_dot = 0;
                 PublishMeasurements(idle, tNow);
+                _recordSample(idle, tNow);
             }
             continue;
         }
@@ -233,5 +273,6 @@ void LoopbackPlant::_commLoop(void)
 
         held = state;
         PublishMeasurements(state, observed.t_seconds);
+        _recordSample(state, observed.t_seconds);
     }
 }

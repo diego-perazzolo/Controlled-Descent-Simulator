@@ -177,19 +177,26 @@ int main()
     }
 
     // -------------------------------------------------------------------------
-    // 4. Type-erased handoff: the active recorder is reachable via IRecorder*.
+    // 4. Type-erased handoff: model and plant slots are independent and both
+    //    reachable via IRecorder*.
     // -------------------------------------------------------------------------
     {
-        CHECK(cds_record::activeRecorder() == nullptr, "no active recorder initially");
-        cds_record::Recorder<double, N> rec("Active", names);
-        rec.activate();
-        cds_record::IRecorder* ir = cds_record::activeRecorder();
-        CHECK(ir == &rec, "activate() publishes this recorder to the active slot");
-        CHECK(ir != nullptr && std::strcmp(ir->name(), "Active") == 0,
-              "active recorder is reachable by name through the base interface");
-        ir->setEnabled(true);
-        CHECK(ir->enabled(), "toggle through the type-erased interface works");
-        cds_record::setActiveRecorder(nullptr); // reset for tidiness
+        CHECK(cds_record::activeModelRecorder() == nullptr, "no active model recorder initially");
+        CHECK(cds_record::activePlantRecorder() == nullptr, "no active plant recorder initially");
+        cds_record::Recorder<double, N> model("Model", names);
+        cds_record::Recorder<double, N> plant("Plant", names);
+        model.activateAsModel();
+        plant.activateAsPlant();
+        cds_record::IRecorder* im = cds_record::activeModelRecorder();
+        cds_record::IRecorder* ip = cds_record::activePlantRecorder();
+        CHECK(im == &model && ip == &plant, "the two slots hold their own recorders");
+        CHECK(im != nullptr && std::strcmp(im->name(), "Model") == 0 &&
+              ip != nullptr && std::strcmp(ip->name(), "Plant") == 0,
+              "both recorders reachable by name through the base interface");
+        im->setEnabled(true);
+        CHECK(im->enabled() && !ip->enabled(), "the two slots toggle independently");
+        cds_record::setActiveModelRecorder(nullptr); // reset for tidiness
+        cds_record::setActivePlantRecorder(nullptr);
     }
 
     std::printf(g_failures == 0 ? "\nALL PASS\n" : "\n%d FAILURE(S)\n", g_failures);

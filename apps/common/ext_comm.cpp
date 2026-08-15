@@ -502,36 +502,36 @@ bool ext_setDiagFiles(ext_diagFiles params)
     return false;
 }
 
-// Snapshot the active recorder's state into the wire struct. Flags cross as
-// ext_coord_t (0.0/1.0) so the char[] modelName can share the struct.
+// Snapshot the recorder state (model + plant) into the wire struct. Flags cross
+// as ext_coord_t (0.0/1.0) so the char[] modelName can share the struct.
+// modelName is a "model + plant" summary of whoever is active.
 static ext_recordStatus _recordStatus(void)
 {
     ext_recordStatus out = {};
-    cds_record::IRecorder* r = cds_record::activeRecorder();
-    if (r)
-    {
-        std::strncpy(out.modelName, r->name(), sizeof(out.modelName) - 1);
-        out.modelName[sizeof(out.modelName) - 1] = '\0';
-        out.active      = 1;
-        out.enabled     = r->enabled() ? 1 : 0;
-        out.droppedRows = static_cast<ext_coord_t>(r->dropped());
-    }
-    else
-    {
-        out.modelName[0] = '\0';
-        out.active = 0; out.enabled = 0; out.droppedRows = 0;
-    }
+    cds_record::IRecorder* m = cds_record::activeModelRecorder();
+    cds_record::IRecorder* p = cds_record::activePlantRecorder();
+
+    out.active      = (m || p) ? 1 : 0;
+    out.enabled     = ((m && m->enabled()) || (p && p->enabled())) ? 1 : 0;
+    out.droppedRows = static_cast<ext_coord_t>((m ? m->dropped() : 0) +
+                                               (p ? p->dropped() : 0));
+
+    // "Model + Plant" summary (either side may be absent), truncated to fit.
+    out.modelName[0] = '\0';
+    std::snprintf(out.modelName, sizeof(out.modelName), "%s%s%s",
+                  m ? m->name() : "",
+                  (m && p) ? " + " : "",
+                  p ? p->name() : "");
     return out;
 }
 
 ext_recordStatus ext_setRecording(ext_recordParams params)
 {
-    // server-side only (wasm has no filesystem). Toggles the currently active
-    // model's recorder; the drain thread rotates the CSV on the transition.
-    if (cds_record::IRecorder* r = cds_record::activeRecorder())
-    {
-        r->setEnabled(params.enabled);
-    }
+    // server-side only (wasm has no filesystem). Toggles both the active model
+    // and the active plant recorder; the drain thread rotates each CSV on the
+    // transition.
+    if (cds_record::IRecorder* m = cds_record::activeModelRecorder()) m->setEnabled(params.enabled);
+    if (cds_record::IRecorder* p = cds_record::activePlantRecorder()) p->setEnabled(params.enabled);
     return _recordStatus();
 }
 

@@ -33,6 +33,7 @@
 #include "SitlPlant.hpp"
 #include "log.hpp"
 #include "profile.hpp"
+#include "Recorder.hpp"
 
 /* sole gateway to the vendored MAVLink headers: compiling it here keeps the
    protocol pins guarding every build of this library */
@@ -40,8 +41,10 @@
 
 #include "UdpTransport.hpp"
 
+#include <array>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 
 using namespace plants;
 
@@ -53,6 +56,33 @@ namespace
 
     static const auto logger = cds_log::registry().module("SITL plant");
     static const auto profile = cds_profile::registry().module("SITL plant");
+
+    // Plant data recorder (black-box wide CSV, server-side): every published
+    // measurement — plant time, sample sequence, and the full 12-field core
+    // state. One plant records at a time; it runs alongside the active model
+    // recorder during a mission.
+    static cds_record::Recorder<double, 14, 4096> recorder("SITL plant", {{
+        "t_plant", "seq",
+        "x", "y", "z", "x_dot", "y_dot", "z_dot",
+        "roll", "pitch", "yaw", "roll_dot", "pitch_dot", "yaw_dot",
+    }});
+
+    // Record one published sample (communication thread, right after
+    // PublishMeasurements). seq mirrors the publish count so gaps show.
+    static void recordSample(const core_state_t& s, double t)
+    {
+#if CDS_RECORD_ENABLED
+        static std::uint64_t seq = 0;
+        const std::array<double, 14> row{{
+            t, static_cast<double>(seq++),
+            s.x, s.y, s.z, s.x_dot, s.y_dot, s.z_dot,
+            s.roll, s.pitch, s.yaw, s.roll_dot, s.pitch_dot, s.yaw_dot,
+        }};
+        recorder.record(row);
+#else
+        (void)s; (void)t;
+#endif
+    }
 
     /* our identity on the wire: a ground-control-station peer. System id 254,
        not the 255 that ground stations (QGroundControl, MAVProxy) default to:
@@ -229,6 +259,7 @@ SitlPlant::SitlPlant() : m_params({.host = "0.0.0.0",
                          m_stageAltitude(0.0),
                          m_stageYaw(0.0)
 {
+    recorder.activateAsPlant(); // this plant owns the plant data recorder
     CDS_LOG_INFO(logger, "Plant created");
 }
 
@@ -266,6 +297,16 @@ bool SitlPlant::SetPlantParams(const std::any& params)
 
     CDS_LOG_INFO(logger, "Params succesfully set");
     m_params = p;
+
+    // Recorder run metadata for this plant.
+    recorder.clearMeta();
+    recorder.addMeta("plant", "SITL (ArduCopter)");
+    recorder.addMeta("host", p.host.c_str());
+    recorder.addMeta("port", static_cast<long long>(p.port));
+    recorder.addMeta("setpoint_period_s", p.setpointPeriod_seconds);
+    recorder.addMeta("telemetry_period_s", p.telemetryPeriod_seconds);
+    recorder.addMeta("link_timeout_s", p.linkTimeout_seconds);
+
     return false;
 }
 
@@ -773,6 +814,7 @@ void SitlPlant::_processInbound(Link& link)
                        was TAKEN: publishing it makes the link latency
                        observable, exactly as the BasePlant contract wants */
                     PublishMeasurements(out, lpos.time_boot_ms / 1000.0);
+                    recordSample(out, lpos.time_boot_ms / 1000.0);
                     break;
                 }
 
