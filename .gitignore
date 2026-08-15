@@ -35,3 +35,6 @@ env/
 # Compiled driver binaries from notebook codegen
 modeling/notebooks/exported_cpp/**/driver
 modeling/notebooks/exported_cpp/**/_driver
+
+# out data (log, profile)
+out_data/*

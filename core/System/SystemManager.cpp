@@ -35,7 +35,7 @@
 #include "log.hpp"
 #include "profile.hpp"
 
-static const auto log_info = cds_log::registry().module("SystemManagerInfo");
+static const auto logger = cds_log::registry().module("SystemManager");
 static const auto profile_tick = cds_profile::registry().module("SystemManagerTick");
 
 
@@ -72,7 +72,7 @@ SystemManager::SystemManager(void) : m_pModel(nullptr),
                                      m_isRunning(false),
                                      m_userForces({0})
 {
-    CDS_LOG_INFO(log_info, "Created");
+    CDS_LOG_INFO(logger, "Created");
 }
 
 SystemManager::~SystemManager(void)
@@ -82,7 +82,7 @@ SystemManager::~SystemManager(void)
        would deadlock */
     m_isRunning = false;
 
-    CDS_LOG_INFO(log_info, "Destroyed");
+    CDS_LOG_INFO(logger, "Destroyed");
 }
 
 bool SystemManager::InitModel(modelPtr_t &&pModel)
@@ -93,7 +93,7 @@ bool SystemManager::InitModel(modelPtr_t &&pModel)
 
     m_pModel = std::move(pModel);
 
-    CDS_LOG_INFO(log_info, "OK");
+    CDS_LOG_INFO(logger, "Model initialized");
 
     return false;
 }
@@ -107,7 +107,7 @@ bool SystemManager::InitTrajectory(void)
 
     m_pTrajectoryManager = std::make_unique<TrajectoryManager>();
 
-    CDS_LOG_INFO(log_info, "OK");
+    CDS_LOG_INFO(logger, "Trajectory initialized");
 
     return false;
 }
@@ -134,7 +134,7 @@ bool SystemManager::AttachPlant(plantPtr_t &&pPlant)
 
     m_pPlant = std::move(pPlant);
 
-    CDS_LOG_INFO(log_info, "OK");
+    CDS_LOG_INFO(logger, "Plant attached");
 
     return false;
 }
@@ -150,7 +150,7 @@ bool SystemManager::DetachPlant(void)
     m_pPlant->Disconnect();
     m_pPlant.reset();
 
-    CDS_LOG_INFO(log_info, "OK");
+    CDS_LOG_INFO(logger, "Plant detached");
 
     return false;
 }
@@ -171,7 +171,7 @@ bool SystemManager::ExecuteOnModel(const std::function<bool(BaseModel &)> &model
 
     if (!ret)
     {
-        CDS_LOG_INFO(log_info, "OK");
+        //CDS_LOG_INFO(logger, "OK");
     }
 
     return ret;
@@ -193,7 +193,7 @@ bool SystemManager::ExecuteOnPlant(const std::function<bool(BasePlant &)> &plant
 
     if (!ret)
     {
-        CDS_LOG_INFO(log_info, "OK");
+        //CDS_LOG_INFO(logger, "OK");
     }
 
     return ret;
@@ -219,7 +219,7 @@ bool SystemManager::ExecuteOnTrajectoryManager(const std::function<bool(const Tr
 
     if (!ret)
     {
-        CDS_LOG_INFO(log_info, "OK");
+        //CDS_LOG_INFO(logger, "OK");
     }
 
     return ret;
@@ -255,7 +255,7 @@ bool SystemManager::MutateTrajectoryManager(const std::function<bool(TrajectoryM
 
     if (!ret)
     {
-        CDS_LOG_INFO(log_info, "OK");
+        //CDS_LOG_INFO(logger, "OK");
     }
 
     return ret;
@@ -350,8 +350,6 @@ bool SystemManager::Run(void)
 
     m_isRunning = true;
 
-    CDS_LOG_INFO(log_info, "OK");
-
     return false;
 }
 
@@ -402,7 +400,7 @@ bool SystemManager::ExecuteTick(sm_coord_t timestep_seconds)
 
     if (!ret)
     {
-       CDS_LOG_INFO(log_info, "OK");
+       //CDS_LOG_INFO(logger, "OK");
     }
 
     return ret;
@@ -419,11 +417,12 @@ bool SystemManager::Stop(void)
     {
         ret |= m_pPlant->Stop();
     }
-
+    
     if (!ret)
     {
-        CDS_LOG_INFO(log_info, "OK");
     }
+    
+    CDS_LOG_INFO(logger, "Stopped");
 
     return ret;
 }
@@ -434,7 +433,7 @@ bool SystemManager::SetParameters(const systemManagerParams_t &params)
 
     m_params = params;
 
-    CDS_LOG_INFO(log_info, "OK");
+    CDS_LOG_INFO(logger, "Parameters set");
     return false;
 }
 

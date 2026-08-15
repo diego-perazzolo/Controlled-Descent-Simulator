@@ -244,14 +244,14 @@ int main(int argc, char **argv)
     cds_log::registry().addSink(&cds_log::uiSink());
 
     const char *logPath = std::getenv("CDS_LOG_FILE");
-    cds_log::fileSink().setPath(logPath ? logPath : "cds.log");
+    cds_log::fileSink().setPath(logPath ? logPath : "out_data/cds.log");
     if (logPath) cds_log::fileSink().setEnabled(true);
     cds_log::registry().addSink(&cds_log::fileSink());
 
     const char *profilePath = std::getenv("CDS_PROFILE_FILE");
     const char *rawPath = std::getenv("CDS_PROFILE_RAW_FILE");
     if (rawPath) cds_profile::registry().setRawLogging(true); // env preset
-    if (!rawPath) rawPath = "cds_profile_raw.csv";
+    if (!rawPath) rawPath = "out_data/cds_profile_raw.csv";
 
     /* Thread "Real-time", used for providing ticks to the System */
     std::thread rt([]
