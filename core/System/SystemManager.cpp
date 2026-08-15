@@ -377,7 +377,9 @@ bool SystemManager::ExecuteTick(sm_coord_t timestep_seconds)
         if (!m_pModel->GetCurrentTimeSeconds(commands.time_seconds) &&
             !m_pTrajectoryManager->GetReference(commands.time_seconds, commands.reference))
         {
-            ret |= m_pPlant->PushCommands(commands);
+            /* best-effort (see NOTE above): a failed deposit must not error the
+               tick, so its result is intentionally not folded into ret */
+            (void)m_pPlant->PushCommands(commands);
         }
     }
 
@@ -385,9 +387,10 @@ bool SystemManager::ExecuteTick(sm_coord_t timestep_seconds)
     if (m_pPlant)
     {
         BasePlant::plantMeasurements_t measurements = {};
-        /* failure tolerated before the first published sample; measurements
-           will feed filtering and control (future) */
-        ret |= m_pPlant->PullMeasurements(measurements);
+        /* best-effort: a stale/lagging plant or the window before the first
+           published sample makes this fail routinely — tolerated, not folded
+           into ret (measurements will feed filtering and control, future) */
+        (void)m_pPlant->PullMeasurements(measurements);
     }
 
     // Perform filtering
