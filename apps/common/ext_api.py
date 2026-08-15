@@ -291,6 +291,27 @@ COMM = [
             F("logFile", type="bool"),
             F("profileRaw", type="bool"),
         ]),
+
+    Struct("ext_recordParams", file="comm",
+        doc="request: toggle the server-side per-tick data recorder — a lossless\n"
+            "wide-CSV black box of the active model's state/input/reference/error\n"
+            "(no-op on wasm, which has no real filesystem)",
+        fields=[
+            F("enabled", type="bool"),
+        ]),
+
+    Struct("ext_recordStatus", file="comm",
+        doc="response: state of the data recorder. modelName is the active\n"
+            "recorder's name (empty if no model is running). active/enabled/\n"
+            "droppedRows are carried as ext_coord_t (not bool) so this response\n"
+            "shares no wire struct with a bool while still holding a char buffer.\n"
+            "droppedRows is exact up to 2^24 rows (float mantissa)",
+        fields=[
+            F("modelName", type="char", count=64),
+            F("active", doc="1.0 if a model recorder is registered, else 0.0"),
+            F("enabled", doc="1.0 if it is currently recording, else 0.0"),
+            F("droppedRows", pre="rows lost to a full ring since the run began"),
+        ]),
 ]
 
 # --------------------------------------------------------------------------- #
@@ -392,4 +413,15 @@ COMMANDS = [
     Cmd(22, "SetDiagFiles", "ext_setDiagFiles", "ext_setDiagFiles",
         req="ext_diagFiles", resp="bool",
         doc="Toggle server-side log-to-file and raw-profiler-CSV, returns true on error"),
+
+    # ---- per-tick data recorder (black-box wide CSV of the active model) ----
+
+    Cmd(23, "SetRecording", "ext_setRecording", "ext_setRecording",
+        req="ext_recordParams", resp="ext_recordStatus",
+        doc="Toggle the per-tick data recorder; returns the recorder status",
+        log="set recording"),
+
+    Cmd(24, "GetRecordStatus", "ext_getRecordStatus", "ext_getRecordStatus",
+        req=None, resp="ext_recordStatus",
+        doc="Get the data recorder status (active model, enabled flag, dropped rows)"),
 ]

@@ -280,6 +280,29 @@ def run_tests(s):
     assert struct.unpack("<BBB", p)[2] == 0, "set diag files failed"
     print("set diag files OK")
 
+    # data recorder status: char[64] modelName + 3 floats (active, enabled,
+    # droppedRows). No model is running under this test, so active must be 0.
+    def record_status(p):
+        assert len(p) == 2 + 64 + 12, f"record status size {len(p)}"
+        name = p[2:66].split(b"\x00", 1)[0].decode("ascii", "replace")
+        active, enabled, dropped = struct.unpack("<fff", p[66:78])
+        return name, active, enabled, dropped
+
+    # a model was initialized earlier in this test, so its recorder is active
+    p = rpc(s, header(MSG["GET_RECORD_STATUS"]))
+    name, active, enabled, dropped = record_status(p)
+    assert active == 1.0, "the initialized model should have an active recorder"
+    print(f"get record status OK (model={name!r}, active={active:.0f}, dropped={dropped:.0f})")
+
+    # enable then disable recording; with a model active this really toggles
+    p = rpc(s, header(MSG["SET_RECORDING"]) + struct.pack("<B", 1))
+    _, active, enabled, _ = record_status(p)
+    assert active == 1.0 and enabled == 1.0, "recording should enable with a model active"
+    p = rpc(s, header(MSG["SET_RECORDING"]) + struct.pack("<B", 0))
+    _, _, enabled, _ = record_status(p)
+    assert enabled == 0.0, "recording should disable again"
+    print("set recording toggle OK")
+
     # close politely
     s.sendall(bytes([0x88, 0x80]) + os.urandom(4))
 

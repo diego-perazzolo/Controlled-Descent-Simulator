@@ -442,3 +442,36 @@ bool ext_setDiagFiles(ext_diagFiles params)
 
     return resp.isError != 0;
 }
+
+ext_recordStatus ext_setRecording(ext_recordParams params)
+{
+    reqSetRecording_t req = {};
+    respSetRecording_t resp = {};
+
+    req.h.type = WS_MSG_SET_RECORDING;
+    req.enabled = params.enabled ? 1 : 0;
+
+    if(_rpc(req, resp))
+    {
+        // Err
+        return {};
+    }
+
+    return resp.p;
+}
+
+ext_recordStatus ext_getRecordStatus(void)
+{
+    reqGetRecordStatus_t req = {};
+    respGetRecordStatus_t resp = {};
+
+    req.h.type = WS_MSG_GET_RECORD_STATUS;
+
+    if(_rpc(req, resp))
+    {
+        // Err
+        return {};
+    }
+
+    return resp.p;
+}

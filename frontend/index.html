@@ -136,6 +136,8 @@
         .diag-bar { display: flex; align-items: center; gap: 12px; margin: 8px 0; font-size: 0.85em; color: #888; }
         .diag-bar label { display: flex; align-items: center; gap: 5px; cursor: pointer; }
         #logDropped { color: #fb4; }
+        #recordDropped { color: #fb4; }
+        #recordStatus.rec-on { color: #33ff88; }
 
         /* ── 3D view source toggles ── */
         #view3d-sources {
@@ -724,6 +726,14 @@
             <label title="Server-side: stream every raw sample to cds_profile_raw.csv">
                 <input type="checkbox" id="chkRawCsv"> raw samples → CSV (server)</label>
         </div>
+    </div>
+
+    <div class="diag-bar">
+        <strong style="color:#555;">Data recorder</strong>
+        <label title="Server-side: record the full per-tick state/input/reference/error of the active model to a wide black-box CSV">
+            <input type="checkbox" id="chkRecord" disabled> record → CSV (server)</label>
+        <span id="recordStatus" style="color:#888;">no model</span>
+        <span id="recordDropped"></span>
     </div>
 
     <div class="diag-bar">

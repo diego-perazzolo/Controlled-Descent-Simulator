@@ -141,6 +141,28 @@ typedef struct
     bool profileRaw;
 } ext_diagFiles;
 
+/* request: toggle the server-side per-tick data recorder — a lossless
+wide-CSV black box of the active model's state/input/reference/error
+(no-op on wasm, which has no real filesystem) */
+typedef struct
+{
+    bool enabled;
+} ext_recordParams;
+
+/* response: state of the data recorder. modelName is the active
+recorder's name (empty if no model is running). active/enabled/
+droppedRows are carried as ext_coord_t (not bool) so this response
+shares no wire struct with a bool while still holding a char buffer.
+droppedRows is exact up to 2^24 rows (float mantissa) */
+typedef struct
+{
+    char modelName[64];
+    ext_coord_t active; // 1.0 if a model recorder is registered, else 0.0
+    ext_coord_t enabled; // 1.0 if it is currently recording, else 0.0
+    /* rows lost to a full ring since the run began */
+    ext_coord_t droppedRows;
+} ext_recordStatus;
+
 /* Initialize Rocket model: FF_LQR_01, returns true on error */
 bool ext_initRocket_FFLQR01(ext_initRocketParams params);
 
@@ -206,3 +228,9 @@ bool ext_resetProfile(void);
 
 /* Toggle server-side log-to-file and raw-profiler-CSV, returns true on error */
 bool ext_setDiagFiles(ext_diagFiles params);
+
+/* Toggle the per-tick data recorder; returns the recorder status */
+ext_recordStatus ext_setRecording(ext_recordParams params);
+
+/* Get the data recorder status (active model, enabled flag, dropped rows) */
+ext_recordStatus ext_getRecordStatus(void);

@@ -113,7 +113,7 @@ clang++ -std=c++20 -fsyntax-only \
   -Icore -Icore/System -Icore/Plant -Icore/Models -Icore/Trajectory \
   -Iapps/common/exported_cpp -Iapps/ws-served/exported_cpp \
   -Iapps/ws-served/server -Ilibs/ws -Ilibs/sync -Ilibs/integrate -Ilibs/control \
-  -Ilibs/log -Ilibs/profile \
+  -Ilibs/log -Ilibs/profile -Ilibs/record \
   -Imodeling/notebooks/exported_cpp/ROCKET_FF_LQR_01 \
   -Imodeling/notebooks/exported_cpp/QUADROTOR_FF_LQR_01 \
   -Imodeling/notebooks/exported_cpp/QUADROTOR_MPC_01 <file.cpp>
@@ -145,6 +145,9 @@ cmake --build build-log-test
 cmake -S libs/profile/test -B build-profile-test -DCMAKE_BUILD_TYPE=Release
 cmake --build build-profile-test
 ./build-profile-test/profile_test  # scope aggregates + wait-free snapshot round-trip
+cmake -S libs/record/test -B build-record-test -DCMAKE_BUILD_TYPE=Release
+cmake --build build-record-test
+./build-record-test/record_test    # wide-CSV round-trip + explicit drop counting
 
 # controller C++<->Python conformance (golden rule 10; iLQR today). ctypes, no
 # numpy: certifies the C++ solution against an independent Python oracle on a

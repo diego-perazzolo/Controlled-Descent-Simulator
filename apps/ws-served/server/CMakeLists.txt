@@ -31,8 +31,9 @@ target_include_directories(cds_server PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}   # dispatch.hpp
     ${CDS_EXT_WS_GEN_DIR}         # ws_protocol.hpp
     ${CDS_EXT_COMMON_GEN_DIR}     # ext_comm.hpp, ext_defs.hpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../../libs/log     # log.hpp, LogSinks.hpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../../libs/log     # log.hpp, LogSinks.hpp, UniqueFile.hpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../../../libs/profile # profile.hpp, ProfileReport.hpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../../libs/record  # Recorder.hpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../../../libs/sync    # TripleBuffer.hpp
 )
 

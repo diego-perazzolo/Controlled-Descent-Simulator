@@ -183,6 +183,16 @@ EMSCRIPTEN_BINDINGS(simulator) {
         .field("logFile",    &ext_diagFiles::logFile)
         .field("profileRaw", &ext_diagFiles::profileRaw);
 
+    value_object<ext_recordParams>("ext_recordParams")
+        .field("enabled", &ext_recordParams::enabled);
+
+    value_object<ext_recordStatus>("ext_recordStatus")
+        .field("modelName", +[](const ext_recordStatus& o){ return std::string(o.modelName); },
+               +[](ext_recordStatus& o, const std::string& v){ std::strncpy(o.modelName, v.c_str(), sizeof(o.modelName) - 1); o.modelName[sizeof(o.modelName) - 1] = '\0'; })
+        .field("active",      &ext_recordStatus::active)
+        .field("enabled",     &ext_recordStatus::enabled)
+        .field("droppedRows", &ext_recordStatus::droppedRows);
+
     // --- Functions exposed to JS ---
     function("ext_rocketInit", &ext_initRocket_FFLQR01);
     function("ext_quadRotorInit", &ext_initQuadRotor_FFLQR01);
@@ -206,4 +216,6 @@ EMSCRIPTEN_BINDINGS(simulator) {
     function("ext_getProfileTable", &ext_getProfileTable);
     function("ext_resetProfile", &ext_resetProfile);
     function("ext_setDiagFiles", &ext_setDiagFiles);
+    function("ext_setRecording", &ext_setRecording);
+    function("ext_getRecordStatus", &ext_getRecordStatus);
 }

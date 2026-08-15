@@ -36,11 +36,13 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 
 #include "log.hpp"
 #include "LogUiSink.hpp"
 #include "LogSinks.hpp"
 #include "profile.hpp"
+#include "Recorder.hpp"
 
 /* Immediately return if ret == true */
 #define RETURN_IF_TRUE(ret) if(ret) return ret
@@ -498,4 +500,42 @@ bool ext_setDiagFiles(ext_diagFiles params)
     cds_log::fileSink().setEnabled(params.logFile);
     cds_profile::registry().setRawLogging(params.profileRaw);
     return false;
+}
+
+// Snapshot the active recorder's state into the wire struct. Flags cross as
+// ext_coord_t (0.0/1.0) so the char[] modelName can share the struct.
+static ext_recordStatus _recordStatus(void)
+{
+    ext_recordStatus out = {};
+    cds_record::IRecorder* r = cds_record::activeRecorder();
+    if (r)
+    {
+        std::strncpy(out.modelName, r->name(), sizeof(out.modelName) - 1);
+        out.modelName[sizeof(out.modelName) - 1] = '\0';
+        out.active      = 1;
+        out.enabled     = r->enabled() ? 1 : 0;
+        out.droppedRows = static_cast<ext_coord_t>(r->dropped());
+    }
+    else
+    {
+        out.modelName[0] = '\0';
+        out.active = 0; out.enabled = 0; out.droppedRows = 0;
+    }
+    return out;
+}
+
+ext_recordStatus ext_setRecording(ext_recordParams params)
+{
+    // server-side only (wasm has no filesystem). Toggles the currently active
+    // model's recorder; the drain thread rotates the CSV on the transition.
+    if (cds_record::IRecorder* r = cds_record::activeRecorder())
+    {
+        r->setEnabled(params.enabled);
+    }
+    return _recordStatus();
+}
+
+ext_recordStatus ext_getRecordStatus(void)
+{
+    return _recordStatus();
 }

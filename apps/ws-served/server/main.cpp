@@ -49,8 +49,12 @@
 #include "log.hpp"
 #include "LogSinks.hpp"
 #include "LogUiSink.hpp"
+#include "UniqueFile.hpp"
 #include "profile.hpp"
 #include "ProfileReport.hpp"
+#include "Recorder.hpp"
+
+#include <string>
 
 using Clock = std::chrono::steady_clock;
 
@@ -174,14 +178,24 @@ static void _tick_generator(void)
 }
 
 /* Consumer side of the diagnostics: drains queued log records to the sinks,
-   streams the profiler raw samples to a CSV (opened lazily on the first sample,
-   drained whenever raw logging is on), and — when CDS_PROFILE_FILE is set —
-   periodically rewrites the profiler aggregate report. Runs off the tick path,
-   so blocking I/O here is fine. */
-static void _drain_generator(const char *profilePath, const char *rawPath)
+   streams the profiler raw samples and the per-tick data recorder to their CSVs,
+   and — when CDS_PROFILE_FILE is set — periodically rewrites the profiler
+   aggregate report. Runs off the tick path, so blocking I/O here is fine.
+
+   Every output file gets a unique name (uniqueFilePath) so successive runs never
+   overwrite each other; the two streaming sinks (raw CSV, record CSV) go further
+   and reopen a FRESH file each time serialization is toggled back on. */
+static void _drain_generator(const char *profilePath, const char *rawPath, const char *recordPath)
 {
     auto lastProfileDump = Clock::now();
+    // The aggregate report is rewritten in place; give it one unique name per run.
+    const std::string reportPath = profilePath ? cds_log::uniqueFilePath(profilePath)
+                                               : std::string();
+
     std::FILE *rawCsv = nullptr;
+    std::FILE *recCsv = nullptr;
+    cds_record::IRecorder *recOwner = nullptr; // recorder that opened recCsv
+
     while (_run_drain_thread)
     {
         CDS_PROFILE(profile, "Profiler write to file thread");
@@ -191,18 +205,46 @@ static void _drain_generator(const char *profilePath, const char *rawPath)
            that the file dump and the ext command both read */
         cds_profile::registry().pump();
 
-        /* raw profiler samples -> CSV for offline analysis */
-        cds_profile::registry().drainRaw([&](const cds_profile::RawSample &s) {
-            if (!rawCsv)
-            {
-                rawCsv = std::fopen(rawPath, "w");
-                if (rawCsv) cds_profile::writeRawHeader(rawCsv);
-            }
-            if (rawCsv) cds_profile::writeRawSample(rawCsv, cds_profile::registry(), s);
-        });
-        if (rawCsv) std::fflush(rawCsv);
+        /* raw profiler samples -> CSV for offline analysis. Open a fresh unique
+           file when raw logging turns on; flush pending samples into the current
+           file; close it when raw logging turns off (a restart opens a new one). */
+        const bool rawOn = cds_profile::registry().rawLogging();
+        if (rawOn && !rawCsv)
+        {
+            rawCsv = std::fopen(cds_log::uniqueFilePath(rawPath).c_str(), "w");
+            if (rawCsv) cds_profile::writeRawHeader(rawCsv);
+        }
+        if (rawCsv)
+        {
+            cds_profile::registry().drainRaw([&](const cds_profile::RawSample &s) {
+                cds_profile::writeRawSample(rawCsv, cds_profile::registry(), s);
+            });
+            std::fflush(rawCsv);
+        }
+        if (!rawOn && rawCsv) { std::fclose(rawCsv); rawCsv = nullptr; }
 
-        if (profilePath)
+        /* per-tick data recorder -> wide black-box CSV. Same lifecycle, with a
+           metadata header on open and an explicit "# dropped N rows" trailer on
+           close. Rotate the file if the active model (owner) changes too. */
+        cds_record::IRecorder *rec = cds_record::activeRecorder();
+        const bool recOn = rec && rec->enabled();
+        if (recOn && !recCsv)
+        {
+            recCsv = std::fopen(cds_log::uniqueFilePath(recordPath).c_str(), "w");
+            if (recCsv) { rec->writeHeader(recCsv); recOwner = rec; }
+        }
+        if (recCsv && recOwner)
+        {
+            recOwner->drainRows(recCsv);
+            std::fflush(recCsv);
+        }
+        if (recCsv && (!recOn || rec != recOwner))
+        {
+            if (recOwner) recOwner->writeTrailer(recCsv);
+            std::fclose(recCsv); recCsv = nullptr; recOwner = nullptr;
+        }
+
+        if (!reportPath.empty())
         {
             const auto now = Clock::now();
             if (now - lastProfileDump > std::chrono::milliseconds(500))
@@ -211,7 +253,7 @@ static void _drain_generator(const char *profilePath, const char *rawPath)
                 cds_profile::Snapshot snap;
                 if (!cds_profile::registry().snapshot(snap))
                 {
-                    if (std::FILE *pf = std::fopen(profilePath, "w"))
+                    if (std::FILE *pf = std::fopen(reportPath.c_str(), "w"))
                     {
                         cds_profile::writeReport(pf, cds_profile::registry(), snap);
                         std::fclose(pf);
@@ -223,6 +265,11 @@ static void _drain_generator(const char *profilePath, const char *rawPath)
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
     if (rawCsv) std::fclose(rawCsv);
+    if (recCsv)
+    {
+        if (recOwner) recOwner->writeTrailer(recCsv);
+        std::fclose(recCsv);
+    }
 }
 
 int main(int argc, char **argv)
@@ -258,6 +305,12 @@ int main(int argc, char **argv)
     if (rawPath) cds_profile::registry().setRawLogging(true); // env preset
     if (!rawPath) rawPath = "out_data/cds_profile_raw.csv";
 
+    /* Per-tick data recorder CSV base path (unique per run/toggle). Recording is
+       toggled from the frontend once a model is running; nothing to preset here
+       (no recorder is active until a model registers one). */
+    const char *recordPath = std::getenv("CDS_RECORD_FILE");
+    if (!recordPath) recordPath = "out_data/cds_record.csv";
+
     /* Thread "Real-time", used for providing ticks to the System */
     std::thread rt([]
                    {
@@ -268,7 +321,7 @@ int main(int argc, char **argv)
                 });
 
     /* Consumer thread: drains logs to the sinks and dumps the profiler report */
-    std::thread drain([profilePath, rawPath] { _drain_generator(profilePath, rawPath); });
+    std::thread drain([profilePath, rawPath, recordPath] { _drain_generator(profilePath, rawPath, recordPath); });
 
     auto shutdown = [&](int code) -> int
     {

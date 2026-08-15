@@ -101,8 +101,19 @@ bool ext_resetProfile(void);
 /* Toggle the server-side diagnostics files (no-op in the wasm build, which has
    no real filesystem): logFile mirrors the log to a file (cds.log), profileRaw
    streams every raw profiler sample to a CSV (cds_profile_raw.csv) for offline
-   analysis. Returns true on error */
+   analysis. Every file gets a unique, timestamped name and a fresh file is
+   opened each time serialization is toggled back on. Returns true on error */
 bool ext_setDiagFiles(ext_diagFiles params);
+
+/* Toggle the per-tick data recorder — a lossless wide-CSV "black box" of the
+   active model's full state/input/reference/tracking-error, one row per tick,
+   for offline validation and model comparison (server-side only). Returns the
+   recorder status (active model, enabled flag, dropped-row count) */
+ext_recordStatus ext_setRecording(ext_recordParams params);
+
+/* Get the data recorder status without changing it (poll the dropped-row count
+   and the active model name from the frontend) */
+ext_recordStatus ext_getRecordStatus(void);
 ```
 
 ## Key types
@@ -138,7 +149,13 @@ ext_profileTable               { table (char[3600]), count }
 ext_logLevelParams             { module, level, sampleN }
 ext_profileEnableParams        { module, enabled (bool) }
 ext_diagFiles                  { logFile (bool), profileRaw (bool) }
+ext_recordParams               { enabled (bool) }
+ext_recordStatus               { modelName (char[64]), active, enabled, droppedRows }
 ```
+
+`ext_recordStatus` keeps `active`/`enabled`/`droppedRows` as `ext_coord_t`
+(0.0/1.0 flags and a count) rather than `bool`, because a wire struct may not mix
+a `char` buffer with a `bool`.
 
 ## Protocol version
 

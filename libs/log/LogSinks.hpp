@@ -42,8 +42,10 @@
 #include <cstdio>
 #include <cstring>
 #include <mutex>
+#include <string>
 
 #include "log.hpp"
+#include "UniqueFile.hpp"
 
 namespace cds_log
 {
@@ -73,18 +75,21 @@ namespace cds_log
         std::FILE* m_stream;
     };
 
-    // A togglable file sink: opens its path (append) lazily on the first write
-    // while enabled, flushes each line so a crash keeps the log. setEnabled()
-    // and setPath() are safe to call from another thread than Write() (which
-    // runs in the drain). Disabled and pathless by default. Native builds only
-    // (the wasm build has no real filesystem). Reachable process-wide via
-    // fileSink() so an ext command can toggle the same instance the app
-    // registered.
+    // A togglable file sink. The path set via setPath() is a BASE name; each time
+    // the sink is enabled it lazily opens a fresh, uniquely-named file derived
+    // from it (uniqueFilePath: a timestamp stamped before the extension), so a
+    // new run never overwrites a previous one and toggling recording off then on
+    // reopens a new file rather than appending. Flushes each line so a crash
+    // keeps the log. setEnabled() and setPath() are safe to call from another
+    // thread than Write() (which runs in the drain). Disabled and pathless by
+    // default. Native builds only (the wasm build has no real filesystem).
+    // Reachable process-wide via fileSink() so an ext command can toggle the same
+    // instance the app registered.
     class FileSink : public Sink
     {
         public:
 
-        FileSink() : m_file(nullptr), m_enabled(false) { m_path[0] = '\0'; }
+        FileSink() : m_file(nullptr), m_enabled(false) { m_base[0] = '\0'; }
         ~FileSink() override { if (m_file) std::fclose(m_file); }
 
         FileSink(const FileSink&) = delete;
@@ -93,12 +98,19 @@ namespace cds_log
         void setPath(const char* path)
         {
             std::lock_guard<std::mutex> lk(m_mutex);
-            std::strncpy(m_path, path ? path : "", sizeof(m_path) - 1);
-            m_path[sizeof(m_path) - 1] = '\0';
-            if (m_file) { std::fclose(m_file); m_file = nullptr; } // reopen at the new path
+            std::strncpy(m_base, path ? path : "", sizeof(m_base) - 1);
+            m_base[sizeof(m_base) - 1] = '\0';
+            if (m_file) { std::fclose(m_file); m_file = nullptr; } // reopen under the new base
         }
 
-        void setEnabled(bool on) { m_enabled.store(on, std::memory_order_relaxed); }
+        void setEnabled(bool on)
+        {
+            std::lock_guard<std::mutex> lk(m_mutex);
+            m_enabled.store(on, std::memory_order_relaxed);
+            // On disable, close the file so a later re-enable opens a FRESH,
+            // uniquely-named one — every logging session is its own file.
+            if (!on && m_file) { std::fclose(m_file); m_file = nullptr; }
+        }
         bool enabled() const { return m_enabled.load(std::memory_order_relaxed); }
 
         void Write(const LogLine& line) override
@@ -107,8 +119,8 @@ namespace cds_log
             std::lock_guard<std::mutex> lk(m_mutex);
             if (!m_file)
             {
-                if (m_path[0] == '\0') return;
-                m_file = std::fopen(m_path, "a");
+                if (m_base[0] == '\0') return;
+                m_file = std::fopen(uniqueFilePath(m_base).c_str(), "w");
                 if (!m_file) return;
             }
             writeLine(m_file, line);
@@ -117,7 +129,7 @@ namespace cds_log
 
         private:
 
-        char              m_path[256];
+        char              m_base[256];
         std::FILE*        m_file;
         std::atomic<bool> m_enabled;
         std::mutex        m_mutex;

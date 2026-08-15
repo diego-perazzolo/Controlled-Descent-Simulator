@@ -316,6 +316,32 @@ std::vector<uint8_t> server_dispatch(const std::vector<uint8_t>& msg)
             return _respBool(h, ext_setDiagFiles(par));
         }
 
+        case WS_MSG_SET_RECORDING:
+        {
+            reqSetRecording_t req = {};
+            if(_parse(msg, req)) return _respBool(h, true);
+
+            printf("[cds-server] set recording\n");
+            ext_recordParams par = {};
+            par.enabled = req.enabled != 0;
+
+            respSetRecording_t resp = {};
+            resp.h = h;
+            resp.p = ext_setRecording(par);
+            return _serialize(resp);
+        }
+
+        case WS_MSG_GET_RECORD_STATUS:
+        {
+            reqGetRecordStatus_t req = {};
+            if(_parse(msg, req)) return _respBool(h, true);
+
+            respGetRecordStatus_t resp = {};
+            resp.h = h;
+            resp.p = ext_getRecordStatus();
+            return _serialize(resp);
+        }
+
         default:
             // Err: unknown message type
             return _respBool(h, true);

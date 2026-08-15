@@ -1517,6 +1517,24 @@ const diagnostics = (() => {
     chkRawCsv.addEventListener('change', pushFileToggles);
     chkLogFile.addEventListener('change', pushFileToggles);
 
+    // data recorder: toggle + live status (active model, dropped rows). The
+    // status struct carries flags as numbers (0/1) and modelName as a string.
+    const chkRecord = $('chkRecord'), recordStatus = $('recordStatus'), recordDropped = $('recordDropped');
+    function applyRecordStatus(s) {
+        if (!s) return;
+        const active = Number(s.active) >= 1;
+        chkRecord.disabled = !active;
+        chkRecord.checked = Number(s.enabled) >= 1;
+        recordStatus.textContent = active ? (chkRecord.checked ? `● ${s.modelName}` : s.modelName) : 'no model';
+        recordStatus.classList.toggle('rec-on', active && chkRecord.checked);
+        const drop = Number(s.droppedRows) || 0;
+        recordDropped.textContent = drop > 0 ? `${drop} rows dropped` : '';
+    }
+    function refreshRecordStatus() { if (sim) applyRecordStatus(sim.ext_getRecordStatus()); }
+    chkRecord.addEventListener('change', () => {
+        if (sim) applyRecordStatus(sim.ext_setRecording({ enabled: chkRecord.checked }));
+    });
+
     function appendLog(batch) {
         if (batch.dropped > 0) {
             totalDropped += batch.dropped;
@@ -1593,6 +1611,7 @@ const diagnostics = (() => {
                 refreshLogModules();
                 refreshProfileModules();
                 refreshProfileStats();
+                refreshRecordStatus();
             } catch (e) { /* never let the Diag view break the app */ }
         },
         // called every frame while the Diag view is visible, but throttled to
@@ -1609,6 +1628,7 @@ const diagnostics = (() => {
                 if (now - lastStatsPoll >= STATS_POLL_MS) {
                     lastStatsPoll = now;
                     refreshProfileStats();
+                    refreshRecordStatus();
                 }
             } catch (e) { /* diagnostics must never wedge the render loop */ }
         },

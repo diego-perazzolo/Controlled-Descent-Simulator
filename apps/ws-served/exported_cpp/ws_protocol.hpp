@@ -50,7 +50,7 @@ constexpr uint16_t WS_DEFAULT_PORT = 9002;
    carry different bytes, and both sides refuse to talk: a stale
    simulator.wasm against a newer cds_server fails loudly instead
    of corrupting the parsing. */
-constexpr uint8_t WS_PROTOCOL_VERSION = 0xDB;
+constexpr uint8_t WS_PROTOCOL_VERSION = 0x49;
 
 /* Message types: request and matching response carry the same type id */
 enum MsgType : uint8_t
@@ -77,6 +77,8 @@ enum MsgType : uint8_t
     WS_MSG_GET_PROFILE_TABLE   = 20, // -> respGetProfileTable_t
     WS_MSG_RESET_PROFILE       = 21, // -> respBool_t
     WS_MSG_SET_DIAG_FILES      = 22, // -> respBool_t
+    WS_MSG_SET_RECORDING       = 23, // -> respSetRecording_t
+    WS_MSG_GET_RECORD_STATUS   = 24, // -> respGetRecordStatus_t
 };
 
 #pragma pack(push, 1)
@@ -213,6 +215,17 @@ typedef struct
     uint8_t profileRaw;
 } reqSetDiagFiles_t;
 
+typedef struct
+{
+    header_t h;
+    uint8_t enabled;
+} reqSetRecording_t;
+
+typedef struct
+{
+    header_t h;
+} reqGetRecordStatus_t;
+
 /* ------------------------------ responses ------------------------------- */
 
 /* generic boolean response: isError follows the core convention (1 = error) */
@@ -272,6 +285,18 @@ typedef struct
     ext_profileTable p;
 } respGetProfileTable_t;
 
+typedef struct
+{
+    header_t h;
+    ext_recordStatus p;
+} respSetRecording_t;
+
+typedef struct
+{
+    header_t h;
+    ext_recordStatus p;
+} respGetRecordStatus_t;
+
 #pragma pack(pop)
 
 /* Largest message either peer can send: used to size the shared RPC buffer.
@@ -306,6 +331,8 @@ static_assert(sizeof(reqSetProfileEnabled_t)  ==  7, "wire layout drift"); // 2 
 static_assert(sizeof(reqGetProfileTable_t)    ==  2, "wire layout drift");
 static_assert(sizeof(reqResetProfile_t)       ==  2, "wire layout drift");
 static_assert(sizeof(reqSetDiagFiles_t)       ==  4, "wire layout drift"); // 2 + u8 + u8
+static_assert(sizeof(reqSetRecording_t)       ==  3, "wire layout drift"); // 2 + u8
+static_assert(sizeof(reqGetRecordStatus_t)    ==  2, "wire layout drift");
 static_assert(sizeof(respBool_t)              ==  3, "wire layout drift"); // 2 + u8
 static_assert(sizeof(respTrajGetPoint_t)      == 14, "wire layout drift"); // 2 + 1f + 1f + 1f
 static_assert(sizeof(respGetSnapshot_t)       == 71, "wire layout drift"); // 2 + 1f + 12f + 4f + u8
@@ -314,6 +341,8 @@ static_assert(sizeof(respGetLogBatch_t)       == 3810, "wire layout drift"); // 
 static_assert(sizeof(respGetLogModules_t)     == 1206, "wire layout drift"); // 2 + 1200b + 1f
 static_assert(sizeof(respGetProfileModules_t) == 1206, "wire layout drift"); // 2 + 1200b + 1f
 static_assert(sizeof(respGetProfileTable_t)   == 3606, "wire layout drift"); // 2 + 3600b + 1f
+static_assert(sizeof(respSetRecording_t)      == 78, "wire layout drift"); // 2 + 64b + 1f + 1f + 1f
+static_assert(sizeof(respGetRecordStatus_t)   == 78, "wire layout drift"); // 2 + 64b + 1f + 1f + 1f
 
 static_assert(sizeof(reqTrajAppendPoly4_t) < WS_MAX_MSG_SIZE, "wire msg too big");
 static_assert(sizeof(respGetLogBatch_t) < WS_MAX_MSG_SIZE, "wire msg too big");
