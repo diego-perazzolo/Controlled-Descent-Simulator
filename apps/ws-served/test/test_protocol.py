@@ -234,6 +234,41 @@ def run_tests(s):
     assert struct.unpack("<BBB", p)[2] == 0, "remove last failed"
     print("remove last OK")
 
+    # --- diagnostics: logger / profiler inspection (plumbing round-trip) ---
+    # No core call-sites are instrumented yet, so these return well-formed but
+    # empty text-blob payloads. We assert the exact wire sizes (char buffers on
+    # the POD wire) and that the fields decode, plus the setters' out-of-range
+    # error path.
+    p = rpc(s, header(MSG["GET_LOG_MODULES"]))          # header(2) + char[1200] + count(f)
+    assert len(p) == 1206, f"log modules size {len(p)}"
+    assert (p[0], p[1]) == (VERSION, MSG["GET_LOG_MODULES"]), "log modules header"
+    n_logmod = struct.unpack("<f", p[1202:1206])[0]
+    print(f"get log modules OK (count={n_logmod:.0f})")
+
+    p = rpc(s, header(MSG["GET_PROFILE_MODULES"]))       # same shape as log modules
+    assert len(p) == 1206, f"profile modules size {len(p)}"
+    print("get profile modules OK")
+
+    p = rpc(s, header(MSG["GET_LOG_BATCH"]))            # header(2) + char[3800] + count + dropped
+    assert len(p) == 3810, f"log batch size {len(p)}"
+    n_lines = struct.unpack("<f", p[3802:3806])[0]
+    dropped = struct.unpack("<f", p[3806:3810])[0]
+    print(f"get log batch OK (count={n_lines:.0f}, dropped={dropped:.0f})")
+
+    p = rpc(s, header(MSG["GET_PROFILE_TABLE"]))        # header(2) + char[3600] + count
+    assert len(p) == 3606, f"profile table size {len(p)}"
+    print("get profile table OK")
+
+    # setters on an out-of-range module (none registered yet) must return error
+    # setLogLevel carries {module, level, sampleN}
+    p = rpc(s, header(MSG["SET_LOG_LEVEL"]) + struct.pack("<fff", 0.0, 0.0, 1.0))
+    assert struct.unpack("<BBB", p)[2] == 1, "set log level should reject out-of-range module"
+    print("set log level out-of-range rejected OK")
+
+    p = rpc(s, header(MSG["SET_PROFILE_ENABLED"]) + struct.pack("<fB", 0.0, 1))
+    assert struct.unpack("<BBB", p)[2] == 1, "set profile enabled should reject out-of-range module"
+    print("set profile enabled out-of-range rejected OK")
+
     # close politely
     s.sendall(bytes([0x88, 0x80]) + os.urandom(4))
 

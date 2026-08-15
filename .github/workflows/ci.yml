@@ -43,6 +43,15 @@ jobs:
           cmake --build build-mpc-model-test
           ./build-mpc-model-test/mpc_model_test
 
+      - name: Logger + profiler tests (native)
+        run: |
+          cmake -S libs/log/test -B build-log-test -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-log-test
+          ./build-log-test/log_test
+          cmake -S libs/profile/test -B build-profile-test -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-profile-test
+          ./build-profile-test/profile_test
+
       - name: Solver C++/Python conformance certificate
         run: |
           cmake -S libs/control/bind -B build-ilqr-bind -DCMAKE_BUILD_TYPE=Release

@@ -65,12 +65,42 @@ bool ext_trajectory_append_point(ext_trajectoryPointParams_t params);
 
 /* Remove last trajectory item, returns true on error */
 bool ext_trajectory_remove_last_item(void);
+
+/* --- logger / profiler inspection (libs/log, libs/profile) --- */
+
+/* Drain a batch of recent log lines from the UI buffer. `lines` packs `count`
+   newline-separated 'LEVEL\tmodule\ttext' records; `dropped` counts lines lost
+   to UI-buffer overflow since the last call. Parse on the JS side */
+ext_logBatch ext_getLogBatch(void);
+
+/* List modules, one record per newline. getLogModules:
+   'index\tname\tlevel\tsampleN'; getProfileModules: 'index\tname\tenabled' */
+ext_moduleList ext_getLogModules(void);
+ext_moduleList ext_getProfileModules(void);
+
+/* Set a log module's runtime level (0=Trace..4=Error, 5=Off) and its sampling
+   divisor N (1 = emit all; N>1 = 1 in N per _SAMPLED call site). Returns true
+   on error (module index out of range) */
+bool ext_setLogLevel(ext_logLevelParams params);
+
+/* Enable or disable profiling for a module, returns true on error */
+bool ext_setProfileEnabled(ext_profileEnableParams params);
+
+/* Get the profiler stats table from the latest published snapshot (only scopes
+   of enabled modules), one record per newline:
+   'module\tscope\tkind\tcount\tmean\tstd\tmin\tmax\tp50\tp95\tp99'. kind is
+   'us' (a timed scope, values in microseconds) or 'val' (a value scope, raw) */
+ext_profileTable ext_getProfileTable(void);
 ```
 
 ## Key types
 
-Defined in `apps/common/exported_cpp/ext_defs.hpp`; all fields are
-`ext_coord_t` (float). Structs at this boundary are POD — no STL containers.
+Defined in `apps/common/exported_cpp/ext_defs.hpp`; fields are `ext_coord_t`
+(float) unless noted, plus `bool` and fixed `char` buffers. Structs at this
+boundary are POD — no STL containers. A `char[N]` field is how variable text
+crosses the POD wire: it is bound to JS as a `string` (embind getter/setter)
+and carries a newline/tab-delimited blob the frontend parses. Text-blob
+responses are why `WS_MAX_MSG_SIZE` is 4096.
 
 ```cpp
 ext_rocketParams               { mass_Kg, inertiaX/Y/Z_Kgm2, c, cz }
@@ -90,6 +120,11 @@ ext_snapshotData               { time_seconds, state (ext_fullState),
 ext_plantSnapshotData          { time_seconds, sequence, state (ext_fullState),
                                 isAttached (bool), isReadyToStart (bool),
                                 isError (bool) }
+ext_logBatch                   { lines (char[3800]), count, dropped }
+ext_moduleList                 { list (char[1200]), count }
+ext_profileTable               { table (char[3600]), count }
+ext_logLevelParams             { module, level, sampleN }
+ext_profileEnableParams        { module, enabled (bool) }
 ```
 
 ## Protocol version

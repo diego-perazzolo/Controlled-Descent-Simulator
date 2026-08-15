@@ -83,6 +83,55 @@ typedef struct
     bool isError;
 } ext_plantSnapshotData;
 
+/* struct of a batch of recent log lines. `lines` packs `count`
+newline-separated records, each 'LEVEL\tmodule\ttext'; the JS side
+splits on '\n' then on '\t'. Fixed char buffer: text on the POD wire */
+typedef struct
+{
+    char lines[3800];
+    /* number of records packed in `lines` */
+    ext_coord_t count;
+    /* lines dropped since the last batch (UI buffer overflow) */
+    ext_coord_t dropped;
+} ext_logBatch;
+
+/* struct listing registered modules, one 'index\tname\tvalue' record
+per newline; `value` is the log level (getLogModules) or the enabled
+flag 0/1 (getProfileModules). Fixed char buffer: text on the POD wire */
+typedef struct
+{
+    char list[1200];
+    /* number of modules listed in `list` */
+    ext_coord_t count;
+} ext_moduleList;
+
+/* struct of the profiler stats table, one record per newline:
+'module\tscope\tcount\tmean_us\tmin_us\tmax_us\tstd_us'. Fixed char
+buffer: text on the POD wire */
+typedef struct
+{
+    char table[3600];
+    /* number of scope records in `table` */
+    ext_coord_t count;
+} ext_profileTable;
+
+/* request: set a log module's runtime level and sampling divisor N
+(module as its index; N = 1 emits all, N>1 emits 1 in N per _SAMPLED
+call site) */
+typedef struct
+{
+    ext_coord_t module;
+    ext_coord_t level;
+    ext_coord_t sampleN;
+} ext_logLevelParams;
+
+/* request: enable or disable profiling for a module (module as its index) */
+typedef struct
+{
+    ext_coord_t module;
+    bool enabled;
+} ext_profileEnableParams;
+
 /* Initialize Rocket model: FF_LQR_01, returns true on error */
 bool ext_initRocket_FFLQR01(ext_initRocketParams params);
 
@@ -124,3 +173,21 @@ bool ext_stopStaging(void);
 
 /* Initialize QuadRotor model: MPC_01 (nonlinear MPC), returns true on error */
 bool ext_initQuadRotor_MPC01(ext_initQuadRotorParams params);
+
+/* Drain a batch of recent log lines from the UI buffer */
+ext_logBatch ext_getLogBatch(void);
+
+/* List the registered log modules with their current level */
+ext_moduleList ext_getLogModules(void);
+
+/* Set a log module's runtime level, returns true on error */
+bool ext_setLogLevel(ext_logLevelParams params);
+
+/* List the registered profiler modules with their enabled flag */
+ext_moduleList ext_getProfileModules(void);
+
+/* Enable or disable profiling for a module, returns true on error */
+bool ext_setProfileEnabled(ext_profileEnableParams params);
+
+/* Get the profiler stats table from the latest published snapshot */
+ext_profileTable ext_getProfileTable(void);

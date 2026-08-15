@@ -30,6 +30,9 @@ add_executable(simulator
 
 target_include_directories(simulator PRIVATE
     ${CDS_EXT_COMMON_GEN_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../libs/log     # log.hpp, LogSinks.hpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../libs/profile # profile.hpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../libs/sync    # TripleBuffer.hpp
 )
 
 target_link_libraries(simulator PRIVATE cds_core)

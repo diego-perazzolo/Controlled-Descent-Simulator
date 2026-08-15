@@ -139,8 +139,8 @@ const ui = {
     xErr:       $('xErr'),   yErr:   $('yErr'),   zErr:   $('zErr'),   yawErr: $('yawErr'), err_mag: $('err_mag'),
     stepCount:  $('stepCount'), dt: $('dt'), fps: $('fps'),
     btnStart:   $('btnStart'), btnStop: $('btnStop'), btnReset: $('btnReset'),
-    btnCharts:  $('btnCharts'), btn3d: $('btn3d'), btnParams: $('btnParams'),
-    viewCharts: $('view-charts'), view3d: $('view-3d'), viewParams: $('view-params'),
+    btnCharts:  $('btnCharts'), btn3d: $('btn3d'), btnParams: $('btnParams'), btnDiag: $('btnDiag'),
+    viewCharts: $('view-charts'), view3d: $('view-3d'), viewParams: $('view-params'), viewDiag: $('view-diag'),
     status:     $('statusBar'), error: $('errorMsg'),
     btnApply:   $('btnApply'),
     // trajectory save / load
@@ -1322,6 +1322,9 @@ function loop() {
         // Idle: keep only the plant ghost live, leaving model and charts as-is.
         renderer3d.previewPlant(plantState);
     }
+
+    // Diagnostics: stream logs and refresh stats only while the Diag view is up.
+    if (ui.viewDiag.style.display !== 'none') diagnostics.poll();
 }
 
 // =============================================================================
@@ -1469,20 +1472,153 @@ ui.btnStopStaging.addEventListener('click', () => {
 });
 
 // View toggle helpers
+// =============================================================================
+// Diagnostics (Diag view): logger console + logger/profiler controls. Everything
+// here rides the six diagnostics ext commands, whose responses are text blobs
+// (newline records, tab fields) parsed on this side — see docs/api.md. The core
+// interface stays minimal: the logger is a secondary feature and adds no more.
+// =============================================================================
+const diagnostics = (() => {
+    const LEVELS = ['Trace', 'Debug', 'Info', 'Warn', 'Error', 'Off'];
+    const con        = $('logConsole');
+    const dropped    = $('logDropped');
+    const autoscroll = $('logAutoscroll');
+    const logTable   = $('logModulesTable'),  logTbody  = logTable.querySelector('tbody'),  logEmpty  = $('logModulesEmpty');
+    const profTable  = $('profileModulesTable'), profTbody = profTable.querySelector('tbody'), profEmpty = $('profileModulesEmpty');
+    const statsTbody = $('profileStatsTable').querySelector('tbody'), statsEmpty = $('profileStatsEmpty');
+
+    const MAX_LINES = 500;
+    // Poll cadences (ms): decoupled from the frame rate so the blocking ext
+    // calls (a WebSocket round-trip each, in ws-served) do not stall rendering.
+    const LOG_POLL_MS = 120;    // ~8 Hz log stream
+    const STATS_POLL_MS = 500;  // 2 Hz profiler stats
+    let totalDropped = 0;
+    let lastLogPoll = 0;
+    let lastStatsPoll = 0;
+
+    const esc = s => s.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+    // parse "a\tb\tc\n..." into an array of field arrays
+    const rows = blob => blob.split('\n').filter(l => l.length).map(l => l.split('\t'));
+
+    $('btnLogClear').addEventListener('click', () => {
+        con.innerHTML = ''; totalDropped = 0; dropped.textContent = '';
+    });
+
+    function appendLog(batch) {
+        if (batch.dropped > 0) {
+            totalDropped += batch.dropped;
+            dropped.textContent = `${totalDropped} dropped`;
+        }
+        let lines = rows(batch.lines);
+        if (!lines.length) return;
+        // a flooded batch can be hundreds of lines; only the most recent
+        // MAX_LINES can survive the trim, so never build more than that
+        if (lines.length > MAX_LINES) lines = lines.slice(-MAX_LINES);
+        // build ONE html string for the whole batch: a single parse, instead of
+        // createElement + innerHTML per line (that is what froze the UI)
+        let html = '';
+        for (const [lvl, mod, ...rest] of lines) {
+            html += `<span class="ln"><span class="lv lv-${esc(lvl)}">${esc(lvl)}</span>` +
+                    `<span class="mod">${esc(mod || '')}</span> ${esc(rest.join('\t'))}</span>`;
+        }
+        con.insertAdjacentHTML('beforeend', html);
+        let over = con.childElementCount - MAX_LINES;
+        while (over-- > 0) con.removeChild(con.firstChild);
+        if (autoscroll.checked) con.scrollTop = con.scrollHeight;
+    }
+
+    function refreshLogModules() {
+        const list = rows(sim.ext_getLogModules().list);
+        logEmpty.style.display = list.length ? 'none' : '';
+        logTbody.innerHTML = list.map(([idx, name, level, sampleN]) => {
+            const opts = LEVELS.map((n, i) => `<option value="${i}" ${i === Number(level) ? 'selected' : ''}>${n}</option>`).join('');
+            return `<tr><td>${esc(name)}</td>` +
+                   `<td><select class="lvl" data-mod="${idx}">${opts}</select></td>` +
+                   `<td><input type="number" min="1" step="1" class="n" data-mod="${idx}" value="${esc(sampleN)}"></td></tr>`;
+        }).join('');
+    }
+
+    function refreshProfileModules() {
+        const list = rows(sim.ext_getProfileModules().list);
+        profEmpty.style.display = list.length ? 'none' : '';
+        profTbody.innerHTML = list.map(([idx, name, enabled]) =>
+            `<tr><td>${esc(name)}</td>` +
+            `<td><input type="checkbox" class="en" data-mod="${idx}" ${enabled === '1' ? 'checked' : ''}></td></tr>`
+        ).join('');
+    }
+
+    function refreshProfileStats() {
+        const list = rows(sim.ext_getProfileTable().table);
+        statsEmpty.style.display = list.length ? 'none' : '';
+        statsTbody.innerHTML = list.map(([mod, scope, kind, count, mean, std, min, max, p50, p95, p99]) => {
+            const num = v => `<td class="num">${esc(v ?? '')}</td>`;
+            return `<tr><td>${esc(mod)}</td><td>${esc(scope)}</td><td>${esc(kind)}</td>` +
+                   num(count) + num(mean) + num(std) + num(min) + num(max) + num(p50) + num(p95) + num(p99) + '</tr>';
+        }).join('');
+    }
+
+    // delegated handlers: rows are rebuilt, so bind once on the tables
+    logTable.addEventListener('change', (e) => {
+        const row = e.target.closest('tr');
+        if (!row || !sim) return;
+        sim.ext_setLogLevel({
+            module: Number(e.target.dataset.mod ?? row.querySelector('[data-mod]').dataset.mod),
+            level: Number(row.querySelector('.lvl').value),
+            sampleN: Math.max(1, Number(row.querySelector('.n').value) || 1),
+        });
+    });
+    profTable.addEventListener('change', (e) => {
+        if (!sim || !e.target.classList.contains('en')) return;
+        sim.ext_setProfileEnabled({ module: Number(e.target.dataset.mod), enabled: e.target.checked });
+    });
+
+    return {
+        onShow() {
+            if (!sim) return;
+            try {
+                refreshLogModules();
+                refreshProfileModules();
+                refreshProfileStats();
+            } catch (e) { /* never let the Diag view break the app */ }
+        },
+        // called every frame while the Diag view is visible, but throttled to
+        // its own cadence so it never runs at the frame rate
+        poll() {
+            if (!sim) return;
+            const now = performance.now();
+            try {
+                if (now - lastLogPoll >= LOG_POLL_MS) {
+                    lastLogPoll = now;
+                    const batch = timedCall(() => sim.ext_getLogBatch());
+                    if (!lastCallStalled) appendLog(batch);
+                }
+                if (now - lastStatsPoll >= STATS_POLL_MS) {
+                    lastStatsPoll = now;
+                    refreshProfileStats();
+                }
+            } catch (e) { /* diagnostics must never wedge the render loop */ }
+        },
+    };
+})();
+
 function showView(name) {
     ui.viewCharts.style.display = name === 'charts' ? 'grid'  : 'none';
     ui.view3d.style.display     = name === '3d'     ? 'block' : 'none';
     ui.viewParams.style.display = name === 'params' ? 'block' : 'none';
+    ui.viewDiag.style.display   = name === 'diag'   ? 'block' : 'none';
     ui.btnCharts.classList.toggle('active', name === 'charts');
     ui.btn3d.classList.toggle('active',     name === '3d');
     ui.btnParams.classList.toggle('active', name === 'params');
+    ui.btnDiag.classList.toggle('active',   name === 'diag');
     if (name === '3d')     renderer3d.show();
     else                   renderer3d.hide();
+    if (name === 'diag')   diagnostics.onShow();
 }
 
 ui.btnCharts.addEventListener('click', () => showView('charts'));
 ui.btn3d.addEventListener('click',     () => showView('3d'));
 ui.btnParams.addEventListener('click', () => showView('params'));
+ui.btnDiag.addEventListener('click',   () => showView('diag'));
 
 // =============================================================================
 // Model selection (rocket / quadrotor)

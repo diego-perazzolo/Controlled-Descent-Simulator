@@ -32,16 +32,12 @@
 // =============================================================================
 #include "SystemManager.hpp"
 #include <cstdio>
+#include "log.hpp"
+#include "profile.hpp"
 
-//#define CDS_TRACE
+static const auto log_info = cds_log::registry().module("SystemManagerInfo");
+static const auto profile_tick = cds_profile::registry().module("SystemManagerTick");
 
-#ifdef CDS_TRACE
-#define TRACE(fmt, ...)                      \
-    std::printf("[trace] %s:%d | " fmt "\n", \
-                __FILE__, __LINE__ __VA_OPT__(, ) __VA_ARGS__)
-#else
-#define TRACE(fmt, ...) ((void)0)
-#endif
 
 /* guard clauses: early-return with error (true) when the system is not in the
    required state. Caller must hold m_mutex */
@@ -76,7 +72,7 @@ SystemManager::SystemManager(void) : m_pModel(nullptr),
                                      m_isRunning(false),
                                      m_userForces({0})
 {
-    TRACE("Created");
+    CDS_LOG_INFO(log_info, "Created");
 }
 
 SystemManager::~SystemManager(void)
@@ -86,7 +82,7 @@ SystemManager::~SystemManager(void)
        would deadlock */
     m_isRunning = false;
 
-    TRACE("Destroyed");
+    CDS_LOG_INFO(log_info, "Destroyed");
 }
 
 bool SystemManager::InitModel(modelPtr_t &&pModel)
@@ -97,7 +93,7 @@ bool SystemManager::InitModel(modelPtr_t &&pModel)
 
     m_pModel = std::move(pModel);
 
-    TRACE("OK");
+    CDS_LOG_INFO(log_info, "OK");
 
     return false;
 }
@@ -111,7 +107,7 @@ bool SystemManager::InitTrajectory(void)
 
     m_pTrajectoryManager = std::make_unique<TrajectoryManager>();
 
-    TRACE("OK");
+    CDS_LOG_INFO(log_info, "OK");
 
     return false;
 }
@@ -138,7 +134,7 @@ bool SystemManager::AttachPlant(plantPtr_t &&pPlant)
 
     m_pPlant = std::move(pPlant);
 
-    TRACE("OK");
+    CDS_LOG_INFO(log_info, "OK");
 
     return false;
 }
@@ -154,7 +150,7 @@ bool SystemManager::DetachPlant(void)
     m_pPlant->Disconnect();
     m_pPlant.reset();
 
-    TRACE("OK");
+    CDS_LOG_INFO(log_info, "OK");
 
     return false;
 }
@@ -175,7 +171,7 @@ bool SystemManager::ExecuteOnModel(const std::function<bool(BaseModel &)> &model
 
     if (!ret)
     {
-        TRACE("OK");
+        CDS_LOG_INFO(log_info, "OK");
     }
 
     return ret;
@@ -197,7 +193,7 @@ bool SystemManager::ExecuteOnPlant(const std::function<bool(BasePlant &)> &plant
 
     if (!ret)
     {
-        TRACE("OK");
+        CDS_LOG_INFO(log_info, "OK");
     }
 
     return ret;
@@ -223,7 +219,7 @@ bool SystemManager::ExecuteOnTrajectoryManager(const std::function<bool(const Tr
 
     if (!ret)
     {
-        TRACE("OK");
+        CDS_LOG_INFO(log_info, "OK");
     }
 
     return ret;
@@ -259,7 +255,7 @@ bool SystemManager::MutateTrajectoryManager(const std::function<bool(TrajectoryM
 
     if (!ret)
     {
-        TRACE("OK");
+        CDS_LOG_INFO(log_info, "OK");
     }
 
     return ret;
@@ -354,16 +350,18 @@ bool SystemManager::Run(void)
 
     m_isRunning = true;
 
-    TRACE("OK");
+    CDS_LOG_INFO(log_info, "OK");
 
     return false;
 }
 
 bool SystemManager::ExecuteTick(sm_coord_t timestep_seconds)
 {
+    CDS_PROFILE(profile_tick, "ExecuteTick");
     lockGuard_t lock(m_mutex);
     bool ret = false;
 
+    
     RETURN_ERR_IF_NO_MODEL;
     RETURN_ERR_IF_STOPPED;
 
@@ -404,7 +402,7 @@ bool SystemManager::ExecuteTick(sm_coord_t timestep_seconds)
 
     if (!ret)
     {
-        TRACE("OK: %f", timestep_seconds);
+       CDS_LOG_INFO(log_info, "OK");
     }
 
     return ret;
@@ -424,7 +422,7 @@ bool SystemManager::Stop(void)
 
     if (!ret)
     {
-        TRACE("OK");
+        CDS_LOG_INFO(log_info, "OK");
     }
 
     return ret;
@@ -436,7 +434,7 @@ bool SystemManager::SetParameters(const systemManagerParams_t &params)
 
     m_params = params;
 
-    TRACE("OK");
+    CDS_LOG_INFO(log_info, "OK");
     return false;
 }
 

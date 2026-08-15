@@ -232,6 +232,70 @@ std::vector<uint8_t> server_dispatch(const std::vector<uint8_t>& msg)
             return _respBool(h, ext_initQuadRotor_MPC01(req.p));
         }
 
+        case WS_MSG_GET_LOG_BATCH:
+        {
+            reqGetLogBatch_t req = {};
+            if(_parse(msg, req)) return _respBool(h, true);
+
+            respGetLogBatch_t resp = {};
+            resp.h = h;
+            resp.p = ext_getLogBatch();
+            return _serialize(resp);
+        }
+
+        case WS_MSG_GET_LOG_MODULES:
+        {
+            reqGetLogModules_t req = {};
+            if(_parse(msg, req)) return _respBool(h, true);
+
+            respGetLogModules_t resp = {};
+            resp.h = h;
+            resp.p = ext_getLogModules();
+            return _serialize(resp);
+        }
+
+        case WS_MSG_SET_LOG_LEVEL:
+        {
+            reqSetLogLevel_t req = {};
+            if(_parse(msg, req)) return _respBool(h, true);
+
+            return _respBool(h, ext_setLogLevel(req.p));
+        }
+
+        case WS_MSG_GET_PROFILE_MODULES:
+        {
+            reqGetProfileModules_t req = {};
+            if(_parse(msg, req)) return _respBool(h, true);
+
+            respGetProfileModules_t resp = {};
+            resp.h = h;
+            resp.p = ext_getProfileModules();
+            return _serialize(resp);
+        }
+
+        case WS_MSG_SET_PROFILE_ENABLED:
+        {
+            reqSetProfileEnabled_t req = {};
+            if(_parse(msg, req)) return _respBool(h, true);
+
+            ext_profileEnableParams par = {};
+            par.module = req.module;
+            par.enabled = req.enabled != 0;
+
+            return _respBool(h, ext_setProfileEnabled(par));
+        }
+
+        case WS_MSG_GET_PROFILE_TABLE:
+        {
+            reqGetProfileTable_t req = {};
+            if(_parse(msg, req)) return _respBool(h, true);
+
+            respGetProfileTable_t resp = {};
+            resp.h = h;
+            resp.p = ext_getProfileTable();
+            return _serialize(resp);
+        }
+
         default:
             // Err: unknown message type
             return _respBool(h, true);

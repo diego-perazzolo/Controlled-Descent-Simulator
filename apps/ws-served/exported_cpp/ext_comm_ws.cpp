@@ -313,3 +313,100 @@ bool ext_initQuadRotor_MPC01(ext_initQuadRotorParams params)
 
     return resp.isError != 0;
 }
+
+ext_logBatch ext_getLogBatch(void)
+{
+    reqGetLogBatch_t req = {};
+    respGetLogBatch_t resp = {};
+
+    req.h.type = WS_MSG_GET_LOG_BATCH;
+
+    if(_rpc(req, resp))
+    {
+        // Err
+        return {};
+    }
+
+    return resp.p;
+}
+
+ext_moduleList ext_getLogModules(void)
+{
+    reqGetLogModules_t req = {};
+    respGetLogModules_t resp = {};
+
+    req.h.type = WS_MSG_GET_LOG_MODULES;
+
+    if(_rpc(req, resp))
+    {
+        // Err
+        return {};
+    }
+
+    return resp.p;
+}
+
+bool ext_setLogLevel(ext_logLevelParams params)
+{
+    reqSetLogLevel_t req = {};
+    respBool_t resp = {};
+
+    req.h.type = WS_MSG_SET_LOG_LEVEL;
+    req.p = params;
+
+    if(_rpc(req, resp))
+    {
+        return true;
+    }
+
+    return resp.isError != 0;
+}
+
+ext_moduleList ext_getProfileModules(void)
+{
+    reqGetProfileModules_t req = {};
+    respGetProfileModules_t resp = {};
+
+    req.h.type = WS_MSG_GET_PROFILE_MODULES;
+
+    if(_rpc(req, resp))
+    {
+        // Err
+        return {};
+    }
+
+    return resp.p;
+}
+
+bool ext_setProfileEnabled(ext_profileEnableParams params)
+{
+    reqSetProfileEnabled_t req = {};
+    respBool_t resp = {};
+
+    req.h.type = WS_MSG_SET_PROFILE_ENABLED;
+    req.module = params.module;
+    req.enabled = params.enabled ? 1 : 0;
+
+    if(_rpc(req, resp))
+    {
+        return true;
+    }
+
+    return resp.isError != 0;
+}
+
+ext_profileTable ext_getProfileTable(void)
+{
+    reqGetProfileTable_t req = {};
+    respGetProfileTable_t resp = {};
+
+    req.h.type = WS_MSG_GET_PROFILE_TABLE;
+
+    if(_rpc(req, resp))
+    {
+        // Err
+        return {};
+    }
+
+    return resp.p;
+}

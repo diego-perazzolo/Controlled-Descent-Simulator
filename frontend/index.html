@@ -108,6 +108,33 @@
         #view-3d     { display: none; position: relative; width: 100%; height: calc(100vh - 200px);
                        background: #0d0d0d; border-radius: 4px; overflow: hidden; }
         #view-params { display: none; }
+        #view-diag   { display: none; }
+
+        /* ── Diagnostics (logger / profiler) ── */
+        .diag-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
+        @media (max-width: 900px) { .diag-grid { grid-template-columns: 1fr; } }
+        table.diag { width: 100%; border-collapse: collapse; font-size: 0.85em; }
+        table.diag th { color: #555; text-align: left; font-weight: normal; text-transform: uppercase;
+                        letter-spacing: 0.05em; font-size: 0.85em; padding: 4px 6px; border-bottom: 1px solid #2a2a2a; }
+        table.diag td { padding: 3px 6px; border-bottom: 1px solid #1c1c1c; color: #ccc; }
+        table.diag td.num { text-align: right; font-variant-numeric: tabular-nums; color: #0f0; }
+        table.diag select, table.diag input { padding: 2px 4px; font-size: 1em; }
+        table.diag input.n { width: 60px; }
+        .diag-empty { color: #555; font-size: 0.85em; padding: 6px; }
+
+        #logConsole {
+            background: #0d0d0d; border: 1px solid #2a2a2a; border-radius: 4px;
+            height: 320px; overflow-y: auto; padding: 8px 10px; margin: 0;
+            font-family: inherit; font-size: 0.8em; line-height: 1.5; white-space: pre-wrap;
+        }
+        #logConsole .ln { display: block; }
+        #logConsole .lv { display: inline-block; width: 46px; font-weight: bold; }
+        #logConsole .mod { color: #6cf; }
+        .lv-TRACE { color: #667; } .lv-DEBUG { color: #789; } .lv-INFO { color: #8a8; }
+        .lv-WARN { color: #fb4; } .lv-ERROR { color: #f66; }
+        .diag-bar { display: flex; align-items: center; gap: 12px; margin: 8px 0; font-size: 0.85em; color: #888; }
+        .diag-bar label { display: flex; align-items: center; gap: 5px; cursor: pointer; }
+        #logDropped { color: #fb4; }
 
         /* ── 3D view source toggles ── */
         #view3d-sources {
@@ -270,6 +297,7 @@
             <button id="btnCharts" class="active">Charts</button>
             <button id="btn3d"     disabled>3D</button>
             <button id="btnParams">Params</button>
+            <button id="btnDiag">Diag</button>
         </div>
         <button id="btnStart" disabled>Start</button>
         <button id="btnStop"  disabled>Stop</button>
@@ -656,6 +684,49 @@
             <button id="btnTrajAppend">Append item</button>
         </div>
     </div>
+</div>
+
+<!-- ════ Diagnostics view (logger / profiler) ════ -->
+<div id="view-diag">
+    <div class="diag-grid">
+        <div class="panel">
+            <h2>Log modules</h2>
+            <table class="diag" id="logModulesTable">
+                <thead><tr><th>module</th><th>level</th><th>1 in N</th></tr></thead>
+                <tbody></tbody>
+            </table>
+            <div class="diag-empty" id="logModulesEmpty">No log modules registered yet.</div>
+        </div>
+        <div class="panel">
+            <h2>Profiler modules</h2>
+            <table class="diag" id="profileModulesTable">
+                <thead><tr><th>module</th><th>profile</th></tr></thead>
+                <tbody></tbody>
+            </table>
+            <div class="diag-empty" id="profileModulesEmpty">No profiler modules registered yet.</div>
+        </div>
+    </div>
+
+    <div class="panel panel-wide">
+        <h2>Profiler stats</h2>
+        <table class="diag" id="profileStatsTable">
+            <thead><tr>
+                <th>module</th><th>scope</th><th>kind</th><th>count</th>
+                <th>mean</th><th>std</th><th>min</th><th>max</th>
+                <th>p50</th><th>p95</th><th>p99</th>
+            </tr></thead>
+            <tbody></tbody>
+        </table>
+        <div class="diag-empty" id="profileStatsEmpty">Enable a profiler module to see its scopes (times in µs, values raw).</div>
+    </div>
+
+    <div class="diag-bar">
+        <strong style="color:#555;">Log stream</strong>
+        <label><input type="checkbox" id="logAutoscroll" checked> autoscroll</label>
+        <button id="btnLogClear">Clear</button>
+        <span id="logDropped"></span>
+    </div>
+    <pre id="logConsole"></pre>
 </div>
 
 <div id="statusBar">Loading WASM...</div>

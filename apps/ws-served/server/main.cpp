@@ -46,12 +46,18 @@
 #include "dispatch.hpp"
 #include "ws_protocol.hpp"
 #include "ws_server.hpp"
+#include "log.hpp"
+#include "LogSinks.hpp"
+#include "LogUiSink.hpp"
+#include "profile.hpp"
+#include "ProfileReport.hpp"
 
 using Clock = std::chrono::steady_clock;
 
 static Clock::time_point _lastTime;
 static int _is_sys_init = 0;
 static std::atomic<bool> _run_rt_thread{true};
+static std::atomic<bool> _run_drain_thread{true};
 
 extern bool g_core_tick(core_coord_t dt_seconds);                  // global function from core.cpp
 extern bool g_core_getTickPeriod(core_coord_t &tickPeriod_second); // global function from core.cpp
@@ -157,6 +163,46 @@ static void _tick_generator(void)
 
     /* Actually tick the system */
     g_core_tick(dt_seconds);
+
+    /* Publish the profiler aggregates for readers (frontend / file dump):
+       wait-free, done on the writer (this tick) thread */
+    cds_profile::registry().publish();
+}
+
+/* Consumer side of the logger: drains queued records to the sinks and, when
+   CDS_PROFILE_FILE is set, periodically rewrites the profiler report. Runs off
+   the tick path, so blocking I/O here is fine. */
+static void _drain_generator(const char *profilePath)
+{
+    auto lastProfileDump = Clock::now();
+    while (_run_drain_thread)
+    {
+        cds_log::registry().drain();
+
+        /* single designated reader of the profiler mailbox: refresh the UI cache
+           that the file dump and the ext command both read */
+        cds_profile::registry().pump();
+
+        if (profilePath)
+        {
+            const auto now = Clock::now();
+            if (now - lastProfileDump > std::chrono::milliseconds(500))
+            {
+                lastProfileDump = now;
+                cds_profile::Snapshot snap;
+                if (!cds_profile::registry().snapshot(snap))
+                {
+                    if (std::FILE *pf = std::fopen(profilePath, "w"))
+                    {
+                        cds_profile::writeReport(pf, cds_profile::registry(), snap);
+                        std::fclose(pf);
+                    }
+                }
+            }
+        }
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
 }
 
 int main(int argc, char **argv)
@@ -173,14 +219,45 @@ int main(int argc, char **argv)
     /* optional second arg selects the plant: "loopback" (default) or "sitl" */
     const char *plantKind = (argc > 2) ? argv[2] : "loopback";
 
+    /* Logger sinks: console always; a file too if CDS_LOG_FILE is set. Declared
+       here so they outlive the drain thread that writes through them. */
+    cds_log::ConsoleSink consoleSink(stderr);
+    cds_log::registry().addSink(&consoleSink);
+    cds_log::registry().addSink(&cds_log::uiSink()); // recent-lines buffer for the frontend
+
+    const char *logPath = std::getenv("CDS_LOG_FILE");
+    std::unique_ptr<cds_log::FileSink> fileSink;
+    if (logPath)
+    {
+        fileSink = std::make_unique<cds_log::FileSink>(logPath);
+        if (fileSink->isOpen()) cds_log::registry().addSink(fileSink.get());
+        else std::fprintf(stderr, "cds_server: cannot open log file '%s'\n", logPath);
+    }
+
+    const char *profilePath = std::getenv("CDS_PROFILE_FILE");
+
     /* Thread "Real-time", used for providing ticks to the System */
     std::thread rt([]
                    {
-                    while (_run_rt_thread) 
-                    { 
+                    while (_run_rt_thread)
+                    {
                         _tick_generator();
-                    } 
+                    }
                 });
+
+    /* Consumer thread: drains logs to the sinks and dumps the profiler report */
+    std::thread drain([profilePath] { _drain_generator(profilePath); });
+
+    auto shutdown = [&](int code) -> int
+    {
+        _run_rt_thread = false;
+        _run_drain_thread = false;
+        if (rt.joinable()) rt.join();
+        if (drain.joinable()) drain.join();
+        cds_log::registry().drain();       // flush any stragglers
+        cds_log::registry().clearSinks();  // drop sink pointers before they die
+        return code;
+    };
 
     WsServer server(port, server_dispatch);
 
@@ -190,30 +267,14 @@ int main(int argc, char **argv)
     {
         // Unknown/misconfigured plant, or attach failed
         std::fprintf(stderr, "cds_server: cannot create plant '%s'\n", plantKind);
-        _run_rt_thread = false;
-        if (rt.joinable())
-        {
-            rt.join();
-        }
-        return 1;
+        return shutdown(1);
     }
 
     if (server.Run())
     {
         // Err
-        _run_rt_thread = false;
-        if (rt.joinable())
-        {
-            rt.join();
-        }
-        return 1;
+        return shutdown(1);
     }
 
-    _run_rt_thread = false;
-    if (rt.joinable())
-    {
-        rt.join();
-    }
-
-    return 0;
+    return shutdown(0);
 }

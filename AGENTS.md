@@ -113,6 +113,7 @@ clang++ -std=c++20 -fsyntax-only \
   -Icore -Icore/System -Icore/Plant -Icore/Models -Icore/Trajectory \
   -Iapps/common/exported_cpp -Iapps/ws-served/exported_cpp \
   -Iapps/ws-served/server -Ilibs/ws -Ilibs/sync -Ilibs/integrate -Ilibs/control \
+  -Ilibs/log -Ilibs/profile \
   -Imodeling/notebooks/exported_cpp/ROCKET_FF_LQR_01 \
   -Imodeling/notebooks/exported_cpp/QUADROTOR_FF_LQR_01 \
   -Imodeling/notebooks/exported_cpp/QUADROTOR_MPC_01 <file.cpp>
@@ -136,6 +137,14 @@ cmake --build build-plants-test
 cmake -S libs/control/test -B build-ilqr-test -DCMAKE_BUILD_TYPE=Release
 cmake --build build-ilqr-test
 ./build-ilqr-test/ilqr_test        # double-integrator: loose-box reach + tight-box feasibility
+
+# logger + profiler tests (native, self-contained: no core, no protocol)
+cmake -S libs/log/test -B build-log-test -DCMAKE_BUILD_TYPE=Release
+cmake --build build-log-test
+./build-log-test/log_test          # deferred formatting + level filter + drop counting
+cmake -S libs/profile/test -B build-profile-test -DCMAKE_BUILD_TYPE=Release
+cmake --build build-profile-test
+./build-profile-test/profile_test  # scope aggregates + wait-free snapshot round-trip
 
 # controller C++<->Python conformance (golden rule 10; iLQR today). ctypes, no
 # numpy: certifies the C++ solution against an independent Python oracle on a

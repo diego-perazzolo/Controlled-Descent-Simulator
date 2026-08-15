@@ -40,7 +40,9 @@ def protocol_version():
         req = "|".join(cmd.req) if isinstance(cmd.req, tuple) else str(cmd.req)
         canon.append(f"cmd:{cmd.id}:{cmd.wire}:{req}:{cmd.resp}")
     for name in sorted(STRUCTS):
-        fields = ",".join(f"{f.name}:{f.type}" for f in STRUCTS[name].fields)
+        fields = ",".join(
+            f"{f.name}:{f.type}" + (f"[{f.count}]" if f.count else "")
+            for f in STRUCTS[name].fields)
         canon.append(f"struct:{name}:{fields}")
     digest = hashlib.sha256("\n".join(canon).encode()).digest()
     return digest[0]
@@ -98,13 +100,18 @@ def header(filename, description_lines):
 # helpers                                                                      #
 # --------------------------------------------------------------------------- #
 
-BASE_SIZES = {"ext_coord_t": 4, "bool": 1, "uint8_t": 1, "header_t": 2}
+BASE_SIZES = {"ext_coord_t": 4, "bool": 1, "uint8_t": 1, "header_t": 2, "char": 1}
+
+
+def field_size(f):
+    """Wire size of one struct field, honouring the array count."""
+    return size_of(f.type) * (f.count if f.count else 1)
 
 
 def size_of(type_name):
     if type_name in BASE_SIZES:
         return BASE_SIZES[type_name]
-    return sum(size_of(f.type) for f in STRUCTS[type_name].fields)
+    return sum(field_size(f) for f in STRUCTS[type_name].fields)
 
 
 def has_bool(type_name):
@@ -139,7 +146,7 @@ def resp_size(cmd):
     if cmd.resp == "bool":
         return n + 1  # uint8_t isError
     for f in STRUCTS[cmd.resp].fields:
-        n += 1 if f.type == "bool" else size_of(f.type)
+        n += 1 if f.type == "bool" else field_size(f)
     return n
 
 
@@ -163,7 +170,12 @@ def resp_breakdown(cmd):
 def _field_breakdown(struct_name):
     parts = []
     for f in STRUCTS[struct_name].fields:
-        parts.append("u8" if f.type == "bool" else f"{size_of(f.type) // 4}f")
+        if f.type == "bool":
+            parts.append("u8")
+        elif f.type == "char":
+            parts.append(f"{field_size(f)}b")
+        else:
+            parts.append(f"{field_size(f) // 4}f")
     return f" // {size_of('header_t')} + " + " + ".join(parts)
 
 
@@ -177,6 +189,18 @@ def _check_no_nested_bool(struct_name):
                 f"ext_api.py: {struct_name}.{f.name} nests a bool inside "
                 f"{f.type} — not supported on the wire, move the bool to the "
                 f"top level of {struct_name}")
+
+
+def _check_no_array_with_bool(struct_name):
+    """A wire struct holding a bool is expanded field by field (bool -> uint8_t),
+    and each field is copied by assignment. A fixed array cannot be copied that
+    way, so it must not share a wire struct with a bool: split them."""
+    s = STRUCTS[struct_name]
+    if has_bool(struct_name) and any(f.count for f in s.fields):
+        raise SystemExit(
+            f"ext_api.py: {struct_name} mixes a fixed array with a bool — the "
+            f"wire expansion copies fields by assignment, which arrays do not "
+            f"support; split them into separate structs")
 
 
 def struct_block(s):
@@ -205,7 +229,8 @@ def struct_block(s):
                 for line in lines[1:-1]:
                     out += f"    {line}\n"
                 out += f"    {lines[-1]} */\n"
-        out += f"    {f.type} {f.name};"
+        arr = f"[{f.count}]" if f.count else ""
+        out += f"    {f.type} {f.name}{arr};"
         if f.doc:
             out += f" // {f.doc}"
         out += "\n"
@@ -279,7 +304,8 @@ def gen_bindings():
         "Emscripten embind bindings: exposes the ext structs and the",
         "API functions to JavaScript. Identical for every browser app.",
     ])
-    out += "\n#include <emscripten/bind.h>\n#include \"ext_comm.hpp\"\n\n"
+    out += "\n#include <emscripten/bind.h>\n#include <string>\n#include <cstring>\n"
+    out += "#include \"ext_comm.hpp\"\n\n"
     out += "using namespace emscripten;\n\n"
     out += "EMSCRIPTEN_BINDINGS(simulator) {\n\n"
     out += "    // --- Value types (struct) ---\n"
@@ -291,8 +317,18 @@ def gen_bindings():
         b = f"    value_object<{s.name}>(\"{s.name}\")\n"
         rows = []
         for f in s.fields:
-            js = f'"{f.js}",'
-            rows.append(f"        .field({js:<{width}} &{s.name}::{f.name})")
+            if f.type == "char" and f.count:
+                # a fixed char buffer is exposed as a JS string through a
+                # getter/setter pair (embind cannot bind a raw C array member)
+                getter = f"+[](const {s.name}& o){{ return std::string(o.{f.name}); }}"
+                setter = (f"+[]({s.name}& o, const std::string& v){{ "
+                          f"std::strncpy(o.{f.name}, v.c_str(), sizeof(o.{f.name}) - 1); "
+                          f"o.{f.name}[sizeof(o.{f.name}) - 1] = '\\0'; }}")
+                rows.append(f'        .field("{f.js}", {getter},\n'
+                            f'               {setter})')
+            else:
+                js = f'"{f.js}",'
+                rows.append(f"        .field({js:<{width}} &{s.name}::{f.name})")
         b += "\n".join(rows) + ";\n"
         blocks.append(b)
     out += "\n".join(blocks)
@@ -359,8 +395,10 @@ def gen_ws_protocol():
     for cmd in COMMANDS:
         if cmd.req is not None and not isinstance(cmd.req, tuple):
             _check_no_nested_bool(cmd.req)
+            _check_no_array_with_bool(cmd.req)
         if cmd.resp != "bool":
             _check_no_nested_bool(cmd.resp)
+            _check_no_array_with_bool(cmd.resp)
 
     # requests: structs containing bool are expanded field by field with
     # bool -> uint8_t, exactly like the responses (symmetric conversion)
@@ -398,8 +436,10 @@ def gen_ws_protocol():
 
     out += "\n#pragma pack(pop)\n\n"
 
-    out += "/* Largest message either peer can send: used to size the shared RPC buffer */\n"
-    out += "constexpr uint32_t WS_MAX_MSG_SIZE = 256;\n\n"
+    out += "/* Largest message either peer can send: used to size the shared RPC buffer.\n"
+    out += "   Sized to hold the text-blob responses (log batch, profiler table) that\n"
+    out += "   carry variable text as fixed char buffers on the POD wire. */\n"
+    out += "constexpr uint32_t WS_MAX_MSG_SIZE = 4096;\n\n"
 
     # size asserts
     out += """\
@@ -424,7 +464,7 @@ def gen_ws_protocol():
         out += (f"static_assert(sizeof({name}){' ' * (nw - len(name))} == "
                 f"{size:>2}, \"wire layout drift\");{note}\n")
     for cmd in COMMANDS:
-        assert req_size(cmd) < 256 and resp_size(cmd) < 256, "grow WS_MAX_MSG_SIZE"
+        assert req_size(cmd) < 4096 and resp_size(cmd) < 4096, "grow WS_MAX_MSG_SIZE"
     biggest_req = max(COMMANDS, key=req_size)
     biggest_resp = max(COMMANDS, key=resp_size)
     out += f"\nstatic_assert(sizeof({wire_req_name(biggest_req)}) < WS_MAX_MSG_SIZE, \"wire msg too big\");\n"
