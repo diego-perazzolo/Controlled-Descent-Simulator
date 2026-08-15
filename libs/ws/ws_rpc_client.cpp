@@ -61,7 +61,12 @@ EM_JS(int, ws_rpc, (const uint8_t* req, int reqLen, uint8_t* resp, int respCap),
     c.w.postMessage(0);
 
     /* Spin-wait: the socket lives in the worker, so the response arrives even
-       though this (main) thread is blocked. Localhost RTT keeps this short. */
+       though this (main) thread is blocked. Localhost RTT keeps this short.
+       The timeout bounds how long a stalled server can freeze the main thread
+       (Atomics.wait is forbidden here, so this is a busy-wait): keep it well
+       above the worst legitimate RPC latency but low enough that the UI
+       recovers quickly — the frontend auto-stops when a call runs this long. */
+    var RPC_TIMEOUT_MS = 1000;
     var t0 = Date.now();
     for (;;) {
         var f = Atomics.load(c.i32, 0);
@@ -71,7 +76,7 @@ EM_JS(int, ws_rpc, (const uint8_t* req, int reqLen, uint8_t* resp, int respCap),
         } else if (f === -1) {
             return -1;
         }
-        if (Date.now() - t0 > 5000) {
+        if (Date.now() - t0 > RPC_TIMEOUT_MS) {
             Atomics.store(c.i32, 0, 0);
             console.error('[cds-ws] RPC timeout (id=' + id + ')');
             return -1;

@@ -1274,16 +1274,41 @@ function refreshPlantFreshness(psnap) {
 // The loop runs continuously from boot: the plant ghost is polled every frame
 // so it is visible while staging (before Start), and the model/time/charts are
 // driven only while the simulation is actually running.
+// A synchronous ext_* call blocks the main thread while the transport spins for
+// the response; if one blocks longer than this the server is treated as
+// unresponsive and the simulation is auto-stopped (as if Stop were pressed), so
+// the UI recovers instead of freezing. Kept just under the transport's own spin
+// timeout (libs/ws/ws_rpc_client.cpp): above the worst legitimate RPC latency,
+// below anything a user would tolerate as a freeze.
+const CALL_STALL_MS = 900;
+let lastCallStalled = false;
+
+// Run a blocking sim call and record whether it stalled. Because the RPC blocks
+// the main thread until it returns, the wall-clock elapsed IS the block time.
+function timedCall(fn) {
+    const t0 = performance.now();
+    const r = fn();
+    lastCallStalled = (performance.now() - t0) > CALL_STALL_MS;
+    return r;
+}
+
+function handleTransportStall() {
+    setError('Server not responding (a call timed out) — simulation stopped.');
+    stop();   // same effect as pressing Stop: halts the run and frees the UI
+}
+
 function loop() {
     frameId = requestAnimationFrame(loop);
     if (!sim) return;
 
-    const psnap = sim.ext_getPlantSnapshot();
+    const psnap = timedCall(() => sim.ext_getPlantSnapshot());
+    if (lastCallStalled) { handleTransportStall(); return; }
     refreshPlantFreshness(psnap);
     const plantState = plantAvailable ? psnap.state : null;
 
     if (running) {
-        const snap = sim.ext_getSnapshot();
+        const snap = timedCall(() => sim.ext_getSnapshot());
+        if (lastCallStalled) { handleTransportStall(); return; }
         if (snap.isError) {
             setError('ext_getSnapshot returned error — simulation stopped');
             stop();

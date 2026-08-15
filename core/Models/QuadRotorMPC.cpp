@@ -189,9 +189,11 @@ QuadRotorMPC::QuadRotorMPC()
     m_trackingErr.fill(0);
     m_userForces.fill(0);
     for (auto& u : m_warmStart) u.fill(0);
+    m_lastU0.fill(0);
     m_trajectoryManagerPtr = nullptr;
     m_time = 0;
     m_seeded = false;
+    m_lastSolveTime = 0;
 }
 
 QuadRotorMPC::~QuadRotorMPC()
@@ -243,34 +245,10 @@ bool QuadRotorMPC::PerformIntegration(const core_stepParams_t& params)
     auto dynamics = (Dynamics::QUADROTOR_MPC_01*) m_modelPtr;
     if (dynamics == nullptr || m_trajectoryManagerPtr == nullptr) { return true; }
 
-    // ---- sample the reference over the horizon (preview) ----
-    std::array<StageRef, QuadRotorMPC::HORIZON + 1> refs;
+    // ---- current reference: drives the tracking errors, and is the base of the
+    //      horizon preview when we re-solve ----
     Reference_t ref0;
     if (m_trajectoryManagerPtr->GetReference(m_time, ref0)) { return true; }
-    for (std::size_t k = 0; k <= QuadRotorMPC::HORIZON; ++k)
-    {
-        Reference_t r;
-        if (m_trajectoryManagerPtr->GetReference(m_time + k * DT_MPC, r))
-        {
-            refs[k] = refs[k - 1];           // beyond the trajectory: hold the last (defensive)
-            continue;
-        }
-        const double h = 0.5 * r.yaw;
-        refs[k].p = {{r.pos[0], r.pos[1], r.pos[2]}};
-        refs[k].q = {{std::cos(h), 0.0, 0.0, std::sin(h)}};   // level attitude at the commanded heading
-        refs[k].v = {{r.vel[0], r.vel[1], r.vel[2]}};
-        refs[k].w = {{0.0, 0.0, 0.0}};
-    }
-
-    // ---- hover command and actuator box from the model params ----
-    using PN = Dynamics::QUADROTOR_MPC_01::ParamName;
-    const double mg = dynamics->GetParam(PN::Mass) * dynamics->GetParam(PN::Gravity);
-    const double Th = mg / 4.0;
-    const V4 uref{{Th, Th, Th, Th}};
-    V4 lo, hi;
-    lo.fill(dynamics->GetParam(PN::ThrustMin));
-    hi.fill(dynamics->GetParam(PN::ThrustMax));
-    if (!m_seeded) { for (auto& u : m_warmStart) u = uref; m_seeded = true; }
 
     // ---- tracking errors (position + heading) w.r.t. the current reference ----
     m_trackingErr[0] = ref0.pos[0] - m_state[IDX_X];
@@ -281,25 +259,65 @@ bool QuadRotorMPC::PerformIntegration(const core_stepParams_t& params)
     double eyaw = ref0.yaw - yaw; eyaw = std::atan2(std::sin(eyaw), std::cos(eyaw));
     m_trackingErr[3] = eyaw;
 
-    // ---- solve: build the quad closures and hand off to the generic iLQR ----
-    // The MPC predicts with no external force (userF = 0); the plant is advanced
-    // below with the true user force. (Offset-free force estimation lands here.)
-    const std::array<double,3> predForce{{0.0, 0.0, 0.0}};
-    auto fdyn  = [&](const V13& x, const V4& u){ return dynamics->Dynamics(x, u, predForce); };
-    auto jac   = [&](const V13& x, const V4& u, double fx[NX][NX], double fu[NX][NU]){ dynamics->Jacobians(x, u, fx, fu); };
-    auto proj  = [](V13& s){ normalizeQuat(s); };
-    auto scost = [&](const V13& x, const V4& u, std::size_t k){ return quadStageCost(x, u, refs[k], uref, W); };
-    auto tcost = [&](const V13& x){ return quadTermCost(x, refs[QuadRotorMPC::HORIZON], W); };
+    // ---- re-solve the MPC only at the control cadence (every DT_MPC of model
+    //      time); hold the last command as a zero-order hold in between. The
+    //      horizon already assumes a DT_MPC ZOH, so this is both faithful and
+    //      cheap: it keeps the expensive solve off most ticks, so a high tick
+    //      rate cannot monopolise the system lock (the sim degrades gracefully
+    //      instead of freezing). ----
+    if (!m_seeded || (m_time - m_lastSolveTime) >= DT_MPC)
+    {
+        // hover command and actuator box from the model params
+        using PN = Dynamics::QUADROTOR_MPC_01::ParamName;
+        const double mg = dynamics->GetParam(PN::Mass) * dynamics->GetParam(PN::Gravity);
+        const double Th = mg / 4.0;
+        const V4 uref{{Th, Th, Th, Th}};
+        V4 lo, hi;
+        lo.fill(dynamics->GetParam(PN::ThrustMin));
+        hi.fill(dynamics->GetParam(PN::ThrustMax));
+        if (!m_seeded) { for (auto& u : m_warmStart) u = uref; }
 
-    V4 u0;
-    control::solve<NX, NU, QuadRotorMPC::HORIZON>(
-        m_state, fdyn, jac, proj, scost, tcost, lo, hi, DT_MPC, MAX_ITERS, m_warmStart, u0);
+        // sample the reference over the horizon (preview)
+        std::array<StageRef, QuadRotorMPC::HORIZON + 1> refs;
+        for (std::size_t k = 0; k <= QuadRotorMPC::HORIZON; ++k)
+        {
+            Reference_t r;
+            if (m_trajectoryManagerPtr->GetReference(m_time + k * DT_MPC, r))
+            {
+                refs[k] = refs[k - 1];           // beyond the trajectory: hold the last (defensive)
+                continue;
+            }
+            const double h = 0.5 * r.yaw;
+            refs[k].p = {{r.pos[0], r.pos[1], r.pos[2]}};
+            refs[k].q = {{std::cos(h), 0.0, 0.0, std::sin(h)}};   // level attitude at the commanded heading
+            refs[k].v = {{r.vel[0], r.vel[1], r.vel[2]}};
+            refs[k].w = {{0.0, 0.0, 0.0}};
+        }
 
-    // ---- apply first command as ZOH, integrate plant by the measured step ----
+        // build the quad closures and hand off to the generic iLQR. The MPC
+        // predicts with no external force (userF = 0); the plant is advanced
+        // below with the true user force. (Offset-free force estimation lands here.)
+        const std::array<double,3> predForce{{0.0, 0.0, 0.0}};
+        auto fdyn  = [&](const V13& x, const V4& u){ return dynamics->Dynamics(x, u, predForce); };
+        auto jac   = [&](const V13& x, const V4& u, double fx[NX][NX], double fu[NX][NU]){ dynamics->Jacobians(x, u, fx, fu); };
+        auto proj  = [](V13& s){ normalizeQuat(s); };
+        auto scost = [&](const V13& x, const V4& u, std::size_t k){ return quadStageCost(x, u, refs[k], uref, W); };
+        auto tcost = [&](const V13& x){ return quadTermCost(x, refs[QuadRotorMPC::HORIZON], W); };
+
+        V4 u0;
+        control::solve<NX, NU, QuadRotorMPC::HORIZON>(
+            m_state, fdyn, jac, proj, scost, tcost, lo, hi, DT_MPC, MAX_ITERS, m_warmStart, u0);
+
+        m_lastU0        = u0;
+        m_lastSolveTime = m_time;
+        m_seeded        = true;
+    }
+
+    // ---- apply the held command (ZOH), integrate the plant by the measured step ----
     m_userForces[0] = params.user_fX;
     m_userForces[1] = params.user_fY;
     m_userForces[2] = params.user_fZ;
-    m_state = plantStep(*dynamics, m_state, u0, m_userForces, params.timestep);
+    m_state = plantStep(*dynamics, m_state, m_lastU0, m_userForces, params.timestep);
 
     m_time += params.timestep;
     return false;

@@ -83,5 +83,12 @@ namespace CDS
         // next tick starts a few iterations away from the answer.
         std::array<InputVec, HORIZON> m_warmStart;
         bool               m_seeded;
+
+        // The MPC re-solves only at the control cadence (every DT_MPC of model
+        // time); between solves the last command is held as a zero-order hold.
+        // This keeps the expensive solve off most ticks, so a high tick rate does
+        // not monopolise the system lock and the simulation degrades gracefully.
+        InputVec           m_lastU0;
+        double             m_lastSolveTime;
     };
 }
