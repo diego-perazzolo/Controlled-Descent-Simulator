@@ -120,13 +120,50 @@
         table.diag td.num { text-align: right; font-variant-numeric: tabular-nums; color: #0f0; }
         table.diag select, table.diag input { padding: 2px 4px; font-size: 1em; }
         table.diag input.n { width: 60px; }
+        /* sparkline: override the global full-width canvas rule */
+        table.diag td canvas.spark { display: block; width: 90px; height: 22px; margin: 0; }
         .diag-empty { color: #555; font-size: 0.85em; padding: 6px; }
+        .diag-help { color: #778; font-size: 0.8em; line-height: 1.5; margin: 8px 2px 2px; }
+        .diag-help b { color: #9ab; font-weight: bold; }
+        .diag-help code { color: #6cf; }
+        .file-toggle { display: flex; align-items: center; gap: 10px; margin: 8px 2px; font-size: 0.9em; flex-wrap: wrap; }
+        .file-toggle > label { display: flex; align-items: center; gap: 6px; cursor: pointer; color: #ccc; min-width: 220px; }
+        .file-toggle .file-note { color: #667; font-size: 0.85em; }
+        .file-toggle code { color: #6cf; }
+        .rec-state { color: #888; font-size: 0.85em; }
+        .rec-state.rec-on { color: #33ff88; }
 
+        /* ── Persistent log dock (fixed at the bottom, on every view) ── */
+        #logDock {
+            position: fixed; left: 0; right: 0; bottom: 0; z-index: 50;
+            background: #0d0d0d; border-top: 1px solid #2a2a2a;
+            font-family: monospace;
+        }
+        #logDockBar {
+            display: flex; align-items: center; gap: 12px;
+            padding: 4px 12px; font-size: 0.8em; color: #888;
+            background: #111; border-bottom: 1px solid #1c1c1c;
+        }
+        #logDockBar strong { color: #567; letter-spacing: 0.05em; }
+        #logDockBar label { display: flex; align-items: center; gap: 5px; cursor: pointer; }
+        #logDockToggle {
+            padding: 1px 8px; font-size: 0.9em; min-width: 0;
+            border-color: #333; color: #999;
+        }
         #logConsole {
-            background: #0d0d0d; border: 1px solid #2a2a2a; border-radius: 4px;
-            height: 320px; overflow-y: auto; padding: 8px 10px; margin: 0;
+            background: #0d0d0d;
+            height: 180px; overflow-y: auto; padding: 8px 10px; margin: 0;
             font-family: inherit; font-size: 0.8em; line-height: 1.5; white-space: pre-wrap;
         }
+        #logDock.collapsed #logConsole { display: none; }
+        /* collapsed: peek the most recent line in the bar (truncated) */
+        #logPeek { display: none; }
+        #logDock.collapsed #logPeek {
+            display: block; flex: 1 1 auto; min-width: 0;
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        }
+        #logPeek .lv { font-weight: bold; margin-right: 4px; }
+        #logPeek .mod { color: #6cf; }
         #logConsole .ln { display: block; }
         #logConsole .ts { color: #567; }
         #logConsole .lv { display: inline-block; width: 46px; font-weight: bold; }
@@ -137,7 +174,6 @@
         .diag-bar label { display: flex; align-items: center; gap: 5px; cursor: pointer; }
         #logDropped { color: #fb4; }
         #recordDropped { color: #fb4; }
-        #recordStatus.rec-on { color: #33ff88; }
 
         /* ── 3D view source toggles ── */
         #view3d-sources {
@@ -694,11 +730,32 @@
     <div class="diag-grid">
         <div class="panel">
             <h2>Log modules</h2>
+            <div class="diag-bar">
+                <label>Set every module to
+                    <select id="logLevelAll">
+                        <option value="">— pick a level —</option>
+                        <option value="0">Trace</option>
+                        <option value="1">Debug</option>
+                        <option value="2">Info</option>
+                        <option value="3">Warn</option>
+                        <option value="4">Error</option>
+                        <option value="5">Off</option>
+                    </select>
+                </label>
+            </div>
             <table class="diag" id="logModulesTable">
-                <thead><tr><th>module</th><th>level</th><th>1 in N</th></tr></thead>
+                <thead><tr>
+                    <th>module</th>
+                    <th title="Minimum severity shown for this module. Messages below the level are dropped cheaply.">level</th>
+                    <th title="Thins high-rate sampled logs: keep 1 message of every N. 1 = keep all. Warnings and errors are never sampled.">keep 1 of every</th>
+                </tr></thead>
                 <tbody></tbody>
             </table>
             <div class="diag-empty" id="logModulesEmpty">No log modules registered yet.</div>
+            <div class="diag-help">
+                <b>level</b>: the lowest severity a module prints (e.g. Warn hides Info/Debug/Trace).<br>
+                <b>keep 1 of every N</b>: thins only high-rate <i>sampled</i> logs — 1 keeps them all, 10 keeps one in ten. Warnings and errors are never dropped.
+            </div>
         </div>
         <div class="panel">
             <h2>Profiler modules</h2>
@@ -707,6 +764,7 @@
                 <tbody></tbody>
             </table>
             <div class="diag-empty" id="profileModulesEmpty">No profiler modules registered yet.</div>
+            <div class="diag-help">Tick a module to time its scopes below (adds a small per-call cost while on).</div>
         </div>
     </div>
 
@@ -717,38 +775,57 @@
                 <th>module</th><th>scope</th><th>kind</th><th>count</th>
                 <th>mean</th><th>std</th><th>min</th><th>max</th>
                 <th>p50</th><th>p95</th><th>p99</th>
+                <th title="mean (cyan) + p95 (amber) over ~1 min">trend</th>
             </tr></thead>
             <tbody></tbody>
         </table>
         <div class="diag-empty" id="profileStatsEmpty">Enable a profiler module to see its scopes (times in µs, values raw).</div>
         <div class="diag-bar">
             <button id="btnResetProfile">Reset stats</button>
-            <label title="Server-side: stream every raw sample to cds_profile_raw.csv">
-                <input type="checkbox" id="chkRawCsv"> raw samples → CSV (server)</label>
         </div>
     </div>
 
-    <div class="diag-bar">
-        <strong style="color:#555;">Data recorder</strong>
-        <label title="Server-side: record the full per-tick state/input/reference/error of the active model to a wide black-box CSV">
-            <input type="checkbox" id="chkRecord" disabled> record → CSV (server)</label>
-        <span id="recordStatus" style="color:#888;">no model</span>
-        <span id="recordDropped"></span>
+    <div class="panel panel-wide">
+        <h2>Server-side output files</h2>
+        <div class="diag-help">
+            Write diagnostics to files on the machine running the server (native build only —
+            the in-browser build has no filesystem). Each toggle opens a fresh,
+            timestamped file under <code>out_data/</code>.
+        </div>
+        <div class="file-toggle">
+            <label><input type="checkbox" id="chkLogFile"> Log to file</label>
+            <span class="file-note">mirrors the log stream to a <code>.log</code> file</span>
+        </div>
+        <div class="file-toggle">
+            <label><input type="checkbox" id="chkRawCsv"> Profiler raw samples to CSV</label>
+            <span class="file-note">every individual sample, for offline statistics</span>
+        </div>
+        <div class="file-toggle">
+            <label><input type="checkbox" id="chkRecord" disabled> Data recorder to CSV</label>
+            <span class="file-note">per-tick “black box”: full state + input + reference + error</span>
+            <span id="recordStatus" class="rec-state">no model running</span>
+            <span id="recordDropped"></span>
+        </div>
     </div>
 
-    <div class="diag-bar">
-        <strong style="color:#555;">Log stream</strong>
-        <label><input type="checkbox" id="logAutoscroll" checked> autoscroll</label>
-        <label title="Server-side: mirror the log to cds.log">
-            <input type="checkbox" id="chkLogFile"> to file (server)</label>
-        <button id="btnLogClear">Clear</button>
-        <span id="logDropped"></span>
-    </div>
-    <pre id="logConsole"></pre>
+    <!-- The log stream itself lives in the persistent dock below (all views) -->
 </div>
 
 <div id="statusBar">Loading WASM...</div>
 <div id="errorMsg"></div>
+
+<!-- ════ Persistent log console dock (visible on every view, collapsible) ════ -->
+<div id="logDock">
+    <div id="logDockBar">
+        <button id="logDockToggle" title="Show or hide the log console">Collapse</button>
+        <strong>LOG</strong>
+        <label><input type="checkbox" id="logAutoscroll" checked> autoscroll</label>
+        <button id="btnLogClear">Clear</button>
+        <span id="logDropped"></span>
+        <span id="logPeek"></span>
+    </div>
+    <pre id="logConsole"></pre>
+</div>
 
 <script type="module" src="main.js"></script>
 </body>

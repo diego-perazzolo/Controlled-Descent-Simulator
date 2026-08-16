@@ -1323,8 +1323,10 @@ function loop() {
         renderer3d.previewPlant(plantState);
     }
 
-    // Diagnostics: stream logs and refresh stats only while the Diag view is up.
-    if (ui.viewDiag.style.display !== 'none') diagnostics.poll();
+    // Log stream drains continuously (persistent dock, every view); profiler
+    // stats refresh only while the Diag view is up.
+    diagnostics.pollLog();
+    if (ui.viewDiag.style.display !== 'none') diagnostics.pollStats();
 }
 
 // =============================================================================
@@ -1482,6 +1484,7 @@ const diagnostics = (() => {
     const LEVELS = ['Trace', 'Debug', 'Info', 'Warn', 'Error', 'Off'];
     const con        = $('logConsole');
     const dropped    = $('logDropped');
+    const peek       = $('logPeek');
     const autoscroll = $('logAutoscroll');
     const logTable   = $('logModulesTable'),  logTbody  = logTable.querySelector('tbody'),  logEmpty  = $('logModulesEmpty');
     const profTable  = $('profileModulesTable'), profTbody = profTable.querySelector('tbody'), profEmpty = $('profileModulesEmpty');
@@ -1496,18 +1499,70 @@ const diagnostics = (() => {
     let lastLogPoll = 0;
     let lastStatsPoll = 0;
 
+    // Per-scope time series for the profiler sparklines, accumulated client-side
+    // from successive getProfileTable snapshots (no extra ext traffic). Keyed by
+    // "module\tscope"; ~1 min of history at the stats cadence.
+    const TREND_LEN = 120;
+    const trends = new Map();
+    function pushTrend(key, mean, p95) {
+        let t = trends.get(key);
+        if (!t) { t = { mean: [], p95: [] }; trends.set(key, t); }
+        t.mean.push(mean); t.p95.push(p95);
+        if (t.mean.length > TREND_LEN) { t.mean.shift(); t.p95.shift(); }
+    }
+    // Draw a scope's mean (cyan) + p95 (amber) trend into its row canvas, scaled
+    // to the window's peak so the shape is always visible.
+    function drawSpark(canvas, t) {
+        const ctx = canvas.getContext('2d');
+        const W = canvas.width, H = canvas.height;
+        ctx.clearRect(0, 0, W, H);
+        if (!t || t.mean.length < 2) return;
+        let hi = 0;
+        for (const v of t.p95) if (v > hi) hi = v;
+        for (const v of t.mean) if (v > hi) hi = v;
+        if (hi <= 0) hi = 1;
+        const n = t.mean.length;
+        const x = i => (i / (n - 1)) * (W - 1);
+        const y = v => H - 1 - (v / hi) * (H - 2);
+        const line = (arr, color) => {
+            ctx.beginPath();
+            for (let i = 0; i < n; i++) { const px = x(i), py = y(arr[i]); i ? ctx.lineTo(px, py) : ctx.moveTo(px, py); }
+            ctx.strokeStyle = color; ctx.lineWidth = 1; ctx.stroke();
+        };
+        line(t.p95, '#fb4');
+        line(t.mean, '#0cf');
+    }
+
     const esc = s => s.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
     // parse "a\tb\tc\n..." into an array of field arrays
     const rows = blob => blob.split('\n').filter(l => l.length).map(l => l.split('\t'));
 
     $('btnLogClear').addEventListener('click', () => {
-        con.innerHTML = ''; totalDropped = 0; dropped.textContent = '';
+        con.innerHTML = ''; totalDropped = 0; dropped.textContent = ''; peek.textContent = '';
     });
+
+    // persistent log dock: collapse toggle (state remembered). Keep the body
+    // padded by the dock's height so the fixed dock never covers content.
+    const logDock = $('logDock'), logDockToggle = $('logDockToggle');
+    function padBodyForDock() { document.body.style.paddingBottom = logDock.offsetHeight + 'px'; }
+    function setDockCollapsed(collapsed) {
+        logDock.classList.toggle('collapsed', collapsed);
+        logDockToggle.textContent = collapsed ? 'Expand' : 'Collapse';
+        try { localStorage.setItem('cds.logDock.collapsed', collapsed ? '1' : '0'); } catch (e) {}
+        padBodyForDock();
+    }
+    logDockToggle.addEventListener('click',
+        () => setDockCollapsed(!logDock.classList.contains('collapsed')));
+    let dockCollapsed0 = false;
+    try { dockCollapsed0 = localStorage.getItem('cds.logDock.collapsed') === '1'; } catch (e) {}
+    setDockCollapsed(dockCollapsed0);
+    window.addEventListener('resize', padBodyForDock);
 
     // profiler reset + server-side file toggles
     $('btnResetProfile').addEventListener('click', () => {
         if (!sim) return;
         sim.ext_resetProfile();
+        trends.clear();          // restart the sparkline history too
         refreshProfileStats();
     });
     const chkRawCsv = $('chkRawCsv'), chkLogFile = $('chkLogFile');
@@ -1517,6 +1572,20 @@ const diagnostics = (() => {
     chkRawCsv.addEventListener('change', pushFileToggles);
     chkLogFile.addEventListener('change', pushFileToggles);
 
+    // set the level of EVERY log module at once (keeps each module's sampling N)
+    $('logLevelAll').addEventListener('change', (e) => {
+        const level = e.target.value;
+        if (!sim || level === '') return;
+        logTbody.querySelectorAll('tr').forEach(row => {
+            const modEl = row.querySelector('[data-mod]');
+            if (!modEl) return;
+            const n = Math.max(1, Number(row.querySelector('.n').value) || 1);
+            sim.ext_setLogLevel({ module: Number(modEl.dataset.mod), level: Number(level), sampleN: n });
+        });
+        e.target.value = '';      // reset the picker
+        refreshLogModules();       // reflect the new per-module levels
+    });
+
     // data recorder: toggle + live status (active model, dropped rows). The
     // status struct carries flags as numbers (0/1) and modelName as a string.
     const chkRecord = $('chkRecord'), recordStatus = $('recordStatus'), recordDropped = $('recordDropped');
@@ -1525,7 +1594,9 @@ const diagnostics = (() => {
         const active = Number(s.active) >= 1;
         chkRecord.disabled = !active;
         chkRecord.checked = Number(s.enabled) >= 1;
-        recordStatus.textContent = active ? (chkRecord.checked ? `● ${s.modelName}` : s.modelName) : 'no model';
+        recordStatus.textContent = !active ? 'no model running'
+            : chkRecord.checked ? `recording: ${s.modelName}`
+            : `idle: ${s.modelName}`;
         recordStatus.classList.toggle('rec-on', active && chkRecord.checked);
         const drop = Number(s.droppedRows) || 0;
         recordDropped.textContent = drop > 0 ? `${drop} rows dropped` : '';
@@ -1557,6 +1628,14 @@ const diagnostics = (() => {
         let over = con.childElementCount - MAX_LINES;
         while (over-- > 0) con.removeChild(con.firstChild);
         if (autoscroll.checked) con.scrollTop = con.scrollHeight;
+
+        // peek: newest line shown in the bar while the dock is collapsed
+        const last = lines[lines.length - 1];
+        if (last) {
+            const [, lvl, mod, ...rest] = last;   // drop the timestamp for the compact peek
+            peek.innerHTML = `<span class="lv lv-${esc(lvl)}">${esc(lvl)}</span>` +
+                             `<span class="mod">${esc(mod || '')}</span> ${esc(rest.join('\t'))}`;
+        }
     }
 
     function refreshLogModules() {
@@ -1583,10 +1662,15 @@ const diagnostics = (() => {
         const list = rows(sim.ext_getProfileTable().table);
         statsEmpty.style.display = list.length ? 'none' : '';
         statsTbody.innerHTML = list.map(([mod, scope, kind, count, mean, std, min, max, p50, p95, p99]) => {
+            const key = mod + '\t' + scope;
+            pushTrend(key, Number(mean) || 0, Number(p95) || 0);
             const num = v => `<td class="num">${esc(v ?? '')}</td>`;
             return `<tr><td>${esc(mod)}</td><td>${esc(scope)}</td><td>${esc(kind)}</td>` +
-                   num(count) + num(mean) + num(std) + num(min) + num(max) + num(p50) + num(p95) + num(p99) + '</tr>';
+                   num(count) + num(mean) + num(std) + num(min) + num(max) + num(p50) + num(p95) + num(p99) +
+                   `<td><canvas class="spark" width="90" height="22" data-key="${esc(key)}"></canvas></td></tr>`;
         }).join('');
+        // rows were just rebuilt: redraw each sparkline from its accumulated series
+        statsTbody.querySelectorAll('canvas.spark').forEach(c => drawSpark(c, trends.get(c.dataset.key)));
     }
 
     // delegated handlers: rows are rebuilt, so bind once on the tables
@@ -1614,23 +1698,28 @@ const diagnostics = (() => {
                 refreshRecordStatus();
             } catch (e) { /* never let the Diag view break the app */ }
         },
-        // called every frame while the Diag view is visible, but throttled to
-        // its own cadence so it never runs at the frame rate
-        poll() {
+        // the log stream drains continuously on every view (the dock is always
+        // present); throttled to its own cadence so it never runs at frame rate
+        pollLog() {
             if (!sim) return;
             const now = performance.now();
+            if (now - lastLogPoll < LOG_POLL_MS) return;
+            lastLogPoll = now;
             try {
-                if (now - lastLogPoll >= LOG_POLL_MS) {
-                    lastLogPoll = now;
-                    const batch = timedCall(() => sim.ext_getLogBatch());
-                    if (!lastCallStalled) appendLog(batch);
-                }
-                if (now - lastStatsPoll >= STATS_POLL_MS) {
-                    lastStatsPoll = now;
-                    refreshProfileStats();
-                    refreshRecordStatus();
-                }
+                const batch = timedCall(() => sim.ext_getLogBatch());
+                if (!lastCallStalled) appendLog(batch);
             } catch (e) { /* diagnostics must never wedge the render loop */ }
+        },
+        // profiler stats + recorder status: only while the Diag view is up
+        pollStats() {
+            if (!sim) return;
+            const now = performance.now();
+            if (now - lastStatsPoll < STATS_POLL_MS) return;
+            lastStatsPoll = now;
+            try {
+                refreshProfileStats();
+                refreshRecordStatus();
+            } catch (e) { /* never wedge the render loop */ }
         },
     };
 })();
