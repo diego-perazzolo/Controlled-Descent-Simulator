@@ -1504,33 +1504,28 @@ const diagnostics = (() => {
     // "module\tscope"; ~1 min of history at the stats cadence.
     const TREND_LEN = 120;
     const trends = new Map();
-    function pushTrend(key, mean, p95) {
+    function pushTrend(key, p95) {
         let t = trends.get(key);
-        if (!t) { t = { mean: [], p95: [] }; trends.set(key, t); }
-        t.mean.push(mean); t.p95.push(p95);
-        if (t.mean.length > TREND_LEN) { t.mean.shift(); t.p95.shift(); }
+        if (!t) { t = { p95: [] }; trends.set(key, t); }
+        t.p95.push(p95);
+        if (t.p95.length > TREND_LEN) t.p95.shift();
     }
-    // Draw a scope's mean (cyan) + p95 (amber) trend into its row canvas, scaled
-    // to the window's peak so the shape is always visible.
+    // Draw a scope's p95 trend (amber) into its row canvas, scaled to the
+    // window's peak so the shape is always visible.
     function drawSpark(canvas, t) {
         const ctx = canvas.getContext('2d');
         const W = canvas.width, H = canvas.height;
         ctx.clearRect(0, 0, W, H);
-        if (!t || t.mean.length < 2) return;
+        if (!t || t.p95.length < 2) return;
         let hi = 0;
         for (const v of t.p95) if (v > hi) hi = v;
-        for (const v of t.mean) if (v > hi) hi = v;
         if (hi <= 0) hi = 1;
-        const n = t.mean.length;
+        const n = t.p95.length;
         const x = i => (i / (n - 1)) * (W - 1);
         const y = v => H - 1 - (v / hi) * (H - 2);
-        const line = (arr, color) => {
-            ctx.beginPath();
-            for (let i = 0; i < n; i++) { const px = x(i), py = y(arr[i]); i ? ctx.lineTo(px, py) : ctx.moveTo(px, py); }
-            ctx.strokeStyle = color; ctx.lineWidth = 1; ctx.stroke();
-        };
-        line(t.p95, '#fb4');
-        line(t.mean, '#0cf');
+        ctx.beginPath();
+        for (let i = 0; i < n; i++) { const px = x(i), py = y(t.p95[i]); i ? ctx.lineTo(px, py) : ctx.moveTo(px, py); }
+        ctx.strokeStyle = '#fb4'; ctx.lineWidth = 1; ctx.stroke();
     }
 
     const esc = s => s.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
@@ -1586,13 +1581,30 @@ const diagnostics = (() => {
         refreshLogModules();       // reflect the new per-module levels
     });
 
+    // Server-side file sinks only work when a native server is running (ws-served).
+    // In the in-browser build (wasm-only) there is no filesystem, so their toggles
+    // are disabled — like the plant checkbox when no plant is connected.
+    let fileSinksAvailable = true;
+    function setFileSinksAvailable(available) {
+        fileSinksAvailable = available;
+        for (const el of [chkLogFile, chkRawCsv]) {
+            el.disabled = !available;
+            const row = el.closest('.file-toggle');
+            if (row) row.classList.toggle('unavailable', !available);
+        }
+        if (!available) {
+            chkRecord.disabled = true;
+            chkRecord.closest('.file-toggle')?.classList.add('unavailable');
+        }
+    }
+
     // data recorder: toggle + live status (active model, dropped rows). The
     // status struct carries flags as numbers (0/1) and modelName as a string.
     const chkRecord = $('chkRecord'), recordStatus = $('recordStatus'), recordDropped = $('recordDropped');
     function applyRecordStatus(s) {
         if (!s) return;
         const active = Number(s.active) >= 1;
-        chkRecord.disabled = !active;
+        chkRecord.disabled = !active || !fileSinksAvailable;
         chkRecord.checked = Number(s.enabled) >= 1;
         recordStatus.textContent = !active ? 'no model running'
             : chkRecord.checked ? `recording: ${s.modelName}`
@@ -1663,7 +1675,7 @@ const diagnostics = (() => {
         statsEmpty.style.display = list.length ? 'none' : '';
         statsTbody.innerHTML = list.map(([mod, scope, kind, count, mean, std, min, max, p50, p95, p99]) => {
             const key = mod + '\t' + scope;
-            pushTrend(key, Number(mean) || 0, Number(p95) || 0);
+            pushTrend(key, Number(p95) || 0);
             const num = v => `<td class="num">${esc(v ?? '')}</td>`;
             return `<tr><td>${esc(mod)}</td><td>${esc(scope)}</td><td>${esc(kind)}</td>` +
                    num(count) + num(mean) + num(std) + num(min) + num(max) + num(p50) + num(p95) + num(p99) +
@@ -1689,6 +1701,7 @@ const diagnostics = (() => {
     });
 
     return {
+        setFileSinksAvailable,
         onShow() {
             if (!sim) return;
             try {
@@ -1959,6 +1972,11 @@ ui.trajFileInput.addEventListener('change', (e) => {
 (async () => {
     try {
         sim = await createSimulator();
+
+        // ws-served spins up the WebSocket bridge (globalThis.__cdsWs) in its
+        // transport pre-js; the wasm-only build has no server and no filesystem,
+        // so its server-side file-sink toggles are disabled.
+        diagnostics.setFileSinksAvailable(!!globalThis.__cdsWs);
 
         // Register renderers
         renderers.push(makeUplotRenderer());

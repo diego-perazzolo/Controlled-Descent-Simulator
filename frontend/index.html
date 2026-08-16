@@ -128,6 +128,8 @@
         .diag-help code { color: #6cf; }
         .file-toggle { display: flex; align-items: center; gap: 10px; margin: 8px 2px; font-size: 0.9em; flex-wrap: wrap; }
         .file-toggle > label { display: flex; align-items: center; gap: 6px; cursor: pointer; color: #ccc; min-width: 220px; }
+        .file-toggle.unavailable { opacity: 0.5; }
+        .file-toggle.unavailable > label { cursor: default; }
         .file-toggle .file-note { color: #667; font-size: 0.85em; }
         .file-toggle code { color: #6cf; }
         .rec-state { color: #888; font-size: 0.85em; }
@@ -775,7 +777,7 @@
                 <th>module</th><th>scope</th><th>kind</th><th>count</th>
                 <th>mean</th><th>std</th><th>min</th><th>max</th>
                 <th>p50</th><th>p95</th><th>p99</th>
-                <th title="mean (cyan) + p95 (amber) over ~1 min">trend</th>
+                <th title="p95 over the last ~1 min">p95 trend</th>
             </tr></thead>
             <tbody></tbody>
         </table>
