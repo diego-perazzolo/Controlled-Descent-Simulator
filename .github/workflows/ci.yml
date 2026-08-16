@@ -83,3 +83,25 @@ jobs:
         run: |
           emcmake cmake -S apps/ws-served/client -B build-ws-client -DCMAKE_BUILD_TYPE=Release
           cmake --build build-ws-client
+
+  # Speed benchmarks. NOT a correctness gate (timings vary by runner); this job
+  # only produces the benchmark report as a downloadable artifact. The committed
+  # docs/benchmark.md is the stable, curated companion.
+  benchmark:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build benchmarks
+        run: |
+          cmake -S bench -B build-bench -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-bench
+
+      - name: Run benchmarks and assemble the report
+        run: python3 bench/report.py build-bench > benchmark-report.md
+
+      - name: Upload benchmark report
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-report
+          path: benchmark-report.md

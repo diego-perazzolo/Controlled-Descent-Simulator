@@ -200,16 +200,21 @@ The recorder CSV paths default under `out_data/` and can be overridden with the
 `CDS_LOG_FILE`, `CDS_PROFILE_RAW_FILE`, `CDS_RECORD_FILE` and
 `CDS_RECORD_PLANT_FILE` environment variables.
 
-### Micro-benchmark
+### Benchmarks
 
-`bench/` sizes the per-call overhead (ON vs OFF at runtime, plus the drain cost)
-and, via a second target built with the macros above, the compile-out residual
-(~0). Not a CI gate — the numbers are timing-dependent.
+`bench/` holds the speed benchmarks: `perf_bench` sizes the diagnostics per-call
+overhead (ON vs OFF, plus the drain and the compile-out residual via
+`perf_bench_off`), and `model_bench` times one physics tick per model. Not a CI
+gate — the numbers are timing-dependent; the CI `benchmark` job runs them and
+uploads a report artifact. See [benchmark.md](benchmark.md) for the results and
+discussion.
 
 ```bash
 cmake -S bench -B build-bench -DCMAKE_BUILD_TYPE=Release && cmake --build build-bench
-./build-bench/perf_bench        # features compiled in
-./build-bench/perf_bench_off    # features compiled out
+./build-bench/perf_bench        # diagnostics per-call cost (features in)
+./build-bench/perf_bench_off    # same, features compiled out (~0)
+./build-bench/model_bench       # per-model integration cost
+python3 bench/report.py build-bench > benchmark-report.md   # full report (gitignored)
 ```
 
 ## GitHub Pages
@@ -308,9 +313,11 @@ The repository includes a GitHub Actions workflow ([`.github/workflows/deploy.ym
 │       ├── ws_rpc_client.hpp / .cpp            # Synchronous WASM RPC transport (EM_JS + SharedArrayBuffer)
 │       └── ws_rpc_client_pre.js                # pre-js: spawns the WebSocket bridge worker
 │
-├── bench/                                      # Diagnostics micro-benchmark (not a CI gate)
+├── bench/                                      # Speed benchmarks (not a CI gate; report is an artifact)
 │   ├── perf_bench.cpp                          # ns/op of logger/profiler/recorder ON vs OFF + drain
-│   └── CMakeLists.txt                          # perf_bench (features in) / perf_bench_off (compiled out)
+│   ├── model_bench.cpp                         # per-model integration cost (mean/p50/p95/max) — links core
+│   ├── report.py                               # assembles the Markdown report artifact from the binaries
+│   └── CMakeLists.txt                          # perf_bench / perf_bench_off / model_bench
 │
 ├── tools/
 │   └── serve.py                                # Dev server with COOP/COEP headers
