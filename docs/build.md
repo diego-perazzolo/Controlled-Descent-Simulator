@@ -158,6 +158,65 @@ cmake -S libs/control/bind -B build-ilqr-bind -DCMAKE_BUILD_TYPE=Release && cmak
 python3 libs/control/bind/ilqr_conformance.py build-ilqr-bind
 ```
 
+## Diagnostics: logging, profiling, recording
+
+Three header-only diagnostics facilities (`libs/log`, `libs/profile`,
+`libs/record`) ship in the build, all controllable at runtime from the frontend
+**Diag** view and the persistent log dock at the bottom of every view:
+
+- **Logger** (`libs/log`) — deferred-format logging with a per-module runtime
+  level and "1-in-N" sampling; the stream shows in the collapsible bottom dock
+  (on every view) and can be mirrored to a uniquely-named file (server-side).
+- **Profiler** (`libs/profile`) — opt-in per-module scope timing with
+  mean/percentiles (p50/p95/p99) and a live mean+p95 sparkline per scope;
+  optional raw-sample CSV.
+- **Recorder** (`libs/record`) — a per-tick "black box" wide CSV of the active
+  model and plant (state / input / reference / tracking error), toggled from
+  Diag (server-side); every file gets a unique, timestamped name.
+
+Left at their defaults (log level Warn, profiler off, recording off) the runtime
+cost is negligible — a per-call-site level/enabled check of ~1–5 ns, and the log
+arguments are not even evaluated when the level filters them out.
+
+### Compiling the diagnostics out
+
+For a clean release/measurement build, strip the call sites entirely at compile
+time with three macros. Pass them to any build via `CMAKE_CXX_FLAGS` (they
+propagate to core, plants and the app):
+
+| macro | effect |
+|-------|--------|
+| `CDS_LOG_COMPILE_LEVEL=N` | keep only logs at level ≥ N (Trace 0, Debug 1, Info 2, Warn 3, Error 4; 5 = none) |
+| `CDS_PROFILE_ENABLED=0` | strip every `CDS_PROFILE` scope |
+| `CDS_RECORD_ENABLED=0` | strip every `CDS_RECORD` row |
+
+```bash
+# example: keep only Warn/Error logs, remove profiler and recorder entirely
+cmake -S apps/ws-served/server -B build-server -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_CXX_FLAGS="-DCDS_LOG_COMPILE_LEVEL=3 -DCDS_PROFILE_ENABLED=0 -DCDS_RECORD_ENABLED=0"
+```
+
+The recorder CSV paths default under `out_data/` and can be overridden with the
+`CDS_LOG_FILE`, `CDS_PROFILE_RAW_FILE`, `CDS_RECORD_FILE` and
+`CDS_RECORD_PLANT_FILE` environment variables.
+
+### Benchmarks
+
+`bench/` holds the speed benchmarks: `perf_bench` sizes the diagnostics per-call
+overhead (ON vs OFF, plus the drain and the compile-out residual via
+`perf_bench_off`), and `model_bench` times one physics tick per model. Not a CI
+gate — the numbers are timing-dependent; the CI `benchmark` job runs them and
+uploads a report artifact. See [benchmark.md](benchmark.md) for the results and
+discussion.
+
+```bash
+cmake -S bench -B build-bench -DCMAKE_BUILD_TYPE=Release && cmake --build build-bench
+./build-bench/perf_bench        # diagnostics per-call cost (features in)
+./build-bench/perf_bench_off    # same, features compiled out (~0)
+./build-bench/model_bench       # per-model integration cost
+python3 bench/report.py build-bench > benchmark-report.md   # full report (gitignored)
+```
+
 ## GitHub Pages
 
 The repository includes a GitHub Actions workflow ([`.github/workflows/deploy.yml`](../.github/workflows/deploy.yml)) that automatically builds the WASM in Release mode and deploys to GitHub Pages on every push to `main`.
@@ -236,11 +295,29 @@ The repository includes a GitHub Actions workflow ([`.github/workflows/deploy.ym
 │   │   ├── ilqr.hpp                            # Generic control-limited iLQR/DDP solver (header-only)
 │   │   ├── test/ilqr_test.cpp                  # Self-contained solver acid test (double integrator)
 │   │   └── bind/                               # C-ABI shim + ilqr_conformance.py (C++↔Python KKT certificate)
+│   ├── log/                                    # Deferred-format logger (opt-in, runtime-levelled)
+│   │   ├── log.hpp / LogRing.hpp               # Registry + CDS_LOG_* macros; wait-free MPSC ring
+│   │   ├── LogSinks.hpp / LogUiSink.hpp        # Console/File sinks; recent-lines UI buffer
+│   │   ├── UniqueFile.hpp                      # Timestamped unique output paths (shared by all sinks)
+│   │   └── test/log_test.cpp                   # Self-contained logger acid test
+│   ├── profile/                                # Opt-in scope profiler (aggregates + percentiles)
+│   │   ├── profile.hpp / P2Quantile.hpp        # Registry + CDS_PROFILE; P² streaming quantiles
+│   │   ├── ProfileReport.hpp                   # Text/CSV dump of a snapshot
+│   │   └── test/profile_test.cpp               # Self-contained profiler acid test
+│   ├── record/                                 # Per-tick "black box" data recorder (wide CSV)
+│   │   ├── Recorder.hpp                        # Templated Row<T,N>, model/plant slots, drop counter
+│   │   └── test/record_test.cpp               # Self-contained recorder acid test
 │   └── ws/                                     # Dependency-free WebSocket RPC transport
 │       ├── CMakeLists.txt                      # cds_ws_client (emscripten) / cds_ws_server (native)
 │       ├── ws_server.hpp / ws_server.cpp       # Minimal RFC 6455 WebSocket RPC server
 │       ├── ws_rpc_client.hpp / .cpp            # Synchronous WASM RPC transport (EM_JS + SharedArrayBuffer)
 │       └── ws_rpc_client_pre.js                # pre-js: spawns the WebSocket bridge worker
+│
+├── bench/                                      # Speed benchmarks (not a CI gate; report is an artifact)
+│   ├── perf_bench.cpp                          # ns/op of logger/profiler/recorder ON vs OFF + drain
+│   ├── model_bench.cpp                         # per-model integration cost (mean/p50/p95/max) — links core
+│   ├── report.py                               # assembles the Markdown report artifact from the binaries
+│   └── CMakeLists.txt                          # perf_bench / perf_bench_off / model_bench
 │
 ├── tools/
 │   └── serve.py                                # Dev server with COOP/COEP headers

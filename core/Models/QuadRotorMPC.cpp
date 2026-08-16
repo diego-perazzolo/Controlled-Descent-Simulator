@@ -48,6 +48,10 @@
 #include "dynamics_quadrotor_mpc_01.hpp"
 #include "rk4.hpp"
 #include "ilqr.hpp"
+#include "log.hpp"
+#include "profile.hpp"
+#include "Recorder.hpp"
+
 
 // State indexes (match CDS::Dynamics::QUADROTOR_MPC_01::StateName)
 #define IDX_X   0
@@ -65,6 +69,25 @@
 #define IDX_WZ  12
 
 namespace CDS {
+
+static const auto logger = cds_log::registry().module("Quadrotor MPC");
+static const auto profile = cds_profile::registry().module("Quadrotor MPC");
+
+// ----------------------------------------------------------------------------
+// Data recorder (black-box wide CSV, server-side). Channel 0 is t_sim; then the
+// 13-state (quaternion attitude, no integrators — the MPC is not augmented), the
+// 4 rotor thrusts held this step, the position/heading/velocity reference, the
+// tracking error and the user forces. See the row-alignment note below.
+// ----------------------------------------------------------------------------
+static cds_record::Recorder<double, 32, 4096> recorder("Quadrotor MPC", {{
+    "t_sim",
+    "x", "y", "z", "qw", "qx", "qy", "qz",
+    "vx", "vy", "vz", "wx", "wy", "wz",
+    "T1", "T2", "T3", "T4",
+    "ref_x", "ref_y", "ref_z", "ref_yaw", "ref_vx", "ref_vy", "ref_vz",
+    "e_x", "e_y", "e_z", "e_yaw",
+    "uf_x", "uf_y", "uf_z",
+}});
 
 // =============================================================================
 //  Quad-specific MPC machinery -- private to this translation unit. The generic
@@ -162,8 +185,8 @@ control::TerminalCost<NX> quadTermCost(const V13& x, const StageRef& ref, const 
     return c;
 }
 
-// ---- plant advance: one RK4 step at the measured dt with the applied command ----
-V13 plantStep(const Model& model, const V13& x, const V4& u, const std::array<double,3>& uF, double dt)
+// ---- One RK4 step at the measured dt with the applied command ----
+V13 integrateAndNormalize(const Model& model, const V13& x, const V4& u, const std::array<double,3>& uF, double dt)
 {
     V13 xn = integrate::rk4_step<NX>(x, dt, [&](const V13& s){ return model.Dynamics(s, u, uF); });
     normalizeQuat(xn);
@@ -194,6 +217,8 @@ QuadRotorMPC::QuadRotorMPC()
     m_time = 0;
     m_seeded = false;
     m_lastSolveTime = 0;
+
+    recorder.activateAsModel(); // this model owns the model data recorder while it lives
 }
 
 QuadRotorMPC::~QuadRotorMPC()
@@ -206,7 +231,7 @@ bool QuadRotorMPC::SetModelParams(const std::any& params)
     auto dynamics = (Dynamics::QUADROTOR_MPC_01*) m_modelPtr;
     if (dynamics == nullptr || params.type() != typeid(core_quadRotorParams_t&))
     {
-        // Err
+        CDS_LOG_ERROR(logger, "Model not initialized or wrong params type");
         return true;
     }
     const auto& p = std::any_cast<const core_quadRotorParams_t&>(params);
@@ -224,6 +249,24 @@ bool QuadRotorMPC::SetModelParams(const std::any& params)
     dynamics->SetParam(PN::Arm,       p.L);
     dynamics->SetParam(PN::ThrustMax, p.Fm_max);
     dynamics->SetParam(PN::ThrustMin, p.Fm_min);
+
+    // Recorder run metadata: full model parameters (trajectory added in
+    // SetTrajectoryManager, the last setup step).
+    recorder.clearMeta();
+    recorder.addMeta("model", "Quadrotor MPC (MPC-01)");
+    recorder.addMeta("mass_kg", p.m);
+    recorder.addMeta("Ix_kgm2", p.Ix);
+    recorder.addMeta("Iy_kgm2", p.Iy);
+    recorder.addMeta("Iz_kgm2", p.Iz);
+    recorder.addMeta("gravity_ms2", p.g);
+    recorder.addMeta("drag_lateral", p.c);
+    recorder.addMeta("drag_axial", p.cz);
+    recorder.addMeta("kThrust", p.kT);
+    recorder.addMeta("kTorque", p.kQ);
+    recorder.addMeta("arm_m", p.L);
+    recorder.addMeta("motor_thrust_max_N", p.Fm_max);
+    recorder.addMeta("motor_thrust_min_N", p.Fm_min);
+
     return false;
 }
 
@@ -232,11 +275,21 @@ bool QuadRotorMPC::SetTrajectoryManager(TrajectoryManager* pTrajectoryManager)
     Reference_t ref;
     if (pTrajectoryManager == nullptr || pTrajectoryManager->GetReference(m_time, ref))
     {
-        // Error
+        CDS_LOG_ERROR(logger, "Trajectory not initialized");
         return true;
     }
     m_trajectoryManagerPtr = pTrajectoryManager;
     initState(ref, m_state);
+
+    // Recorder run metadata: trajectory context (start setpoint + altitude span).
+    recorder.addMeta("traj_start_x_m", ref.pos[0]);
+    recorder.addMeta("traj_start_y_m", ref.pos[1]);
+    recorder.addMeta("traj_start_z_m", ref.pos[2]);
+    recorder.addMeta("traj_start_yaw_rad", ref.yaw);
+    core_coord_t altRange = 0.0;
+    if (!pTrajectoryManager->GetAltitudeRange(altRange))
+        recorder.addMeta("traj_altitude_range_m", altRange);
+
     return false;
 }
 
@@ -267,6 +320,7 @@ bool QuadRotorMPC::PerformIntegration(const core_stepParams_t& params)
     //      instead of freezing). ----
     if (!m_seeded || (m_time - m_lastSolveTime) >= DT_MPC)
     {
+        CDS_PROFILE(profile, "Total MPC execution");
         // hover command and actuator box from the model params
         using PN = Dynamics::QUADROTOR_MPC_01::ParamName;
         const double mg = dynamics->GetParam(PN::Mass) * dynamics->GetParam(PN::Gravity);
@@ -305,8 +359,11 @@ bool QuadRotorMPC::PerformIntegration(const core_stepParams_t& params)
         auto tcost = [&](const V13& x){ return quadTermCost(x, refs[QuadRotorMPC::HORIZON], W); };
 
         V4 u0;
-        control::solve<NX, NU, QuadRotorMPC::HORIZON>(
-            m_state, fdyn, jac, proj, scost, tcost, lo, hi, DT_MPC, MAX_ITERS, m_warmStart, u0);
+        {
+            CDS_PROFILE(profile, "MPC solve");
+            control::solve<NX, NU, QuadRotorMPC::HORIZON>(
+                m_state, fdyn, jac, proj, scost, tcost, lo, hi, DT_MPC, MAX_ITERS, m_warmStart, u0);
+        }
 
         m_lastU0        = u0;
         m_lastSolveTime = m_time;
@@ -317,9 +374,34 @@ bool QuadRotorMPC::PerformIntegration(const core_stepParams_t& params)
     m_userForces[0] = params.user_fX;
     m_userForces[1] = params.user_fY;
     m_userForces[2] = params.user_fZ;
-    m_state = plantStep(*dynamics, m_state, m_lastU0, m_userForces, params.timestep);
+    {
+        CDS_PROFILE(profile, "Rk4 integration");
+        m_state = integrateAndNormalize(*dynamics, m_state, m_lastU0, m_userForces, params.timestep);
+    }
 
     m_time += params.timestep;
+
+    // Data recorder: one wide row per tick. Row alignment: the state is
+    // post-integration at t_sim; m_lastU0 is the MPC command held over the step
+    // (zero-order hold between re-solves); the reference (ref0) and tracking
+    // error are sampled at the step start (they lead the state by one dt).
+#if CDS_RECORD_ENABLED
+    {
+        const std::array<double, 32> row{{
+            m_time,
+            m_state[IDX_X], m_state[IDX_Y], m_state[IDX_Z],
+            m_state[IDX_QW], m_state[IDX_QX], m_state[IDX_QY], m_state[IDX_QZ],
+            m_state[IDX_VX], m_state[IDX_VY], m_state[IDX_VZ],
+            m_state[IDX_WX], m_state[IDX_WY], m_state[IDX_WZ],
+            m_lastU0[0], m_lastU0[1], m_lastU0[2], m_lastU0[3],
+            ref0.pos[0], ref0.pos[1], ref0.pos[2], ref0.yaw, ref0.vel[0], ref0.vel[1], ref0.vel[2],
+            m_trackingErr[0], m_trackingErr[1], m_trackingErr[2], m_trackingErr[3],
+            m_userForces[0], m_userForces[1], m_userForces[2],
+        }};
+        recorder.record(row);
+    }
+#endif
+
     return false;
 }
 

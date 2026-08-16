@@ -43,6 +43,18 @@ jobs:
           cmake --build build-mpc-model-test
           ./build-mpc-model-test/mpc_model_test
 
+      - name: Logger + profiler + recorder tests (native)
+        run: |
+          cmake -S libs/log/test -B build-log-test -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-log-test
+          ./build-log-test/log_test
+          cmake -S libs/profile/test -B build-profile-test -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-profile-test
+          ./build-profile-test/profile_test
+          cmake -S libs/record/test -B build-record-test -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-record-test
+          ./build-record-test/record_test
+
       - name: Solver C++/Python conformance certificate
         run: |
           cmake -S libs/control/bind -B build-ilqr-bind -DCMAKE_BUILD_TYPE=Release
@@ -71,3 +83,25 @@ jobs:
         run: |
           emcmake cmake -S apps/ws-served/client -B build-ws-client -DCMAKE_BUILD_TYPE=Release
           cmake --build build-ws-client
+
+  # Speed benchmarks. NOT a correctness gate (timings vary by runner); this job
+  # only produces the benchmark report as a downloadable artifact. The committed
+  # docs/benchmark.md is the stable, curated companion.
+  benchmark:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build benchmarks
+        run: |
+          cmake -S bench -B build-bench -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-bench
+
+      - name: Run benchmarks and assemble the report
+        run: python3 bench/report.py build-bench > benchmark-report.md
+
+      - name: Upload benchmark report
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-report
+          path: benchmark-report.md

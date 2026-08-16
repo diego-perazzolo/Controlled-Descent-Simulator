@@ -232,6 +232,116 @@ std::vector<uint8_t> server_dispatch(const std::vector<uint8_t>& msg)
             return _respBool(h, ext_initQuadRotor_MPC01(req.p));
         }
 
+        case WS_MSG_GET_LOG_BATCH:
+        {
+            reqGetLogBatch_t req = {};
+            if(_parse(msg, req)) return _respBool(h, true);
+
+            respGetLogBatch_t resp = {};
+            resp.h = h;
+            resp.p = ext_getLogBatch();
+            return _serialize(resp);
+        }
+
+        case WS_MSG_GET_LOG_MODULES:
+        {
+            reqGetLogModules_t req = {};
+            if(_parse(msg, req)) return _respBool(h, true);
+
+            respGetLogModules_t resp = {};
+            resp.h = h;
+            resp.p = ext_getLogModules();
+            return _serialize(resp);
+        }
+
+        case WS_MSG_SET_LOG_LEVEL:
+        {
+            reqSetLogLevel_t req = {};
+            if(_parse(msg, req)) return _respBool(h, true);
+
+            return _respBool(h, ext_setLogLevel(req.p));
+        }
+
+        case WS_MSG_GET_PROFILE_MODULES:
+        {
+            reqGetProfileModules_t req = {};
+            if(_parse(msg, req)) return _respBool(h, true);
+
+            respGetProfileModules_t resp = {};
+            resp.h = h;
+            resp.p = ext_getProfileModules();
+            return _serialize(resp);
+        }
+
+        case WS_MSG_SET_PROFILE_ENABLED:
+        {
+            reqSetProfileEnabled_t req = {};
+            if(_parse(msg, req)) return _respBool(h, true);
+
+            ext_profileEnableParams par = {};
+            par.module = req.module;
+            par.enabled = req.enabled != 0;
+
+            return _respBool(h, ext_setProfileEnabled(par));
+        }
+
+        case WS_MSG_GET_PROFILE_TABLE:
+        {
+            reqGetProfileTable_t req = {};
+            if(_parse(msg, req)) return _respBool(h, true);
+
+            respGetProfileTable_t resp = {};
+            resp.h = h;
+            resp.p = ext_getProfileTable();
+            return _serialize(resp);
+        }
+
+        case WS_MSG_RESET_PROFILE:
+        {
+            reqResetProfile_t req = {};
+            if(_parse(msg, req)) return _respBool(h, true);
+
+            return _respBool(h, ext_resetProfile());
+        }
+
+        case WS_MSG_SET_DIAG_FILES:
+        {
+            reqSetDiagFiles_t req = {};
+            if(_parse(msg, req)) return _respBool(h, true);
+
+            ext_diagFiles par = {};
+            par.logFile = req.logFile != 0;
+            par.profileRaw = req.profileRaw != 0;
+
+            return _respBool(h, ext_setDiagFiles(par));
+        }
+
+        case WS_MSG_SET_RECORDING:
+        {
+            reqSetRecording_t req = {};
+            if(_parse(msg, req)) return _respBool(h, true);
+
+            printf("[cds-server] set recording\n");
+            ext_recordParams par = {};
+            par.enabled = req.enabled != 0;
+
+            respSetRecording_t resp = {};
+            resp.h = h;
+            resp.p = ext_setRecording(par);
+            return _serialize(resp);
+        }
+
+        case WS_MSG_GET_RECORD_STATUS:
+        {
+            reqGetRecordStatus_t req = {};
+            if(_parse(msg, req)) return _respBool(h, true);
+
+            respGetRecordStatus_t resp = {};
+            resp.h = h;
+            resp.p = ext_getRecordStatus();
+            return _serialize(resp);
+        }
+
         default:
             // Err: unknown message type
             return _respBool(h, true);

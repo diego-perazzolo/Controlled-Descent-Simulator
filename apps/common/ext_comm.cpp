@@ -33,8 +33,19 @@
 #include "ext_comm.hpp"
 #include "core.hpp"
 
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
+
+#include "log.hpp"
+#include "LogUiSink.hpp"
+#include "LogSinks.hpp"
+#include "profile.hpp"
+#include "Recorder.hpp"
+
 /* Immediately return if ret == true */
-#define RETURN_IF_TRUE(ret) if(ret) return ret 
+#define RETURN_IF_TRUE(ret) if(ret) return ret
 
 /* Static functions */
 static core_rocketParams_t _convertExtToCore_rocketParams(ext_rocketParams rPar, ext_rocketActuatorLimits aPar)
@@ -336,4 +347,195 @@ bool ext_beginStaging(ext_coord_t safetyAltitude)
 bool ext_stopStaging(void)
 {
     return core_stopStaging();
+}
+
+// --------------------------------------------------------------------------- //
+// Logger / profiler inspection. Each "get" packs its payload as newline-        //
+// separated, tab-delimited text into a fixed char buffer that the JS side       //
+// parses. The producers (logging, profiling) never contain '\t'/'\n' in module  //
+// or scope names; log messages are developer-controlled and assumed likewise.   //
+// --------------------------------------------------------------------------- //
+
+ext_logBatch ext_getLogBatch(void)
+{
+    ext_logBatch out = {};
+    std::size_t off = 0;
+    std::size_t count = 0;
+
+    /* stop pulling while a full max-size line may not fit, so snprintf never
+       truncates a record mid-way (+32 leaves room for the timestamp field) */
+    const std::size_t maxLine = CDS_LOG_NAME_MAX + CDS_LOG_LINE_MAX + 40;
+    while (sizeof(out.lines) - off > maxLine)
+    {
+        cds_log::RecentLinesSink::Line line;
+        if (!cds_log::uiSink().Pop(line)) break;
+        char ts[28];
+        cds_log::formatTimestamp(ts, sizeof(ts), line.timestampNs);
+        // timestamp \t LEVEL \t module \t text
+        const int w = std::snprintf(out.lines + off, sizeof(out.lines) - off,
+                                    "%s\t%s\t%s\t%s\n",
+                                    ts, cds_log::levelName(line.level), line.module, line.text);
+        if (w > 0) off += static_cast<std::size_t>(w);
+        ++count;
+    }
+    out.lines[off] = '\0';
+    out.count = static_cast<ext_coord_t>(count);
+    out.dropped = static_cast<ext_coord_t>(cds_log::uiSink().TakeDropped());
+    return out;
+}
+
+ext_moduleList ext_getLogModules(void)
+{
+    ext_moduleList out = {};
+    std::size_t off = 0;
+    std::size_t count = 0;
+    const std::size_t n = cds_log::registry().count();
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        const cds_log::moduleId_t id = static_cast<cds_log::moduleId_t>(i);
+        const int w = std::snprintf(out.list + off, sizeof(out.list) - off, "%zu\t%s\t%d\t%u\n",
+                                    i, cds_log::registry().name(id),
+                                    static_cast<int>(cds_log::registry().level(id)),
+                                    cds_log::registry().sampleN(id));
+        if (w < 0 || static_cast<std::size_t>(w) >= sizeof(out.list) - off) break;
+        off += static_cast<std::size_t>(w);
+        ++count;
+    }
+    out.list[off] = '\0';
+    out.count = static_cast<ext_coord_t>(count);
+    return out;
+}
+
+bool ext_setLogLevel(ext_logLevelParams params)
+{
+    const std::size_t m = static_cast<std::size_t>(params.module);
+    const int lvl = static_cast<int>(params.level);
+    if (m >= cds_log::registry().count()) return true;
+    if (lvl < 0 || lvl > static_cast<int>(cds_log::Level::Off)) return true;
+    cds_log::registry().setLevel(static_cast<cds_log::moduleId_t>(m),
+                                 static_cast<cds_log::Level>(lvl));
+    cds_log::registry().setSample(static_cast<cds_log::moduleId_t>(m),
+                                  static_cast<std::uint32_t>(params.sampleN));
+    return false;
+}
+
+ext_moduleList ext_getProfileModules(void)
+{
+    ext_moduleList out = {};
+    std::size_t off = 0;
+    std::size_t count = 0;
+    const std::size_t n = cds_profile::registry().moduleCount();
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        const cds_profile::moduleId_t id = static_cast<cds_profile::moduleId_t>(i);
+        const int w = std::snprintf(out.list + off, sizeof(out.list) - off, "%zu\t%s\t%d\n",
+                                    i, cds_profile::registry().moduleName(id),
+                                    cds_profile::registry().moduleEnabled(id) ? 1 : 0);
+        if (w < 0 || static_cast<std::size_t>(w) >= sizeof(out.list) - off) break;
+        off += static_cast<std::size_t>(w);
+        ++count;
+    }
+    out.list[off] = '\0';
+    out.count = static_cast<ext_coord_t>(count);
+    return out;
+}
+
+bool ext_setProfileEnabled(ext_profileEnableParams params)
+{
+    const std::size_t m = static_cast<std::size_t>(params.module);
+    if (m >= cds_profile::registry().moduleCount()) return true;
+    cds_profile::registry().setEnabled(static_cast<cds_profile::moduleId_t>(m), params.enabled);
+    return false;
+}
+
+ext_profileTable ext_getProfileTable(void)
+{
+    ext_profileTable out = {};
+    std::size_t off = 0;
+    std::size_t count = 0;
+
+    cds_profile::Snapshot snap;
+    if (cds_profile::registry().snapshot(snap))
+    {
+        out.table[0] = '\0'; // nothing published yet
+        out.count = 0;
+        return out;
+    }
+
+    cds_profile::Registry& reg = cds_profile::registry();
+    for (std::size_t i = 0; i < snap.count; ++i)
+    {
+        const cds_profile::scopeId_t s = static_cast<cds_profile::scopeId_t>(i);
+        const cds_profile::moduleId_t mod = reg.scopeModule(s);
+        if (!reg.moduleEnabled(mod)) continue; // only scopes of enabled modules
+
+        const cds_profile::ScopeStats& st = snap.stats[i];
+        const bool isVal = reg.scopeIsValue(s);
+        const double k = isVal ? 1.0 : 1.0 / 1000.0; // ns -> us for timed scopes
+        // module\tscope\tkind\tcount\tmean\tstd\tmin\tmax\tp50\tp95\tp99
+        const int w = std::snprintf(out.table + off, sizeof(out.table) - off,
+            "%s\t%s\t%s\t%llu\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\n",
+            reg.moduleName(mod), reg.scopeName(s), isVal ? "val" : "us",
+            static_cast<unsigned long long>(st.count),
+            st.mean() * k, st.stddev() * k, st.min * k, st.max * k,
+            st.p50 * k, st.p95 * k, st.p99 * k);
+        if (w < 0 || static_cast<std::size_t>(w) >= sizeof(out.table) - off) break;
+        off += static_cast<std::size_t>(w);
+        ++count;
+    }
+    out.table[off] = '\0';
+    out.count = static_cast<ext_coord_t>(count);
+    return out;
+}
+
+bool ext_resetProfile(void)
+{
+    cds_profile::registry().resetAll();
+    return false;
+}
+
+bool ext_setDiagFiles(ext_diagFiles params)
+{
+    // server-side only: on wasm there is no real filesystem, so these are no-ops
+    cds_log::fileSink().setEnabled(params.logFile);
+    cds_profile::registry().setRawLogging(params.profileRaw);
+    return false;
+}
+
+// Snapshot the recorder state (model + plant) into the wire struct. Flags cross
+// as ext_coord_t (0.0/1.0) so the char[] modelName can share the struct.
+// modelName is a "model + plant" summary of whoever is active.
+static ext_recordStatus _recordStatus(void)
+{
+    ext_recordStatus out = {};
+    cds_record::IRecorder* m = cds_record::activeModelRecorder();
+    cds_record::IRecorder* p = cds_record::activePlantRecorder();
+
+    out.active      = (m || p) ? 1 : 0;
+    out.enabled     = ((m && m->enabled()) || (p && p->enabled())) ? 1 : 0;
+    out.droppedRows = static_cast<ext_coord_t>((m ? m->dropped() : 0) +
+                                               (p ? p->dropped() : 0));
+
+    // "Model + Plant" summary (either side may be absent), truncated to fit.
+    out.modelName[0] = '\0';
+    std::snprintf(out.modelName, sizeof(out.modelName), "%s%s%s",
+                  m ? m->name() : "",
+                  (m && p) ? " + " : "",
+                  p ? p->name() : "");
+    return out;
+}
+
+ext_recordStatus ext_setRecording(ext_recordParams params)
+{
+    // server-side only (wasm has no filesystem). Toggles both the active model
+    // and the active plant recorder; the drain thread rotates each CSV on the
+    // transition.
+    if (cds_record::IRecorder* m = cds_record::activeModelRecorder()) m->setEnabled(params.enabled);
+    if (cds_record::IRecorder* p = cds_record::activePlantRecorder()) p->setEnabled(params.enabled);
+    return _recordStatus();
+}
+
+ext_recordStatus ext_getRecordStatus(void)
+{
+    return _recordStatus();
 }

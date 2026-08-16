@@ -31,6 +31,10 @@
 // =============================================================================
 
 #include "Rocket.hpp"
+#include "log.hpp"
+#include "profile.hpp"
+#include "Recorder.hpp"
+
 #include <cmath>
 #include <array>
 
@@ -83,6 +87,26 @@
 
 namespace CDS {
 
+static const auto logger = cds_log::registry().module("Rocket");
+static const auto profile = cds_profile::registry().module("Rocket");
+
+// ----------------------------------------------------------------------------
+// Data recorder (black-box wide CSV, server-side). Channel 0 is t_sim; then the
+// full 16-state, the 4 control inputs, the position/heading/velocity reference,
+// the tracking error and the user/disturbance forces. See the row-alignment note
+// in PerformIntegration. A single active model records at a time.
+// ----------------------------------------------------------------------------
+static cds_record::Recorder<double, 35, 4096> recorder("Rocket", {{
+    "t_sim",
+    "x", "y", "z", "alpha", "beta", "psi",
+    "x_dot", "y_dot", "z_dot", "alpha_dot", "beta_dot", "psi_dot",
+    "IntX", "IntY", "IntZ", "IntPsi",
+    "F1", "T1", "T2", "T3",
+    "ref_x", "ref_y", "ref_z", "ref_yaw", "ref_vx", "ref_vy", "ref_vz",
+    "e_x", "e_y", "e_z", "e_yaw",
+    "uf_x", "uf_y", "uf_z",
+}});
+
 // =============================================================================
 // rk4_step()
 // Advances the state by one timestep dt using classic RK4.
@@ -91,38 +115,48 @@ namespace CDS {
 static bool rk4_step(void* pDynamics, Rocket::StateVec&     x,
                          Reference_t& ref,
                          const Rocket::UserForces& userF,
-                         const double               dt)
+                         const double               dt,
+                         Rocket::InputVec&          uApplied)
 {
 
     if(pDynamics == nullptr)
     {
-        // ERR
+        CDS_LOG_ERROR(logger, "Model not initialized");
         return true;
     }
 
     Dynamics::ROCKET_FF_LQR_01* pDyn = static_cast<Dynamics::ROCKET_FF_LQR_01*>(pDynamics);
-     
+
     // Compute control at current state (held constant over the step)
-    const Rocket::InputVec u = pDyn->ExecuteControl(x, ref);
+    Rocket::InputVec u;
+    {
+      CDS_PROFILE(profile, "Execute control");
+      u = pDyn->ExecuteControl(x, ref);
+    }
+    uApplied = u; // hand the applied command back for telemetry
 
     // Four RK4 slope evaluations
-    const Rocket::StateVec k1 = pDyn->Dynamics(x, u, ref, userF);
+    {
+        CDS_PROFILE(profile, "RK4 integration");
 
-    Rocket::StateVec x2{};
-    for (size_t i = 0; i < 16; ++i) x2[i] = x[i] + k1[i] * dt * 0.5;
-    const Rocket::StateVec k2 = pDyn->Dynamics(x2, u, ref, userF);
-
-    Rocket::StateVec x3{};
-    for (size_t i = 0; i < 16; ++i) x3[i] = x[i] + k2[i] * dt * 0.5;
-    const Rocket::StateVec k3 = pDyn->Dynamics(x3, u, ref, userF);
-
-    Rocket::StateVec x4{};
-    for (size_t i = 0; i < 16; ++i) x4[i] = x[i] + k3[i] * dt;
-    const Rocket::StateVec k4 = pDyn->Dynamics(x4, u, ref, userF);
-
-    // Weighted sum
-    for (size_t i = 0; i < 16; ++i)
+        const Rocket::StateVec k1 = pDyn->Dynamics(x, u, ref, userF);
+        
+        Rocket::StateVec x2{};
+        for (size_t i = 0; i < 16; ++i) x2[i] = x[i] + k1[i] * dt * 0.5;
+        const Rocket::StateVec k2 = pDyn->Dynamics(x2, u, ref, userF);
+        
+        Rocket::StateVec x3{};
+        for (size_t i = 0; i < 16; ++i) x3[i] = x[i] + k2[i] * dt * 0.5;
+        const Rocket::StateVec k3 = pDyn->Dynamics(x3, u, ref, userF);
+        
+        Rocket::StateVec x4{};
+        for (size_t i = 0; i < 16; ++i) x4[i] = x[i] + k3[i] * dt;
+        const Rocket::StateVec k4 = pDyn->Dynamics(x4, u, ref, userF);
+        
+        // Weighted sum
+        for (size_t i = 0; i < 16; ++i)
         x[i] = x[i] + (k1[i] + 2.0*k2[i] + 2.0*k3[i] + k4[i]) * dt / 6.0;
+    }
 
     return false;
 }
@@ -167,6 +201,7 @@ Rocket::Rocket()
 
     m_time = 0;
 
+    recorder.activateAsModel(); // this model owns the model data recorder while it lives
 }
 
 Rocket::~Rocket()
@@ -184,7 +219,7 @@ bool Rocket::SetModelParams(const std::any& params)
 
     if(dynamics == nullptr || params.type() != typeid(core_rocketParams_t&))
     {
-        // Err
+        CDS_LOG_ERROR(logger, "Cannot set model params");
         return true;
     }
 
@@ -206,6 +241,26 @@ bool Rocket::SetModelParams(const std::any& params)
     dynamics->SetParam(PN::TorqueZMax, p.T3_max);
     dynamics->SetParam(PN::TorqueZMin, p.T3_min);
 
+    // Recorder run metadata: full model parameters (the trajectory is added in
+    // SetTrajectoryManager, the last setup step, so both end up in the header).
+    recorder.clearMeta();
+    recorder.addMeta("model", "Rocket (FF-LQR-01)");
+    recorder.addMeta("mass_kg", p.m);
+    recorder.addMeta("Ix_kgm2", p.Ix);
+    recorder.addMeta("Iy_kgm2", p.Iy);
+    recorder.addMeta("Iz_kgm2", p.Iz);
+    recorder.addMeta("gravity_ms2", p.g);
+    recorder.addMeta("drag_lateral", p.c);
+    recorder.addMeta("drag_axial", p.cz);
+    recorder.addMeta("F1_max_N", p.F1_max);
+    recorder.addMeta("F1_min_N", p.F1_min);
+    recorder.addMeta("T1_max_Nm", p.T1_max);
+    recorder.addMeta("T1_min_Nm", p.T1_min);
+    recorder.addMeta("T2_max_Nm", p.T2_max);
+    recorder.addMeta("T2_min_Nm", p.T2_min);
+    recorder.addMeta("T3_max_Nm", p.T3_max);
+    recorder.addMeta("T3_min_Nm", p.T3_min);
+
     return false;
 }
 bool Rocket::SetTrajectoryManager(TrajectoryManager* pTrajectoryManager)
@@ -214,12 +269,21 @@ bool Rocket::SetTrajectoryManager(TrajectoryManager* pTrajectoryManager)
 
     if(pTrajectoryManager == nullptr || pTrajectoryManager->GetReference(m_time, ref))
     {
-        // Error
+        CDS_LOG_ERROR(logger, "Trajectory error");
         return true;
     }
 
     m_trajectoryManagerPtr = pTrajectoryManager;
     _init_dynamicsState(ref, m_state);
+
+    // Recorder run metadata: trajectory context (start setpoint + altitude span).
+    recorder.addMeta("traj_start_x_m", ref.pos[0]);
+    recorder.addMeta("traj_start_y_m", ref.pos[1]);
+    recorder.addMeta("traj_start_z_m", ref.pos[2]);
+    recorder.addMeta("traj_start_yaw_rad", ref.yaw);
+    core_coord_t altRange = 0.0;
+    if (!pTrajectoryManager->GetAltitudeRange(altRange))
+        recorder.addMeta("traj_altitude_range_m", altRange);
 
     return false;
 }
@@ -231,7 +295,7 @@ bool Rocket::PerformIntegration(const core_stepParams_t& params)
     Reference_t ref;
     if(m_trajectoryManagerPtr == nullptr || m_trajectoryManagerPtr->GetReference(m_time, ref))
     {
-        // ERR
+        CDS_LOG_ERROR(logger, "Trajectory error");
         return true;
     }
 
@@ -275,13 +339,36 @@ bool Rocket::PerformIntegration(const core_stepParams_t& params)
 #endif
 
     // Runge Kutta 4
-    if(rk4_step(m_modelPtr, m_state, ref, m_userForces, params.timestep))
+    Rocket::InputVec uApplied{};
+    if(rk4_step(m_modelPtr, m_state, ref, m_userForces, params.timestep, uApplied))
     {
-        // Err
+        CDS_LOG_ERROR(logger, "Cannot integrate model");
         return true;
     }
 
     m_time += params.timestep;
+
+    // Data recorder: one wide row per tick. Row alignment: the state is
+    // post-integration at t_sim; uApplied is the command held over the step;
+    // the reference and tracking error are sampled at the step start (they lead
+    // the state by one dt — negligible at the simulation timestep).
+#if CDS_RECORD_ENABLED
+    {
+        const std::array<double, 35> row{{
+            m_time,
+            m_state[IDX_X], m_state[IDX_Y], m_state[IDX_Z],
+            m_state[IDX_ALPHA], m_state[IDX_BETA], m_state[IDX_PSI],
+            m_state[IDX_XDOT], m_state[IDX_YDOT], m_state[IDX_ZDOT],
+            m_state[IDX_ALPHADOT], m_state[IDX_BETADOT], m_state[IDX_PSIDOT],
+            m_state[IDX_INTX], m_state[IDX_INTY], m_state[IDX_INTZ], m_state[IDX_INTPSI],
+            uApplied[0], uApplied[1], uApplied[2], uApplied[3],
+            ref.pos[0], ref.pos[1], ref.pos[2], ref.yaw, ref.vel[0], ref.vel[1], ref.vel[2],
+            m_trackingErr[0], m_trackingErr[1], m_trackingErr[2], m_trackingErr[3],
+            m_userForces[0], m_userForces[1], m_userForces[2],
+        }};
+        recorder.record(row);
+    }
+#endif
 
     return false;
 }

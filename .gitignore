@@ -35,3 +35,9 @@ env/
 # Compiled driver binaries from notebook codegen
 modeling/notebooks/exported_cpp/**/driver
 modeling/notebooks/exported_cpp/**/_driver
+
+# out data (log, profile)
+out_data/*
+
+# Ephemeral benchmark report (regenerated per run; docs/benchmark.md is committed)
+benchmark-report.md

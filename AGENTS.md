@@ -113,6 +113,7 @@ clang++ -std=c++20 -fsyntax-only \
   -Icore -Icore/System -Icore/Plant -Icore/Models -Icore/Trajectory \
   -Iapps/common/exported_cpp -Iapps/ws-served/exported_cpp \
   -Iapps/ws-served/server -Ilibs/ws -Ilibs/sync -Ilibs/integrate -Ilibs/control \
+  -Ilibs/log -Ilibs/profile -Ilibs/record \
   -Imodeling/notebooks/exported_cpp/ROCKET_FF_LQR_01 \
   -Imodeling/notebooks/exported_cpp/QUADROTOR_FF_LQR_01 \
   -Imodeling/notebooks/exported_cpp/QUADROTOR_MPC_01 <file.cpp>
@@ -136,6 +137,36 @@ cmake --build build-plants-test
 cmake -S libs/control/test -B build-ilqr-test -DCMAKE_BUILD_TYPE=Release
 cmake --build build-ilqr-test
 ./build-ilqr-test/ilqr_test        # double-integrator: loose-box reach + tight-box feasibility
+
+# logger + profiler tests (native, self-contained: no core, no protocol)
+cmake -S libs/log/test -B build-log-test -DCMAKE_BUILD_TYPE=Release
+cmake --build build-log-test
+./build-log-test/log_test          # deferred formatting + level filter + drop counting
+cmake -S libs/profile/test -B build-profile-test -DCMAKE_BUILD_TYPE=Release
+cmake --build build-profile-test
+./build-profile-test/profile_test  # scope aggregates + wait-free snapshot round-trip
+cmake -S libs/record/test -B build-record-test -DCMAKE_BUILD_TYPE=Release
+cmake --build build-record-test
+./build-record-test/record_test    # wide-CSV round-trip + explicit drop counting
+
+# speed benchmarks (NOT a CI gate — timing-dependent). perf_bench sizes the
+# per-call cost of the logger/profiler/recorder macros ON vs OFF and the drain
+# (perf_bench_off shows the compile-out residual); model_bench times one
+# PerformIntegration per model. `python3 bench/report.py build-bench` assembles
+# the Markdown artifact the CI `benchmark` job uploads.
+# RULE: every runtime model MUST be represented in model_bench (add new models
+# there) so its integration cost is tracked. docs/benchmark.md is the stable,
+# hand-curated companion (the report artifact is ephemeral, gitignored).
+# RULE: if you run these benchmarks and a figure differs markedly from the one
+# quoted in docs/benchmark.md (rule of thumb: a model's tick cost or a diagnostics
+# cost moved by roughly an order of magnitude, or clearly regressed beyond run-to-
+# run noise), do NOT silently update the doc — flag it to the developer: it may be
+# a real performance regression, or benchmark.md may be due for a refresh.
+cmake -S bench -B build-bench -DCMAKE_BUILD_TYPE=Release
+cmake --build build-bench
+./build-bench/perf_bench            # features compiled in (runtime ON/OFF)
+./build-bench/perf_bench_off        # features compiled out (macros stripped ~0)
+./build-bench/model_bench          # per-model integration cost (mean/p50/p95/max)
 
 # controller C++<->Python conformance (golden rule 10; iLQR today). ctypes, no
 # numpy: certifies the C++ solution against an independent Python oracle on a

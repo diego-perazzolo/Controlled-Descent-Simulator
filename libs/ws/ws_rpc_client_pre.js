@@ -40,7 +40,11 @@ Module['preRun'].push(function () {
         '      var m=new Uint8Array(ev.data);\n' +
         '      if(m.length<4)return;\n' + /* malformed: no correlation id */
         '      i32[2]=(m[0]|(m[1]<<8)|(m[2]<<16)|(m[3]<<24))|0;\n' +
-        '      u8.set(m.subarray(4),16);i32[1]=m.length-4;\n' +
+        /* guard: a payload larger than the data area would throw RangeError in
+           u8.set and wedge the transport; signal oversize (len -1) instead */
+        '      var n=m.length-4;\n' +
+        '      if(n>u8.length-16){i32[1]=-1;Atomics.store(i32,0,2);return;}\n' +
+        '      u8.set(m.subarray(4),16);i32[1]=n;\n' +
         '      Atomics.store(i32,0,2);\n' +
         '    };\n' +
         '    ws.onerror=function(){Atomics.store(i32,0,-1);};\n' +
@@ -55,7 +59,12 @@ Module['preRun'].push(function () {
 
     var url = new URLSearchParams(location.search).get('ws') ||
               g.CDS_WS_URL || 'ws://localhost:9002';
-    var sab = new SharedArrayBuffer(16 + 512);
+    /* 16-byte header + data area. The data area must be >= the largest wire
+       message (ws_proto::WS_MAX_MSG_SIZE, currently 4096): sized here to 2x
+       that, matching the original headroom. Keep it ahead of WS_MAX_MSG_SIZE if
+       that grows — otherwise oversize responses are dropped by the worker's
+       guard (they cannot corrupt memory, but the RPC fails). */
+    var sab = new SharedArrayBuffer(16 + 8192);
     var w = new Worker(URL.createObjectURL(
         new Blob([src], { type: 'application/javascript' })));
 

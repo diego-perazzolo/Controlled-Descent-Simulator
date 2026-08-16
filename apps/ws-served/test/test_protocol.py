@@ -234,6 +234,75 @@ def run_tests(s):
     assert struct.unpack("<BBB", p)[2] == 0, "remove last failed"
     print("remove last OK")
 
+    # --- diagnostics: logger / profiler inspection (plumbing round-trip) ---
+    # No core call-sites are instrumented yet, so these return well-formed but
+    # empty text-blob payloads. We assert the exact wire sizes (char buffers on
+    # the POD wire) and that the fields decode, plus the setters' out-of-range
+    # error path.
+    p = rpc(s, header(MSG["GET_LOG_MODULES"]))          # header(2) + char[1200] + count(f)
+    assert len(p) == 1206, f"log modules size {len(p)}"
+    assert (p[0], p[1]) == (VERSION, MSG["GET_LOG_MODULES"]), "log modules header"
+    n_logmod = struct.unpack("<f", p[1202:1206])[0]
+    print(f"get log modules OK (count={n_logmod:.0f})")
+
+    p = rpc(s, header(MSG["GET_PROFILE_MODULES"]))       # same shape as log modules
+    assert len(p) == 1206, f"profile modules size {len(p)}"
+    print("get profile modules OK")
+
+    p = rpc(s, header(MSG["GET_LOG_BATCH"]))            # header(2) + char[3800] + count + dropped
+    assert len(p) == 3810, f"log batch size {len(p)}"
+    n_lines = struct.unpack("<f", p[3802:3806])[0]
+    dropped = struct.unpack("<f", p[3806:3810])[0]
+    print(f"get log batch OK (count={n_lines:.0f}, dropped={dropped:.0f})")
+
+    p = rpc(s, header(MSG["GET_PROFILE_TABLE"]))        # header(2) + char[3600] + count
+    assert len(p) == 3606, f"profile table size {len(p)}"
+    print("get profile table OK")
+
+    # setters on a clearly out-of-range module must return error (the core
+    # registers a couple of modules at startup, so index 999 is safely invalid).
+    # setLogLevel carries {module, level, sampleN}
+    p = rpc(s, header(MSG["SET_LOG_LEVEL"]) + struct.pack("<fff", 999.0, 0.0, 1.0))
+    assert struct.unpack("<BBB", p)[2] == 1, "set log level should reject out-of-range module"
+    print("set log level out-of-range rejected OK")
+
+    p = rpc(s, header(MSG["SET_PROFILE_ENABLED"]) + struct.pack("<fB", 999.0, 1))
+    assert struct.unpack("<BBB", p)[2] == 1, "set profile enabled should reject out-of-range module"
+    print("set profile enabled out-of-range rejected OK")
+
+    # reset profiler stats: always succeeds
+    p = rpc(s, header(MSG["RESET_PROFILE"]))
+    assert struct.unpack("<BBB", p)[2] == 0, "reset profile failed"
+    print("reset profile OK")
+
+    # toggle diag files off (two uint8 bools): server-side, always succeeds
+    p = rpc(s, header(MSG["SET_DIAG_FILES"]) + struct.pack("<BB", 0, 0))
+    assert struct.unpack("<BBB", p)[2] == 0, "set diag files failed"
+    print("set diag files OK")
+
+    # data recorder status: char[64] modelName + 3 floats (active, enabled,
+    # droppedRows). No model is running under this test, so active must be 0.
+    def record_status(p):
+        assert len(p) == 2 + 64 + 12, f"record status size {len(p)}"
+        name = p[2:66].split(b"\x00", 1)[0].decode("ascii", "replace")
+        active, enabled, dropped = struct.unpack("<fff", p[66:78])
+        return name, active, enabled, dropped
+
+    # a model was initialized earlier in this test, so its recorder is active
+    p = rpc(s, header(MSG["GET_RECORD_STATUS"]))
+    name, active, enabled, dropped = record_status(p)
+    assert active == 1.0, "the initialized model should have an active recorder"
+    print(f"get record status OK (model={name!r}, active={active:.0f}, dropped={dropped:.0f})")
+
+    # enable then disable recording; with a model active this really toggles
+    p = rpc(s, header(MSG["SET_RECORDING"]) + struct.pack("<B", 1))
+    _, active, enabled, _ = record_status(p)
+    assert active == 1.0 and enabled == 1.0, "recording should enable with a model active"
+    p = rpc(s, header(MSG["SET_RECORDING"]) + struct.pack("<B", 0))
+    _, _, enabled, _ = record_status(p)
+    assert enabled == 0.0, "recording should disable again"
+    print("set recording toggle OK")
+
     # close politely
     s.sendall(bytes([0x88, 0x80]) + os.urandom(4))
 

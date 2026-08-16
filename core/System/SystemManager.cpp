@@ -32,16 +32,13 @@
 // =============================================================================
 #include "SystemManager.hpp"
 #include <cstdio>
+#include "log.hpp"
+#include "profile.hpp"
 
-//#define CDS_TRACE
+static const auto logger = cds_log::registry().module("SystemManager");
+static const auto logger_tick = cds_log::registry().module("SystemManagerTick");
+static const auto profile_tick = cds_profile::registry().module("SystemManagerTick");
 
-#ifdef CDS_TRACE
-#define TRACE(fmt, ...)                      \
-    std::printf("[trace] %s:%d | " fmt "\n", \
-                __FILE__, __LINE__ __VA_OPT__(, ) __VA_ARGS__)
-#else
-#define TRACE(fmt, ...) ((void)0)
-#endif
 
 /* guard clauses: early-return with error (true) when the system is not in the
    required state. Caller must hold m_mutex */
@@ -76,7 +73,7 @@ SystemManager::SystemManager(void) : m_pModel(nullptr),
                                      m_isRunning(false),
                                      m_userForces({0})
 {
-    TRACE("Created");
+    CDS_LOG_INFO(logger, "Created");
 }
 
 SystemManager::~SystemManager(void)
@@ -86,7 +83,7 @@ SystemManager::~SystemManager(void)
        would deadlock */
     m_isRunning = false;
 
-    TRACE("Destroyed");
+    CDS_LOG_INFO(logger, "Destroyed");
 }
 
 bool SystemManager::InitModel(modelPtr_t &&pModel)
@@ -97,7 +94,7 @@ bool SystemManager::InitModel(modelPtr_t &&pModel)
 
     m_pModel = std::move(pModel);
 
-    TRACE("OK");
+    CDS_LOG_INFO(logger, "Model initialized");
 
     return false;
 }
@@ -111,7 +108,7 @@ bool SystemManager::InitTrajectory(void)
 
     m_pTrajectoryManager = std::make_unique<TrajectoryManager>();
 
-    TRACE("OK");
+    CDS_LOG_INFO(logger, "Trajectory initialized");
 
     return false;
 }
@@ -124,7 +121,7 @@ bool SystemManager::AttachPlant(plantPtr_t &&pPlant)
 
     if (!pPlant)
     {
-        // Invalid plant, error
+        CDS_LOG_ERROR(logger, "Invalid plant");
         return true;
     }
 
@@ -132,13 +129,13 @@ bool SystemManager::AttachPlant(plantPtr_t &&pPlant)
        flows and the vehicle can be staged before any mission starts */
     if (pPlant->Connect())
     {
-        // Link bring-up failed, do not attach
+        CDS_LOG_ERROR(logger, "Could not connect to plant");
         return true;
     }
 
     m_pPlant = std::move(pPlant);
 
-    TRACE("OK");
+    CDS_LOG_INFO(logger, "Plant attached");
 
     return false;
 }
@@ -154,7 +151,7 @@ bool SystemManager::DetachPlant(void)
     m_pPlant->Disconnect();
     m_pPlant.reset();
 
-    TRACE("OK");
+    CDS_LOG_INFO(logger, "Plant detached");
 
     return false;
 }
@@ -163,7 +160,7 @@ bool SystemManager::ExecuteOnModel(const std::function<bool(BaseModel &)> &model
 {
     if (!modelFcn)
     {
-        // Invalid function, error
+        CDS_LOG_ERROR(logger, "Cannot execute on model");
         return true;
     }
 
@@ -173,9 +170,9 @@ bool SystemManager::ExecuteOnModel(const std::function<bool(BaseModel &)> &model
 
     bool ret = modelFcn(*m_pModel);
 
-    if (!ret)
+    if (ret)
     {
-        TRACE("OK");
+        CDS_LOG_ERROR(logger, "Execute on model");
     }
 
     return ret;
@@ -185,7 +182,7 @@ bool SystemManager::ExecuteOnPlant(const std::function<bool(BasePlant &)> &plant
 {
     if (!plantFcn)
     {
-        // Invalid function, error
+        CDS_LOG_ERROR(logger, "Cannot execute on plant");
         return true;
     }
 
@@ -195,9 +192,9 @@ bool SystemManager::ExecuteOnPlant(const std::function<bool(BasePlant &)> &plant
 
     bool ret = plantFcn(*m_pPlant);
 
-    if (!ret)
+    if (ret)
     {
-        TRACE("OK");
+        CDS_LOG_ERROR(logger, "Execute on plant");
     }
 
     return ret;
@@ -207,7 +204,7 @@ bool SystemManager::ExecuteOnTrajectoryManager(const std::function<bool(const Tr
 {
     if (!tmFcn)
     {
-        // Invalid function, error
+        CDS_LOG_ERROR(logger, "Cannot execute on trajectory");
         return true;
     }
 
@@ -215,15 +212,15 @@ bool SystemManager::ExecuteOnTrajectoryManager(const std::function<bool(const Tr
 
     if (!m_pTrajectoryManager)
     {
-        // No trajectory initialized, error
+        CDS_LOG_ERROR(logger, "Cannot execute on trajectory");
         return true;
     }
 
     bool ret = tmFcn(*m_pTrajectoryManager);
 
-    if (!ret)
+    if (ret)
     {
-        TRACE("OK");
+        CDS_LOG_ERROR(logger, "Execute on trajectory");
     }
 
     return ret;
@@ -233,7 +230,7 @@ bool SystemManager::MutateTrajectoryManager(const std::function<bool(TrajectoryM
 {
     if (!tmFcn)
     {
-        // Invalid function, error
+        CDS_LOG_ERROR(logger, "Cannot mutate trajectory");
         return true;
     }
 
@@ -243,7 +240,7 @@ bool SystemManager::MutateTrajectoryManager(const std::function<bool(TrajectoryM
 
     if (!m_pTrajectoryManager)
     {
-        // No trajectory initialized, error
+        CDS_LOG_ERROR(logger, "Cannot mutate trajectory");
         return true;
     }
 
@@ -251,15 +248,15 @@ bool SystemManager::MutateTrajectoryManager(const std::function<bool(TrajectoryM
 
     if (ret)
     {
-        // Mutation failed, error
+        CDS_LOG_ERROR(logger, "Mutating trajectory");
         return true;
     }
 
     ret = _attachTrajectoryToModel();
 
-    if (!ret)
+    if (ret)
     {
-        TRACE("OK");
+        CDS_LOG_ERROR(logger, "Attaching trajectory");
     }
 
     return ret;
@@ -283,13 +280,14 @@ bool SystemManager::BeginStaging(sm_coord_t safetyAltitude)
     if (!m_pTrajectoryManager || safetyAltitude < 0)
     {
         // No trajectory to size the altitude, or invalid margin, error
+        CDS_LOG_ERROR(logger, "Trajectory not initialized or wrong safe altitude");
         return true;
     }
 
     core_coord_t altitudeRange = 0;
     if (m_pTrajectoryManager->GetAltitudeRange(altitudeRange))
     {
-        // Empty trajectory, error
+        CDS_LOG_ERROR(logger, "Cannot get altitude range from trajectory");
         return true;
     }
 
@@ -298,7 +296,7 @@ bool SystemManager::BeginStaging(sm_coord_t safetyAltitude)
     Reference_t ref0;
     if (m_pTrajectoryManager->GetReference(0, ref0))
     {
-        // Empty trajectory, error
+        CDS_LOG_ERROR(logger, "Cannot get first trajectory sample");
         return true;
     }
 
@@ -347,23 +345,23 @@ bool SystemManager::Run(void)
 
         if (m_pPlant->Start())
         {
-            // Plant failed to start, do not run
+            CDS_LOG_ERROR(logger, "Cannot start plant");
             return true;
         }
     }
 
     m_isRunning = true;
 
-    TRACE("OK");
-
     return false;
 }
 
 bool SystemManager::ExecuteTick(sm_coord_t timestep_seconds)
 {
+    CDS_PROFILE(profile_tick, "ExecuteTick");
     lockGuard_t lock(m_mutex);
     bool ret = false;
 
+    
     RETURN_ERR_IF_NO_MODEL;
     RETURN_ERR_IF_STOPPED;
 
@@ -379,7 +377,9 @@ bool SystemManager::ExecuteTick(sm_coord_t timestep_seconds)
         if (!m_pModel->GetCurrentTimeSeconds(commands.time_seconds) &&
             !m_pTrajectoryManager->GetReference(commands.time_seconds, commands.reference))
         {
-            m_pPlant->PushCommands(commands);
+            /* best-effort (see NOTE above): a failed deposit must not error the
+               tick, so its result is intentionally not folded into ret */
+            (void)m_pPlant->PushCommands(commands);
         }
     }
 
@@ -387,9 +387,10 @@ bool SystemManager::ExecuteTick(sm_coord_t timestep_seconds)
     if (m_pPlant)
     {
         BasePlant::plantMeasurements_t measurements = {};
-        /* failure tolerated before the first published sample; measurements
-           will feed filtering and control (future) */
-        m_pPlant->PullMeasurements(measurements);
+        /* best-effort: a stale/lagging plant or the window before the first
+           published sample makes this fail routinely — tolerated, not folded
+           into ret (measurements will feed filtering and control, future) */
+        (void)m_pPlant->PullMeasurements(measurements);
     }
 
     // Perform filtering
@@ -402,9 +403,9 @@ bool SystemManager::ExecuteTick(sm_coord_t timestep_seconds)
                                          .user_fY = m_userForces[1],
                                          .user_fZ = m_userForces[2]});
 
-    if (!ret)
+    if (ret)
     {
-        TRACE("OK: %f", timestep_seconds);
+       CDS_LOG_ERROR(logger_tick, "Error during real-time integration");
     }
 
     return ret;
@@ -421,10 +422,14 @@ bool SystemManager::Stop(void)
     {
         ret |= m_pPlant->Stop();
     }
-
-    if (!ret)
+    
+    if (ret)
     {
-        TRACE("OK");
+        CDS_LOG_ERROR(logger, "Cannot stop plant");
+    }
+    else
+    {
+        CDS_LOG_INFO(logger, "Plant stopped");
     }
 
     return ret;
@@ -436,7 +441,7 @@ bool SystemManager::SetParameters(const systemManagerParams_t &params)
 
     m_params = params;
 
-    TRACE("OK");
+    CDS_LOG_INFO(logger, "Parameters set");
     return false;
 }
 
@@ -456,7 +461,7 @@ bool SystemManager::_attachTrajectoryToModel(void)
     Reference_t ref;
     if (m_pTrajectoryManager->GetReference(0, ref))
     {
-        // Empty trajectory: nothing to attach, not an error
+        CDS_LOG_ERROR(logger, "Cannot attach an empty trajectory");
         return false;
     }
 

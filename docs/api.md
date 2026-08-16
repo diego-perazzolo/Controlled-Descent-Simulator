@@ -65,12 +65,67 @@ bool ext_trajectory_append_point(ext_trajectoryPointParams_t params);
 
 /* Remove last trajectory item, returns true on error */
 bool ext_trajectory_remove_last_item(void);
+
+/* --- logger / profiler inspection (libs/log, libs/profile) --- */
+
+/* Drain a batch of recent log lines from the UI buffer. `lines` packs `count`
+   newline-separated 'timestamp\tLEVEL\tmodule\ttext' records (timestamp is local
+   wall-clock "YYYY-MM-DD HH:MM:SS.uuuuuu", microsecond precision); `dropped`
+   counts lines lost to UI-buffer overflow since the last call. Parse on the JS
+   side */
+ext_logBatch ext_getLogBatch(void);
+
+/* List modules, one record per newline. getLogModules:
+   'index\tname\tlevel\tsampleN'; getProfileModules: 'index\tname\tenabled' */
+ext_moduleList ext_getLogModules(void);
+ext_moduleList ext_getProfileModules(void);
+
+/* Set a log module's runtime level (0=Trace..4=Error, 5=Off) and its sampling
+   divisor N (1 = emit all; N>1 = 1 in N per _SAMPLED call site). Returns true
+   on error (module index out of range) */
+bool ext_setLogLevel(ext_logLevelParams params);
+
+/* Enable or disable profiling for a module, returns true on error */
+bool ext_setProfileEnabled(ext_profileEnableParams params);
+
+/* Get the profiler stats table from the latest published snapshot (only scopes
+   of enabled modules), one record per newline:
+   'module\tscope\tkind\tcount\tmean\tstd\tmin\tmax\tp50\tp95\tp99'. kind is
+   'us' (a timed scope, values in microseconds) or 'val' (a value scope, raw) */
+ext_profileTable ext_getProfileTable(void);
+
+/* Reset all profiler statistics (clears cold-start outliers), returns true on
+   error */
+bool ext_resetProfile(void);
+
+/* Toggle the server-side diagnostics files (no-op in the wasm build, which has
+   no real filesystem): logFile mirrors the log to a file (cds.log), profileRaw
+   streams every raw profiler sample to a CSV (cds_profile_raw.csv) for offline
+   analysis. Every file gets a unique, timestamped name and a fresh file is
+   opened each time serialization is toggled back on. Returns true on error */
+bool ext_setDiagFiles(ext_diagFiles params);
+
+/* Toggle the per-tick data recorders — lossless wide-CSV "black boxes" of the
+   active model (state/input/reference/tracking-error) and, separately, the
+   active plant (published measurements: time, sequence, state), one row each per
+   tick/sample, for offline validation and comparison (server-side only). Enables
+   both at once and returns the recorder status (a "model + plant" name summary,
+   the enabled flag, and the combined dropped-row count) */
+ext_recordStatus ext_setRecording(ext_recordParams params);
+
+/* Get the data recorder status without changing it (poll the dropped-row count
+   and the active model+plant names from the frontend) */
+ext_recordStatus ext_getRecordStatus(void);
 ```
 
 ## Key types
 
-Defined in `apps/common/exported_cpp/ext_defs.hpp`; all fields are
-`ext_coord_t` (float). Structs at this boundary are POD — no STL containers.
+Defined in `apps/common/exported_cpp/ext_defs.hpp`; fields are `ext_coord_t`
+(float) unless noted, plus `bool` and fixed `char` buffers. Structs at this
+boundary are POD — no STL containers. A `char[N]` field is how variable text
+crosses the POD wire: it is bound to JS as a `string` (embind getter/setter)
+and carries a newline/tab-delimited blob the frontend parses. Text-blob
+responses are why `WS_MAX_MSG_SIZE` is 4096.
 
 ```cpp
 ext_rocketParams               { mass_Kg, inertiaX/Y/Z_Kgm2, c, cz }
@@ -90,7 +145,20 @@ ext_snapshotData               { time_seconds, state (ext_fullState),
 ext_plantSnapshotData          { time_seconds, sequence, state (ext_fullState),
                                 isAttached (bool), isReadyToStart (bool),
                                 isError (bool) }
+ext_logBatch                   { lines (char[3800]), count, dropped }
+ext_moduleList                 { list (char[1200]), count }
+ext_profileTable               { table (char[3600]), count }
+ext_logLevelParams             { module, level, sampleN }
+ext_profileEnableParams        { module, enabled (bool) }
+ext_diagFiles                  { logFile (bool), profileRaw (bool) }
+ext_recordParams               { enabled (bool) }
+ext_recordStatus               { modelName (char[64]), active, enabled, droppedRows }
 ```
+
+`ext_recordStatus.modelName` is a "model + plant" summary of the active
+recorders. Its `active`/`enabled`/`droppedRows` are `ext_coord_t` (0.0/1.0 flags
+and a summed count) rather than `bool`, because a wire struct may not mix a
+`char` buffer with a `bool`.
 
 ## Protocol version
 

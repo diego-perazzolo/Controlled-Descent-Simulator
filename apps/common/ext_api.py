@@ -26,7 +26,7 @@ class F:
     line before the field."""
 
     def __init__(self, name, type="ext_coord_t", js=None, doc=None, pre=None,
-                 post=None, blank_before=False):
+                 post=None, blank_before=False, count=None):
         self.name = name
         self.type = type
         self.js = js if js is not None else name
@@ -34,6 +34,10 @@ class F:
         self.pre = pre
         self.post = post
         self.blank_before = blank_before
+        # count > 0 makes the field a fixed C array `type name[count]`. Only the
+        # `char` base type is supported as an array: a fixed text buffer bound to
+        # JS as a std::string — the way variable text crosses the POD wire.
+        self.count = count
 
 
 class Struct:
@@ -233,6 +237,81 @@ COMM = [
               pre="the plant is ready for a mission (staged / no staging needed)"),
             F("isError", type="bool"),
         ]),
+
+    # ---- logger / profiler inspection (text blobs parsed on the JS side) ----
+
+    Struct("ext_logBatch", file="comm",
+        doc="struct of a batch of recent log lines. `lines` packs `count`\n"
+            "newline-separated records, each 'LEVEL\\tmodule\\ttext'; the JS side\n"
+            "splits on '\\n' then on '\\t'. Fixed char buffer: text on the POD wire",
+        fields=[
+            F("lines", type="char", count=3800),
+            F("count", pre="number of records packed in `lines`"),
+            F("dropped", pre="lines dropped since the last batch (UI buffer overflow)"),
+        ]),
+
+    Struct("ext_moduleList", file="comm",
+        doc="struct listing registered modules, one 'index\\tname\\tvalue' record\n"
+            "per newline; `value` is the log level (getLogModules) or the enabled\n"
+            "flag 0/1 (getProfileModules). Fixed char buffer: text on the POD wire",
+        fields=[
+            F("list", type="char", count=1200),
+            F("count", pre="number of modules listed in `list`"),
+        ]),
+
+    Struct("ext_profileTable", file="comm",
+        doc="struct of the profiler stats table, one record per newline:\n"
+            "'module\\tscope\\tcount\\tmean_us\\tmin_us\\tmax_us\\tstd_us'. Fixed char\n"
+            "buffer: text on the POD wire",
+        fields=[
+            F("table", type="char", count=3600),
+            F("count", pre="number of scope records in `table`"),
+        ]),
+
+    Struct("ext_logLevelParams", file="comm",
+        doc="request: set a log module's runtime level and sampling divisor N\n"
+            "(module as its index; N = 1 emits all, N>1 emits 1 in N per _SAMPLED\n"
+            "call site)",
+        fields=[
+            F("module"), F("level"), F("sampleN"),
+        ]),
+
+    Struct("ext_profileEnableParams", file="comm",
+        doc="request: enable or disable profiling for a module (module as its index)",
+        fields=[
+            F("module"),
+            F("enabled", type="bool"),
+        ]),
+
+    Struct("ext_diagFiles", file="comm",
+        doc="request: toggle the server-side diagnostics files (no-op on wasm,\n"
+            "which has no real filesystem). logFile: mirror the log to a file;\n"
+            "profileRaw: stream every raw profiler sample to a CSV for analysis",
+        fields=[
+            F("logFile", type="bool"),
+            F("profileRaw", type="bool"),
+        ]),
+
+    Struct("ext_recordParams", file="comm",
+        doc="request: toggle the server-side per-tick data recorder — a lossless\n"
+            "wide-CSV black box of the active model's state/input/reference/error\n"
+            "(no-op on wasm, which has no real filesystem)",
+        fields=[
+            F("enabled", type="bool"),
+        ]),
+
+    Struct("ext_recordStatus", file="comm",
+        doc="response: state of the data recorder. modelName is the active\n"
+            "recorder's name (empty if no model is running). active/enabled/\n"
+            "droppedRows are carried as ext_coord_t (not bool) so this response\n"
+            "shares no wire struct with a bool while still holding a char buffer.\n"
+            "droppedRows is exact up to 2^24 rows (float mantissa)",
+        fields=[
+            F("modelName", type="char", count=64),
+            F("active", doc="1.0 if a model recorder is registered, else 0.0"),
+            F("enabled", doc="1.0 if it is currently recording, else 0.0"),
+            F("droppedRows", pre="rows lost to a full ring since the run began"),
+        ]),
 ]
 
 # --------------------------------------------------------------------------- #
@@ -300,4 +379,49 @@ COMMANDS = [
         req="ext_initQuadRotorParams", resp="bool",
         doc="Initialize QuadRotor model: MPC_01 (nonlinear MPC), returns true on error",
         log="init quadrotor mpc"),
+
+    # ---- logger / profiler inspection and control ----
+
+    Cmd(15, "GetLogBatch", "ext_getLogBatch", "ext_getLogBatch",
+        req=None, resp="ext_logBatch",
+        doc="Drain a batch of recent log lines from the UI buffer"),
+
+    Cmd(16, "GetLogModules", "ext_getLogModules", "ext_getLogModules",
+        req=None, resp="ext_moduleList",
+        doc="List the registered log modules with their current level"),
+
+    Cmd(17, "SetLogLevel", "ext_setLogLevel", "ext_setLogLevel",
+        req="ext_logLevelParams", resp="bool",
+        doc="Set a log module's runtime level, returns true on error"),
+
+    Cmd(18, "GetProfileModules", "ext_getProfileModules", "ext_getProfileModules",
+        req=None, resp="ext_moduleList",
+        doc="List the registered profiler modules with their enabled flag"),
+
+    Cmd(19, "SetProfileEnabled", "ext_setProfileEnabled", "ext_setProfileEnabled",
+        req="ext_profileEnableParams", resp="bool",
+        doc="Enable or disable profiling for a module, returns true on error"),
+
+    Cmd(20, "GetProfileTable", "ext_getProfileTable", "ext_getProfileTable",
+        req=None, resp="ext_profileTable",
+        doc="Get the profiler stats table from the latest published snapshot"),
+
+    Cmd(21, "ResetProfile", "ext_resetProfile", "ext_resetProfile",
+        req=None, resp="bool",
+        doc="Reset all profiler statistics (clears cold-start outliers), returns true on error"),
+
+    Cmd(22, "SetDiagFiles", "ext_setDiagFiles", "ext_setDiagFiles",
+        req="ext_diagFiles", resp="bool",
+        doc="Toggle server-side log-to-file and raw-profiler-CSV, returns true on error"),
+
+    # ---- per-tick data recorder (black-box wide CSV of the active model) ----
+
+    Cmd(23, "SetRecording", "ext_setRecording", "ext_setRecording",
+        req="ext_recordParams", resp="ext_recordStatus",
+        doc="Toggle the per-tick data recorder; returns the recorder status",
+        log="set recording"),
+
+    Cmd(24, "GetRecordStatus", "ext_getRecordStatus", "ext_getRecordStatus",
+        req=None, resp="ext_recordStatus",
+        doc="Get the data recorder status (active model, enabled flag, dropped rows)"),
 ]

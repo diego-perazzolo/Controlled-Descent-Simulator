@@ -50,7 +50,7 @@ constexpr uint16_t WS_DEFAULT_PORT = 9002;
    carry different bytes, and both sides refuse to talk: a stale
    simulator.wasm against a newer cds_server fails loudly instead
    of corrupting the parsing. */
-constexpr uint8_t WS_PROTOCOL_VERSION = 0x85;
+constexpr uint8_t WS_PROTOCOL_VERSION = 0x49;
 
 /* Message types: request and matching response carry the same type id */
 enum MsgType : uint8_t
@@ -69,6 +69,16 @@ enum MsgType : uint8_t
     WS_MSG_BEGIN_STAGING       = 12, // -> respBool_t
     WS_MSG_STOP_STAGING        = 13, // -> respBool_t
     WS_MSG_INIT_QUAD_ROTOR_MPC = 14, // -> respBool_t
+    WS_MSG_GET_LOG_BATCH       = 15, // -> respGetLogBatch_t
+    WS_MSG_GET_LOG_MODULES     = 16, // -> respGetLogModules_t
+    WS_MSG_SET_LOG_LEVEL       = 17, // -> respBool_t
+    WS_MSG_GET_PROFILE_MODULES = 18, // -> respGetProfileModules_t
+    WS_MSG_SET_PROFILE_ENABLED = 19, // -> respBool_t
+    WS_MSG_GET_PROFILE_TABLE   = 20, // -> respGetProfileTable_t
+    WS_MSG_RESET_PROFILE       = 21, // -> respBool_t
+    WS_MSG_SET_DIAG_FILES      = 22, // -> respBool_t
+    WS_MSG_SET_RECORDING       = 23, // -> respSetRecording_t
+    WS_MSG_GET_RECORD_STATUS   = 24, // -> respGetRecordStatus_t
 };
 
 #pragma pack(push, 1)
@@ -160,6 +170,62 @@ typedef struct
     ext_initQuadRotorParams p;
 } reqInitQuadRotorMPC_t;
 
+typedef struct
+{
+    header_t h;
+} reqGetLogBatch_t;
+
+typedef struct
+{
+    header_t h;
+} reqGetLogModules_t;
+
+typedef struct
+{
+    header_t h;
+    ext_logLevelParams p;
+} reqSetLogLevel_t;
+
+typedef struct
+{
+    header_t h;
+} reqGetProfileModules_t;
+
+typedef struct
+{
+    header_t h;
+    ext_coord_t module;
+    uint8_t enabled;
+} reqSetProfileEnabled_t;
+
+typedef struct
+{
+    header_t h;
+} reqGetProfileTable_t;
+
+typedef struct
+{
+    header_t h;
+} reqResetProfile_t;
+
+typedef struct
+{
+    header_t h;
+    uint8_t logFile;
+    uint8_t profileRaw;
+} reqSetDiagFiles_t;
+
+typedef struct
+{
+    header_t h;
+    uint8_t enabled;
+} reqSetRecording_t;
+
+typedef struct
+{
+    header_t h;
+} reqGetRecordStatus_t;
+
 /* ------------------------------ responses ------------------------------- */
 
 /* generic boolean response: isError follows the core convention (1 = error) */
@@ -195,36 +261,90 @@ typedef struct
     uint8_t isError;
 } respGetPlantSnapshot_t;
 
+typedef struct
+{
+    header_t h;
+    ext_logBatch p;
+} respGetLogBatch_t;
+
+typedef struct
+{
+    header_t h;
+    ext_moduleList p;
+} respGetLogModules_t;
+
+typedef struct
+{
+    header_t h;
+    ext_moduleList p;
+} respGetProfileModules_t;
+
+typedef struct
+{
+    header_t h;
+    ext_profileTable p;
+} respGetProfileTable_t;
+
+typedef struct
+{
+    header_t h;
+    ext_recordStatus p;
+} respSetRecording_t;
+
+typedef struct
+{
+    header_t h;
+    ext_recordStatus p;
+} respGetRecordStatus_t;
+
 #pragma pack(pop)
 
-/* Largest message either peer can send: used to size the shared RPC buffer */
-constexpr uint32_t WS_MAX_MSG_SIZE = 256;
+/* Largest message either peer can send: used to size the shared RPC buffer.
+   Sized to hold the text-blob responses (log batch, profiler table) that
+   carry variable text as fixed char buffers on the POD wire. */
+constexpr uint32_t WS_MAX_MSG_SIZE = 4096;
 
 /* Exact wire sizes, computed by the generator (f = sizeof(ext_coord_t) = 4):
    each peer checks them against its own ABI at compile time, so any layout
    drift (padding from mixed-size fields, architecture-dependent type widths)
    breaks the build instead of silently corrupting the parsing. */
-static_assert(sizeof(header_t)               ==  2, "wire layout drift");
-static_assert(sizeof(reqInitRocket_t)        == 58, "wire layout drift"); // 2 + 14f
-static_assert(sizeof(reqInitQuadRotor_t)     == 50, "wire layout drift"); // 2 + 12f
-static_assert(sizeof(reqTrajGetPoint_t)      ==  6, "wire layout drift"); // 2 + 1f
-static_assert(sizeof(reqTrajAppendPoly4_t)   == 86, "wire layout drift"); // 2 + 21f
-static_assert(sizeof(reqTrajAppendPoint_t)   == 22, "wire layout drift"); // 2 + 5f
-static_assert(sizeof(reqTrajRemoveLast_t)    ==  2, "wire layout drift");
-static_assert(sizeof(reqSetSystemParams_t)   == 18, "wire layout drift"); // 2 + 4f
-static_assert(sizeof(reqGetSnapshot_t)       ==  2, "wire layout drift");
-static_assert(sizeof(reqRun_t)               ==  2, "wire layout drift");
-static_assert(sizeof(reqStop_t)              ==  2, "wire layout drift");
-static_assert(sizeof(reqGetPlantSnapshot_t)  ==  2, "wire layout drift");
-static_assert(sizeof(reqBeginStaging_t)      ==  6, "wire layout drift"); // 2 + 1f
-static_assert(sizeof(reqStopStaging_t)       ==  2, "wire layout drift");
-static_assert(sizeof(reqInitQuadRotorMPC_t)  == 50, "wire layout drift"); // 2 + 12f
-static_assert(sizeof(respBool_t)             ==  3, "wire layout drift"); // 2 + u8
-static_assert(sizeof(respTrajGetPoint_t)     == 14, "wire layout drift"); // 2 + 1f + 1f + 1f
-static_assert(sizeof(respGetSnapshot_t)      == 71, "wire layout drift"); // 2 + 1f + 12f + 4f + u8
-static_assert(sizeof(respGetPlantSnapshot_t) == 61, "wire layout drift"); // 2 + 1f + 1f + 12f + u8 + u8 + u8
+static_assert(sizeof(header_t)                ==  2, "wire layout drift");
+static_assert(sizeof(reqInitRocket_t)         == 58, "wire layout drift"); // 2 + 14f
+static_assert(sizeof(reqInitQuadRotor_t)      == 50, "wire layout drift"); // 2 + 12f
+static_assert(sizeof(reqTrajGetPoint_t)       ==  6, "wire layout drift"); // 2 + 1f
+static_assert(sizeof(reqTrajAppendPoly4_t)    == 86, "wire layout drift"); // 2 + 21f
+static_assert(sizeof(reqTrajAppendPoint_t)    == 22, "wire layout drift"); // 2 + 5f
+static_assert(sizeof(reqTrajRemoveLast_t)     ==  2, "wire layout drift");
+static_assert(sizeof(reqSetSystemParams_t)    == 18, "wire layout drift"); // 2 + 4f
+static_assert(sizeof(reqGetSnapshot_t)        ==  2, "wire layout drift");
+static_assert(sizeof(reqRun_t)                ==  2, "wire layout drift");
+static_assert(sizeof(reqStop_t)               ==  2, "wire layout drift");
+static_assert(sizeof(reqGetPlantSnapshot_t)   ==  2, "wire layout drift");
+static_assert(sizeof(reqBeginStaging_t)       ==  6, "wire layout drift"); // 2 + 1f
+static_assert(sizeof(reqStopStaging_t)        ==  2, "wire layout drift");
+static_assert(sizeof(reqInitQuadRotorMPC_t)   == 50, "wire layout drift"); // 2 + 12f
+static_assert(sizeof(reqGetLogBatch_t)        ==  2, "wire layout drift");
+static_assert(sizeof(reqGetLogModules_t)      ==  2, "wire layout drift");
+static_assert(sizeof(reqSetLogLevel_t)        == 14, "wire layout drift"); // 2 + 3f
+static_assert(sizeof(reqGetProfileModules_t)  ==  2, "wire layout drift");
+static_assert(sizeof(reqSetProfileEnabled_t)  ==  7, "wire layout drift"); // 2 + 1f + u8
+static_assert(sizeof(reqGetProfileTable_t)    ==  2, "wire layout drift");
+static_assert(sizeof(reqResetProfile_t)       ==  2, "wire layout drift");
+static_assert(sizeof(reqSetDiagFiles_t)       ==  4, "wire layout drift"); // 2 + u8 + u8
+static_assert(sizeof(reqSetRecording_t)       ==  3, "wire layout drift"); // 2 + u8
+static_assert(sizeof(reqGetRecordStatus_t)    ==  2, "wire layout drift");
+static_assert(sizeof(respBool_t)              ==  3, "wire layout drift"); // 2 + u8
+static_assert(sizeof(respTrajGetPoint_t)      == 14, "wire layout drift"); // 2 + 1f + 1f + 1f
+static_assert(sizeof(respGetSnapshot_t)       == 71, "wire layout drift"); // 2 + 1f + 12f + 4f + u8
+static_assert(sizeof(respGetPlantSnapshot_t)  == 61, "wire layout drift"); // 2 + 1f + 1f + 12f + u8 + u8 + u8
+static_assert(sizeof(respGetLogBatch_t)       == 3810, "wire layout drift"); // 2 + 3800b + 1f + 1f
+static_assert(sizeof(respGetLogModules_t)     == 1206, "wire layout drift"); // 2 + 1200b + 1f
+static_assert(sizeof(respGetProfileModules_t) == 1206, "wire layout drift"); // 2 + 1200b + 1f
+static_assert(sizeof(respGetProfileTable_t)   == 3606, "wire layout drift"); // 2 + 3600b + 1f
+static_assert(sizeof(respSetRecording_t)      == 78, "wire layout drift"); // 2 + 64b + 1f + 1f + 1f
+static_assert(sizeof(respGetRecordStatus_t)   == 78, "wire layout drift"); // 2 + 64b + 1f + 1f + 1f
 
 static_assert(sizeof(reqTrajAppendPoly4_t) < WS_MAX_MSG_SIZE, "wire msg too big");
-static_assert(sizeof(respGetSnapshot_t) < WS_MAX_MSG_SIZE, "wire msg too big");
+static_assert(sizeof(respGetLogBatch_t) < WS_MAX_MSG_SIZE, "wire msg too big");
 
 } // namespace ws_proto

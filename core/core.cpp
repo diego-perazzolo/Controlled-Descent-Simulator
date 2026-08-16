@@ -31,6 +31,8 @@
 // =============================================================================
 #include <mutex>
 
+#include "log.hpp"
+#include "profile.hpp"
 #include "core.hpp"
 #include "SystemManager.hpp"
 #include "Models/Rocket.hpp"
@@ -39,6 +41,9 @@
 #include "Trajectory/TrajectoryManager.hpp"
 
 using namespace CDS;
+
+static const auto logger = cds_log::registry().module("Core");
+static const auto profile = cds_profile::registry().module("Core");
 
 struct
 {
@@ -99,7 +104,7 @@ bool core_rocketFfLqr01_init(const core_rocketParams_t rPar)
     auto model = std::make_unique<Rocket>();
     if (model->SetModelParams(rPar))
     {
-        // Err
+        CDS_LOG_ERROR(logger, "Cannot initialize Rocket FF LQR model");
         return true;
     }
 
@@ -113,7 +118,7 @@ bool core_quadRotorFfLqr01_init(const core_quadRotorParams_t rPar)
     auto model = std::make_unique<QuadRotor>();
     if (model->SetModelParams(rPar))
     {
-        // Err
+        CDS_LOG_ERROR(logger, "Cannot initialize Quadrotor FF LQR model");
         return true;
     }
 
@@ -127,7 +132,7 @@ bool core_quadRotorMPC01_init(const core_quadRotorParams_t rPar)
     auto model = std::make_unique<QuadRotorMPC>();
     if (model->SetModelParams(rPar))
     {
-        // Err
+        CDS_LOG_ERROR(logger, "Cannot initialize Quadrotor MPC model");
         return true;
     }
 
@@ -163,7 +168,7 @@ bool core_getTrajectoryPoint(core_coord_t time, Vec3 &point)
     if (_ctx.SM.ExecuteOnTrajectoryManager([time, &ref](const TrajectoryManager &tM)
                                   { return tM.GetReference(time, ref);}))
     {
-        // Err
+        CDS_LOG_ERROR(logger, "Cannot obtain trajectory reference");
         return true;
     }
 
@@ -186,7 +191,7 @@ bool core_setSystemParams(const core_systemParams_t &par)
 
 bool core_getSnapshot(core_snapshotData_t &par)
 {
-
+    CDS_PROFILE(profile, "Get system snapshot");
     return _ctx.SM.ExecuteOnModel([&par](BaseModel &model)
                                   {
                                     bool ret = model.GetState(par.state);
@@ -199,6 +204,7 @@ bool core_getSnapshot(core_snapshotData_t &par)
 
 bool core_getPlantSnapshot(core_plantSnapshotData_t &par)
 {
+    CDS_PROFILE(profile, "Get plant snapshot");
     par.isAttached = false;
 
     return _ctx.SM.ExecuteOnPlant([&par](BasePlant &plant)
@@ -212,7 +218,7 @@ bool core_getPlantSnapshot(core_plantSnapshotData_t &par)
         BasePlant::plantMeasurements_t measurements = {};
         if (plant.PullMeasurements(measurements))
         {
-            // No sample published yet, error
+            CDS_LOG_WARN(logger, "No plant sample available yet");
             return true;
         }
 

@@ -32,6 +32,8 @@
 // =============================================================================
 
 #include <emscripten/bind.h>
+#include <string>
+#include <cstring>
 #include "ext_comm.hpp"
 
 using namespace emscripten;
@@ -152,6 +154,45 @@ EMSCRIPTEN_BINDINGS(simulator) {
         .field("isReadyToStart", &ext_plantSnapshotData::isReadyToStart)
         .field("isError",        &ext_plantSnapshotData::isError);
 
+    value_object<ext_logBatch>("ext_logBatch")
+        .field("lines", +[](const ext_logBatch& o){ return std::string(o.lines); },
+               +[](ext_logBatch& o, const std::string& v){ std::strncpy(o.lines, v.c_str(), sizeof(o.lines) - 1); o.lines[sizeof(o.lines) - 1] = '\0'; })
+        .field("count",   &ext_logBatch::count)
+        .field("dropped", &ext_logBatch::dropped);
+
+    value_object<ext_moduleList>("ext_moduleList")
+        .field("list", +[](const ext_moduleList& o){ return std::string(o.list); },
+               +[](ext_moduleList& o, const std::string& v){ std::strncpy(o.list, v.c_str(), sizeof(o.list) - 1); o.list[sizeof(o.list) - 1] = '\0'; })
+        .field("count", &ext_moduleList::count);
+
+    value_object<ext_profileTable>("ext_profileTable")
+        .field("table", +[](const ext_profileTable& o){ return std::string(o.table); },
+               +[](ext_profileTable& o, const std::string& v){ std::strncpy(o.table, v.c_str(), sizeof(o.table) - 1); o.table[sizeof(o.table) - 1] = '\0'; })
+        .field("count", &ext_profileTable::count);
+
+    value_object<ext_logLevelParams>("ext_logLevelParams")
+        .field("module",  &ext_logLevelParams::module)
+        .field("level",   &ext_logLevelParams::level)
+        .field("sampleN", &ext_logLevelParams::sampleN);
+
+    value_object<ext_profileEnableParams>("ext_profileEnableParams")
+        .field("module",  &ext_profileEnableParams::module)
+        .field("enabled", &ext_profileEnableParams::enabled);
+
+    value_object<ext_diagFiles>("ext_diagFiles")
+        .field("logFile",    &ext_diagFiles::logFile)
+        .field("profileRaw", &ext_diagFiles::profileRaw);
+
+    value_object<ext_recordParams>("ext_recordParams")
+        .field("enabled", &ext_recordParams::enabled);
+
+    value_object<ext_recordStatus>("ext_recordStatus")
+        .field("modelName", +[](const ext_recordStatus& o){ return std::string(o.modelName); },
+               +[](ext_recordStatus& o, const std::string& v){ std::strncpy(o.modelName, v.c_str(), sizeof(o.modelName) - 1); o.modelName[sizeof(o.modelName) - 1] = '\0'; })
+        .field("active",      &ext_recordStatus::active)
+        .field("enabled",     &ext_recordStatus::enabled)
+        .field("droppedRows", &ext_recordStatus::droppedRows);
+
     // --- Functions exposed to JS ---
     function("ext_rocketInit", &ext_initRocket_FFLQR01);
     function("ext_quadRotorInit", &ext_initQuadRotor_FFLQR01);
@@ -167,4 +208,14 @@ EMSCRIPTEN_BINDINGS(simulator) {
     function("ext_beginStaging", &ext_beginStaging);
     function("ext_stopStaging", &ext_stopStaging);
     function("ext_quadRotorMpcInit", &ext_initQuadRotor_MPC01);
+    function("ext_getLogBatch", &ext_getLogBatch);
+    function("ext_getLogModules", &ext_getLogModules);
+    function("ext_setLogLevel", &ext_setLogLevel);
+    function("ext_getProfileModules", &ext_getProfileModules);
+    function("ext_setProfileEnabled", &ext_setProfileEnabled);
+    function("ext_getProfileTable", &ext_getProfileTable);
+    function("ext_resetProfile", &ext_resetProfile);
+    function("ext_setDiagFiles", &ext_setDiagFiles);
+    function("ext_setRecording", &ext_setRecording);
+    function("ext_getRecordStatus", &ext_getRecordStatus);
 }

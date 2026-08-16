@@ -83,6 +83,86 @@ typedef struct
     bool isError;
 } ext_plantSnapshotData;
 
+/* struct of a batch of recent log lines. `lines` packs `count`
+newline-separated records, each 'LEVEL\tmodule\ttext'; the JS side
+splits on '\n' then on '\t'. Fixed char buffer: text on the POD wire */
+typedef struct
+{
+    char lines[3800];
+    /* number of records packed in `lines` */
+    ext_coord_t count;
+    /* lines dropped since the last batch (UI buffer overflow) */
+    ext_coord_t dropped;
+} ext_logBatch;
+
+/* struct listing registered modules, one 'index\tname\tvalue' record
+per newline; `value` is the log level (getLogModules) or the enabled
+flag 0/1 (getProfileModules). Fixed char buffer: text on the POD wire */
+typedef struct
+{
+    char list[1200];
+    /* number of modules listed in `list` */
+    ext_coord_t count;
+} ext_moduleList;
+
+/* struct of the profiler stats table, one record per newline:
+'module\tscope\tcount\tmean_us\tmin_us\tmax_us\tstd_us'. Fixed char
+buffer: text on the POD wire */
+typedef struct
+{
+    char table[3600];
+    /* number of scope records in `table` */
+    ext_coord_t count;
+} ext_profileTable;
+
+/* request: set a log module's runtime level and sampling divisor N
+(module as its index; N = 1 emits all, N>1 emits 1 in N per _SAMPLED
+call site) */
+typedef struct
+{
+    ext_coord_t module;
+    ext_coord_t level;
+    ext_coord_t sampleN;
+} ext_logLevelParams;
+
+/* request: enable or disable profiling for a module (module as its index) */
+typedef struct
+{
+    ext_coord_t module;
+    bool enabled;
+} ext_profileEnableParams;
+
+/* request: toggle the server-side diagnostics files (no-op on wasm,
+which has no real filesystem). logFile: mirror the log to a file;
+profileRaw: stream every raw profiler sample to a CSV for analysis */
+typedef struct
+{
+    bool logFile;
+    bool profileRaw;
+} ext_diagFiles;
+
+/* request: toggle the server-side per-tick data recorder — a lossless
+wide-CSV black box of the active model's state/input/reference/error
+(no-op on wasm, which has no real filesystem) */
+typedef struct
+{
+    bool enabled;
+} ext_recordParams;
+
+/* response: state of the data recorder. modelName is the active
+recorder's name (empty if no model is running). active/enabled/
+droppedRows are carried as ext_coord_t (not bool) so this response
+shares no wire struct with a bool while still holding a char buffer.
+droppedRows is exact up to 2^24 rows (float mantissa) */
+typedef struct
+{
+    char modelName[64];
+    ext_coord_t active; // 1.0 if a model recorder is registered, else 0.0
+    ext_coord_t enabled; // 1.0 if it is currently recording, else 0.0
+    /* rows lost to a full ring since the run began */
+    ext_coord_t droppedRows;
+} ext_recordStatus;
+
 /* Initialize Rocket model: FF_LQR_01, returns true on error */
 bool ext_initRocket_FFLQR01(ext_initRocketParams params);
 
@@ -124,3 +204,33 @@ bool ext_stopStaging(void);
 
 /* Initialize QuadRotor model: MPC_01 (nonlinear MPC), returns true on error */
 bool ext_initQuadRotor_MPC01(ext_initQuadRotorParams params);
+
+/* Drain a batch of recent log lines from the UI buffer */
+ext_logBatch ext_getLogBatch(void);
+
+/* List the registered log modules with their current level */
+ext_moduleList ext_getLogModules(void);
+
+/* Set a log module's runtime level, returns true on error */
+bool ext_setLogLevel(ext_logLevelParams params);
+
+/* List the registered profiler modules with their enabled flag */
+ext_moduleList ext_getProfileModules(void);
+
+/* Enable or disable profiling for a module, returns true on error */
+bool ext_setProfileEnabled(ext_profileEnableParams params);
+
+/* Get the profiler stats table from the latest published snapshot */
+ext_profileTable ext_getProfileTable(void);
+
+/* Reset all profiler statistics (clears cold-start outliers), returns true on error */
+bool ext_resetProfile(void);
+
+/* Toggle server-side log-to-file and raw-profiler-CSV, returns true on error */
+bool ext_setDiagFiles(ext_diagFiles params);
+
+/* Toggle the per-tick data recorder; returns the recorder status */
+ext_recordStatus ext_setRecording(ext_recordParams params);
+
+/* Get the data recorder status (active model, enabled flag, dropped rows) */
+ext_recordStatus ext_getRecordStatus(void);

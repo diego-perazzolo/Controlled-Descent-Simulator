@@ -32,6 +32,9 @@
 // =============================================================================
 
 #include "QuadRotor.hpp"
+#include "log.hpp"
+#include "profile.hpp"
+#include "Recorder.hpp"
 #include <cmath>
 #include <array>
 
@@ -84,6 +87,26 @@
 
 namespace CDS {
 
+static const auto logger = cds_log::registry().module("Quadrotor");
+static const auto profile = cds_profile::registry().module("Quadrotor");
+
+// ----------------------------------------------------------------------------
+// Data recorder (black-box wide CSV, server-side). Channel 0 is t_sim; then the
+// full 17-state (quaternion attitude + LQR integrators), the 4 rotor thrusts,
+// the position/heading/velocity reference, the tracking error and the user
+// forces. See the row-alignment note in PerformIntegration.
+// ----------------------------------------------------------------------------
+static cds_record::Recorder<double, 36, 4096> recorder("Quadrotor", {{
+    "t_sim",
+    "x", "y", "z", "qw", "qx", "qy", "qz",
+    "vx", "vy", "vz", "wx", "wy", "wz",
+    "IntX", "IntY", "IntZ", "IntPsi",
+    "T1", "T2", "T3", "T4",
+    "ref_x", "ref_y", "ref_z", "ref_yaw", "ref_vx", "ref_vy", "ref_vz",
+    "e_x", "e_y", "e_z", "e_yaw",
+    "uf_x", "uf_y", "uf_z",
+}});
+
 // -----------------------------------------------------------------------------
 // _normalize_quaternion()
 // RK4 does not preserve the unit-norm constraint of the attitude quaternion
@@ -110,11 +133,12 @@ static void _normalize_quaternion(QuadRotor::StateVec& x)
 static bool rk4_step(void* pDynamics, QuadRotor::StateVec& x,
                      Reference_t& ref,
                      const QuadRotor::UserForces& userF,
-                     const double dt)
+                     const double dt,
+                     QuadRotor::InputVec& uApplied)
 {
     if (pDynamics == nullptr)
     {
-        // ERR
+        CDS_LOG_ERROR(logger, "Model not initialized");
         return true;
     }
 
@@ -122,32 +146,40 @@ static bool rk4_step(void* pDynamics, QuadRotor::StateVec& x,
         static_cast<Dynamics::QUADROTOR_FF_LQR_01*>(pDynamics);
 
     // Compute control at current state (held constant over the step)
-    const QuadRotor::InputVec u = pDyn->ExecuteControl(x, ref);
+    QuadRotor::InputVec u;
+    {
+        CDS_PROFILE(profile, "Execute control");
+        u = pDyn->ExecuteControl(x, ref);
+    }
+    uApplied = u; // hand the applied command back for telemetry
 
     // Four RK4 slope evaluations
-    const QuadRotor::StateVec k1 = pDyn->Dynamics(x, u, ref, userF);
-
-    QuadRotor::StateVec x2{};
-    for (size_t i = 0; i < QUAD_STATE_DIM; ++i) x2[i] = x[i] + k1[i] * dt * 0.5;
-    const QuadRotor::StateVec k2 = pDyn->Dynamics(x2, u, ref, userF);
-
-    QuadRotor::StateVec x3{};
-    for (size_t i = 0; i < QUAD_STATE_DIM; ++i) x3[i] = x[i] + k2[i] * dt * 0.5;
-    const QuadRotor::StateVec k3 = pDyn->Dynamics(x3, u, ref, userF);
-
-    QuadRotor::StateVec x4{};
-    for (size_t i = 0; i < QUAD_STATE_DIM; ++i) x4[i] = x[i] + k3[i] * dt;
-    const QuadRotor::StateVec k4 = pDyn->Dynamics(x4, u, ref, userF);
-
-    // Weighted sum
-    for (size_t i = 0; i < QUAD_STATE_DIM; ++i)
+    {
+        CDS_PROFILE(profile, "RK4 integration");
+        const QuadRotor::StateVec k1 = pDyn->Dynamics(x, u, ref, userF);
+        
+        QuadRotor::StateVec x2{};
+        for (size_t i = 0; i < QUAD_STATE_DIM; ++i) x2[i] = x[i] + k1[i] * dt * 0.5;
+        const QuadRotor::StateVec k2 = pDyn->Dynamics(x2, u, ref, userF);
+        
+        QuadRotor::StateVec x3{};
+        for (size_t i = 0; i < QUAD_STATE_DIM; ++i) x3[i] = x[i] + k2[i] * dt * 0.5;
+        const QuadRotor::StateVec k3 = pDyn->Dynamics(x3, u, ref, userF);
+        
+        QuadRotor::StateVec x4{};
+        for (size_t i = 0; i < QUAD_STATE_DIM; ++i) x4[i] = x[i] + k3[i] * dt;
+        const QuadRotor::StateVec k4 = pDyn->Dynamics(x4, u, ref, userF);
+        
+        // Weighted sum
+        for (size_t i = 0; i < QUAD_STATE_DIM; ++i)
         x[i] = x[i] + (k1[i] + 2.0*k2[i] + 2.0*k3[i] + k4[i]) * dt / 6.0;
-
-    // Keep the attitude quaternion on the unit sphere
-    _normalize_quaternion(x);
-
-    return false;
-}
+        
+        // Keep the attitude quaternion on the unit sphere
+        _normalize_quaternion(x);
+    }
+        
+        return false;
+    }
 
 static void _init_dynamicsState(Reference_t& ref, QuadRotor::StateVec& state)
 {
@@ -193,6 +225,8 @@ QuadRotor::QuadRotor()
     m_trajectoryManagerPtr = nullptr;
 
     m_time = 0;
+
+    recorder.activateAsModel(); // this model owns the model data recorder while it lives
 }
 
 QuadRotor::~QuadRotor()
@@ -210,7 +244,7 @@ bool QuadRotor::SetModelParams(const std::any& params)
 
     if (dynamics == nullptr || params.type() != typeid(core_quadRotorParams_t&))
     {
-        // Err
+        CDS_LOG_ERROR(logger, "Model not initialized or wrong params type");
         return true;
     }
 
@@ -230,6 +264,24 @@ bool QuadRotor::SetModelParams(const std::any& params)
     dynamics->SetParam(PN::ThrustMax, p.Fm_max);
     dynamics->SetParam(PN::ThrustMin, p.Fm_min);
 
+    // Recorder run metadata: full model parameters (trajectory added in
+    // SetTrajectoryManager, the last setup step).
+    recorder.clearMeta();
+    recorder.addMeta("model", "Quadrotor (FF-LQR-01)");
+    recorder.addMeta("mass_kg", p.m);
+    recorder.addMeta("Ix_kgm2", p.Ix);
+    recorder.addMeta("Iy_kgm2", p.Iy);
+    recorder.addMeta("Iz_kgm2", p.Iz);
+    recorder.addMeta("gravity_ms2", p.g);
+    recorder.addMeta("drag_lateral", p.c);
+    recorder.addMeta("drag_axial", p.cz);
+    recorder.addMeta("kThrust", p.kT);
+    recorder.addMeta("kTorque", p.kQ);
+    recorder.addMeta("arm_m", p.L);
+    recorder.addMeta("rotor_inertia_kgm2", p.Irot);
+    recorder.addMeta("motor_thrust_max_N", p.Fm_max);
+    recorder.addMeta("motor_thrust_min_N", p.Fm_min);
+
     return false;
 }
 
@@ -239,12 +291,21 @@ bool QuadRotor::SetTrajectoryManager(TrajectoryManager* pTrajectoryManager)
 
     if (pTrajectoryManager == nullptr || pTrajectoryManager->GetReference(m_time, ref))
     {
-        // Error
+        CDS_LOG_ERROR(logger, "Trajectory not initialized");
         return true;
     }
 
     m_trajectoryManagerPtr = pTrajectoryManager;
     _init_dynamicsState(ref, m_state);
+
+    // Recorder run metadata: trajectory context (start setpoint + altitude span).
+    recorder.addMeta("traj_start_x_m", ref.pos[0]);
+    recorder.addMeta("traj_start_y_m", ref.pos[1]);
+    recorder.addMeta("traj_start_z_m", ref.pos[2]);
+    recorder.addMeta("traj_start_yaw_rad", ref.yaw);
+    core_coord_t altRange = 0.0;
+    if (!pTrajectoryManager->GetAltitudeRange(altRange))
+        recorder.addMeta("traj_altitude_range_m", altRange);
 
     return false;
 }
@@ -256,7 +317,7 @@ bool QuadRotor::PerformIntegration(const core_stepParams_t& params)
     if (m_trajectoryManagerPtr == nullptr || 
         m_trajectoryManagerPtr->GetReference(m_time, ref))
     {
-        // ERR
+        CDS_LOG_ERROR(logger, "Cannot get trajectory reference");
         return true;
     }
 
@@ -278,13 +339,36 @@ bool QuadRotor::PerformIntegration(const core_stepParams_t& params)
     m_userForces[2] = params.user_fZ;
 
     // Runge Kutta 4 (control is computed inside, at the current state)
-    if (rk4_step(m_modelPtr, m_state, ref, m_userForces, params.timestep))
+    QuadRotor::InputVec uApplied{};
+    if (rk4_step(m_modelPtr, m_state, ref, m_userForces, params.timestep, uApplied))
     {
-        // Err
+        CDS_LOG_ERROR(logger, "Cannot perform model integration");
         return true;
     }
 
     m_time += params.timestep;
+
+    // Data recorder: one wide row per tick. Row alignment: the state is
+    // post-integration at t_sim; uApplied is the command held over the step;
+    // the reference and tracking error are sampled at the step start (they lead
+    // the state by one dt — negligible at the simulation timestep).
+#if CDS_RECORD_ENABLED
+    {
+        const std::array<double, 36> row{{
+            m_time,
+            m_state[IDX_X], m_state[IDX_Y], m_state[IDX_Z],
+            m_state[IDX_QW], m_state[IDX_QX], m_state[IDX_QY], m_state[IDX_QZ],
+            m_state[IDX_VX], m_state[IDX_VY], m_state[IDX_VZ],
+            m_state[IDX_WX], m_state[IDX_WY], m_state[IDX_WZ],
+            m_state[IDX_INTX], m_state[IDX_INTY], m_state[IDX_INTZ], m_state[IDX_INTPSI],
+            uApplied[0], uApplied[1], uApplied[2], uApplied[3],
+            ref.pos[0], ref.pos[1], ref.pos[2], ref.yaw, ref.vel[0], ref.vel[1], ref.vel[2],
+            m_trackingErr[0], m_trackingErr[1], m_trackingErr[2], m_trackingErr[3],
+            m_userForces[0], m_userForces[1], m_userForces[2],
+        }};
+        recorder.record(row);
+    }
+#endif
 
     return false;
 }

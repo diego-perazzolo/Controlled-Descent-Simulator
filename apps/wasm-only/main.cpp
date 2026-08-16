@@ -33,9 +33,16 @@
 
 #include <emscripten.h>
 #include "core_defs.hpp"
+#include "log.hpp"
+#include "LogSinks.hpp"
+#include "LogUiSink.hpp"
+#include "profile.hpp"
 #include <chrono>
 
 using Clock = std::chrono::steady_clock;
+
+static const auto logger = cds_log::registry().module("Main");
+static const auto profile = cds_profile::registry().module("Main");
 
 static Clock::time_point _lastTime;
 static int _is_sys_init = 0;
@@ -83,13 +90,31 @@ static void _tick_generator(void)
             dt_seconds = dtMax_seconds;
         }
 
+        CDS_PROFILE(profile, "Ticking");
         /* Actually tick the system */
         g_core_tick(dt_seconds);
+
+        /* Single-threaded build: publish the profiler aggregates (writer side)
+           and pump them into the UI cache (reader side) right after the tick,
+           on this same thread */
+        cds_profile::registry().publish();
+        cds_profile::registry().pump();
     }
+
+    /* Drain the log queue at a fixed point outside the tick's critical work.
+       One thread here, so producer and consumer are the same: this is the
+       ring's single drain-point (no background thread as on the server) */
+    cds_log::registry().drain();
 }
 
 int main()
 {
+    /* Log sink: stderr maps to the browser console in the wasm runtime. No file
+       sink (no real filesystem) and no drain thread (single-threaded runtime) */
+    static cds_log::ConsoleSink consoleSink(stderr);
+    cds_log::registry().addSink(&consoleSink);
+    cds_log::registry().addSink(&cds_log::uiSink()); // recent-lines buffer for the frontend
+
     /* Creating a timer which executes _tick_generator at the refresh rate of the screen */
     emscripten_set_main_loop(_tick_generator, 0, 0);
     return 0;
