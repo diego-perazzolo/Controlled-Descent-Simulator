@@ -221,6 +221,17 @@ python3 bench/report.py build-bench > benchmark-report.md   # full report (gitig
 
 The repository includes a GitHub Actions workflow ([`.github/workflows/deploy.yml`](../.github/workflows/deploy.yml)) that automatically builds the WASM in Release mode and deploys to GitHub Pages on every push to `main`.
 
+**Cross-origin isolation.** GitHub Pages serves static files and cannot send the
+`Cross-Origin-Opener-Policy` / `Cross-Origin-Embedder-Policy` headers, so the
+page is not cross-origin isolated and browsers clamp `performance.now()` to
+100 µs. Since the tick `dt` is wall-anchored on that clock, the added jitter
+destabilises the feed-forward controllers (the quadrotor FF-LQR visibly
+oscillates). [`frontend/coi-serviceworker.js`](../frontend/coi-serviceworker.js)
+(vendored, MIT) re-injects those headers from a service worker to restore the
+high-resolution clock; the first visit performs one transparent reload. It is a
+no-op locally, where [`tools/serve.py`](../tools/serve.py) already sends the
+headers.
+
 ## Repository Structure
 
 ```
@@ -341,6 +352,7 @@ The repository includes a GitHub Actions workflow ([`.github/workflows/deploy.ym
 │
 ├── frontend/
 │   ├── index.html
+│   ├── coi-serviceworker.js                    # Vendored (MIT): restores cross-origin isolation on GitHub Pages
 │   └── main.js                                 # Simulation loop, renderers, UI logic
 │
 ├── docs/                                       # Documentation and media

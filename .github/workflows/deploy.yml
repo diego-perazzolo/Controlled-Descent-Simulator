@@ -34,7 +34,7 @@ jobs:
         run: |
           mkdir -p _site/build _site/frontend
           cp build/simulator.js build/simulator.wasm _site/build/
-          cp frontend/index.html frontend/main.js _site/frontend/
+          cp frontend/index.html frontend/main.js frontend/coi-serviceworker.js _site/frontend/
           # Root redirect to frontend/
           cat > _site/index.html << 'REDIRECT'
           <!DOCTYPE html>

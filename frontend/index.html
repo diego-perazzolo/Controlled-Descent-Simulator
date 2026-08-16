@@ -4,6 +4,14 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Controlled Descent Simulator</title>
+    <!-- Cross-origin isolation via service worker: static hosts (e.g. GitHub
+         Pages) cannot send COOP/COEP headers, so performance.now() (which
+         backs the wall-anchored tick dt) is clamped to 100 us and the jitter
+         destabilises the feed-forward controllers. This re-injects the headers
+         client-side to restore the high-resolution clock. No-op when the server
+         already sends them (local tools/serve.py). Must load before any other
+         resource so the one-time reload happens before three.js / the wasm. -->
+    <script src="coi-serviceworker.js"></script>
     <script type="importmap">
     {
         "imports": {
