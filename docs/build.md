@@ -234,6 +234,9 @@ headers.
 
 ## Repository Structure
 
+The state vectors, forces and controllers of the models under `core/Models/`
+are described in [`models.md`](models.md).
+
 ```
 /
 ├── core/                                       # The physics core, built as a static library (cds_core)

@@ -222,7 +222,8 @@ python3 -c "import json; json.load(open('modeling/notebooks/model/<nb>.ipynb'))"
 
 - `docs/api.md` must be updated when the public ext API changes (functions or
   bound structs); `docs/build.md` when the build commands or the repo layout
-  change; `Readme.md` when the models or the features change.
+  change; `docs/models.md` when a model's state vector, forces or controller
+  changes; `Readme.md` when the models or the features change.
 - The ASCII architecture diagram in `Readme.md` uses Unicode box-drawing
   characters with a uniform total line width of 59 — verify alignment after
   any edit.

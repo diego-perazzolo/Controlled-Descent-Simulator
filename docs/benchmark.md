@@ -81,5 +81,3 @@ core:
   localhost/network latency), so it carries real transport overhead but lets the
   core run at native speed on a separate machine.
 
-A quantitative measurement of the ws round-trip is not part of the CI benchmark
-yet — it needs a browserless client harness and is planned as a follow-up.

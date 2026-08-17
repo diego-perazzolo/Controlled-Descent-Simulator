@@ -15,6 +15,9 @@ description changes). To add a command: add its structs and a `Cmd` entry
 there, regenerate (or just build), then implement the adapter function in
 the hand-written `apps/common/ext_comm.cpp`.
 
+The vehicle models this API initializes and drives — their state vectors,
+forces and controllers — are described in [`models.md`](models.md).
+
 Error convention: functions returning `bool` return `true` on error.
 
 ```cpp
