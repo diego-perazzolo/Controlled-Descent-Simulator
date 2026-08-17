@@ -34,6 +34,7 @@
 #include "log.hpp"
 #include "profile.hpp"
 #include "Recorder.hpp"
+#include "rk4.hpp"
 
 #include <cmath>
 #include <array>
@@ -106,60 +107,6 @@ static cds_record::Recorder<double, 35, 4096> recorder("Rocket", {{
     "e_x", "e_y", "e_z", "e_yaw",
     "uf_x", "uf_y", "uf_z",
 }});
-
-// =============================================================================
-// rk4_step()
-// Advances the state by one timestep dt using classic RK4.
-// Reference position is held constant over the step (ZOH).
-// =============================================================================
-static bool rk4_step(void* pDynamics, Rocket::StateVec&     x,
-                         Reference_t& ref,
-                         const Rocket::UserForces& userF,
-                         const double               dt,
-                         Rocket::InputVec&          uApplied)
-{
-
-    if(pDynamics == nullptr)
-    {
-        CDS_LOG_ERROR(logger, "Model not initialized");
-        return true;
-    }
-
-    Dynamics::ROCKET_FF_LQR_01* pDyn = static_cast<Dynamics::ROCKET_FF_LQR_01*>(pDynamics);
-
-    // Compute control at current state (held constant over the step)
-    Rocket::InputVec u;
-    {
-      CDS_PROFILE(profile, "Execute control");
-      u = pDyn->ExecuteControl(x, ref);
-    }
-    uApplied = u; // hand the applied command back for telemetry
-
-    // Four RK4 slope evaluations
-    {
-        CDS_PROFILE(profile, "RK4 integration");
-
-        const Rocket::StateVec k1 = pDyn->Dynamics(x, u, ref, userF);
-        
-        Rocket::StateVec x2{};
-        for (size_t i = 0; i < 16; ++i) x2[i] = x[i] + k1[i] * dt * 0.5;
-        const Rocket::StateVec k2 = pDyn->Dynamics(x2, u, ref, userF);
-        
-        Rocket::StateVec x3{};
-        for (size_t i = 0; i < 16; ++i) x3[i] = x[i] + k2[i] * dt * 0.5;
-        const Rocket::StateVec k3 = pDyn->Dynamics(x3, u, ref, userF);
-        
-        Rocket::StateVec x4{};
-        for (size_t i = 0; i < 16; ++i) x4[i] = x[i] + k3[i] * dt;
-        const Rocket::StateVec k4 = pDyn->Dynamics(x4, u, ref, userF);
-        
-        // Weighted sum
-        for (size_t i = 0; i < 16; ++i)
-        x[i] = x[i] + (k1[i] + 2.0*k2[i] + 2.0*k3[i] + k4[i]) * dt / 6.0;
-    }
-
-    return false;
-}
 
 static void _init_dynamicsState(Reference_t& ref, Rocket::StateVec& state)
 {
@@ -338,12 +285,26 @@ bool Rocket::PerformIntegration(const core_stepParams_t& params)
     }
 #endif
 
-    // Runge Kutta 4
-    Rocket::InputVec uApplied{};
-    if(rk4_step(m_modelPtr, m_state, ref, m_userForces, params.timestep, uApplied))
+    auto pDyn = static_cast<Dynamics::ROCKET_FF_LQR_01*>(m_modelPtr);
+    if (pDyn == nullptr)
     {
         CDS_LOG_ERROR(logger, "Cannot integrate model");
         return true;
+    }
+
+    // Compute the control once at the current state; it is held constant (ZOH)
+    // over the RK4 step, so it is captured by the derivative closure below.
+    Rocket::InputVec uApplied{};
+    {
+        CDS_PROFILE(profile, "Execute control");
+        uApplied = pDyn->ExecuteControl(m_state, ref);
+    }
+
+    // Runge Kutta 4 (generic fixed-control step; reference held constant, ZOH)
+    {
+        CDS_PROFILE(profile, "RK4 integration");
+        m_state = integrate::rk4_step<16>(m_state, params.timestep,
+            [&](const Rocket::StateVec& s) { return pDyn->Dynamics(s, uApplied, ref, m_userForces); });
     }
 
     m_time += params.timestep;

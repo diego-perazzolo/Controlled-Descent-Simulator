@@ -35,6 +35,7 @@
 #include "log.hpp"
 #include "profile.hpp"
 #include "Recorder.hpp"
+#include "rk4.hpp"
 #include <cmath>
 #include <array>
 
@@ -123,63 +124,6 @@ static void _normalize_quaternion(QuadRotor::StateVec& x)
         x[IDX_QW] *= inv; x[IDX_QX] *= inv; x[IDX_QY] *= inv; x[IDX_QZ] *= inv;
     }
 }
-
-// =============================================================================
-// rk4_step()
-// Advances the state by one timestep dt using classic RK4.
-// Reference is held constant over the step (ZOH); control is computed once at
-// the current state. The quaternion is renormalized at the end of the step.
-// =============================================================================
-static bool rk4_step(void* pDynamics, QuadRotor::StateVec& x,
-                     Reference_t& ref,
-                     const QuadRotor::UserForces& userF,
-                     const double dt,
-                     QuadRotor::InputVec& uApplied)
-{
-    if (pDynamics == nullptr)
-    {
-        CDS_LOG_ERROR(logger, "Model not initialized");
-        return true;
-    }
-
-    Dynamics::QUADROTOR_FF_LQR_01* pDyn =
-        static_cast<Dynamics::QUADROTOR_FF_LQR_01*>(pDynamics);
-
-    // Compute control at current state (held constant over the step)
-    QuadRotor::InputVec u;
-    {
-        CDS_PROFILE(profile, "Execute control");
-        u = pDyn->ExecuteControl(x, ref);
-    }
-    uApplied = u; // hand the applied command back for telemetry
-
-    // Four RK4 slope evaluations
-    {
-        CDS_PROFILE(profile, "RK4 integration");
-        const QuadRotor::StateVec k1 = pDyn->Dynamics(x, u, ref, userF);
-        
-        QuadRotor::StateVec x2{};
-        for (size_t i = 0; i < QUAD_STATE_DIM; ++i) x2[i] = x[i] + k1[i] * dt * 0.5;
-        const QuadRotor::StateVec k2 = pDyn->Dynamics(x2, u, ref, userF);
-        
-        QuadRotor::StateVec x3{};
-        for (size_t i = 0; i < QUAD_STATE_DIM; ++i) x3[i] = x[i] + k2[i] * dt * 0.5;
-        const QuadRotor::StateVec k3 = pDyn->Dynamics(x3, u, ref, userF);
-        
-        QuadRotor::StateVec x4{};
-        for (size_t i = 0; i < QUAD_STATE_DIM; ++i) x4[i] = x[i] + k3[i] * dt;
-        const QuadRotor::StateVec k4 = pDyn->Dynamics(x4, u, ref, userF);
-        
-        // Weighted sum
-        for (size_t i = 0; i < QUAD_STATE_DIM; ++i)
-        x[i] = x[i] + (k1[i] + 2.0*k2[i] + 2.0*k3[i] + k4[i]) * dt / 6.0;
-        
-        // Keep the attitude quaternion on the unit sphere
-        _normalize_quaternion(x);
-    }
-        
-        return false;
-    }
 
 static void _init_dynamicsState(Reference_t& ref, QuadRotor::StateVec& state)
 {
@@ -338,12 +282,28 @@ bool QuadRotor::PerformIntegration(const core_stepParams_t& params)
     m_userForces[1] = params.user_fY;
     m_userForces[2] = params.user_fZ;
 
-    // Runge Kutta 4 (control is computed inside, at the current state)
-    QuadRotor::InputVec uApplied{};
-    if (rk4_step(m_modelPtr, m_state, ref, m_userForces, params.timestep, uApplied))
+    auto pDyn = static_cast<Dynamics::QUADROTOR_FF_LQR_01*>(m_modelPtr);
+    if (pDyn == nullptr)
     {
         CDS_LOG_ERROR(logger, "Cannot perform model integration");
         return true;
+    }
+
+    // Compute the control once at the current state; it is held constant (ZOH)
+    // over the RK4 step, so it is captured by the derivative closure below.
+    QuadRotor::InputVec uApplied{};
+    {
+        CDS_PROFILE(profile, "Execute control");
+        uApplied = pDyn->ExecuteControl(m_state, ref);
+    }
+
+    // Runge Kutta 4 (generic fixed-control step; reference held constant, ZOH),
+    // then renormalize the attitude quaternion (RK4 does not preserve ||q||=1).
+    {
+        CDS_PROFILE(profile, "RK4 integration");
+        m_state = integrate::rk4_step<QUAD_STATE_DIM>(m_state, params.timestep,
+            [&](const QuadRotor::StateVec& s) { return pDyn->Dynamics(s, uApplied, ref, m_userForces); });
+        _normalize_quaternion(m_state);
     }
 
     m_time += params.timestep;
