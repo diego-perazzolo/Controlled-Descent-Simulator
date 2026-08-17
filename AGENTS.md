@@ -133,10 +133,11 @@ cmake --build build-plants-test
 ./build-plants-test/driver        # mailboxes, freshness, lifecycle
 ./build-plants-test/sitl_driver   # SITL plant vs in-process fake ArduCopter
 
-# generic iLQR solver test (native, self-contained: no core, no quaternions)
+# generic control-solver tests (native, self-contained: no core, no quaternions)
 cmake -S libs/control/test -B build-ilqr-test -DCMAKE_BUILD_TYPE=Release
 cmake --build build-ilqr-test
 ./build-ilqr-test/ilqr_test        # double-integrator: loose-box reach + tight-box feasibility
+./build-ilqr-test/lqr_test         # LQR synthesis: known-answer gains + closed-loop stability
 
 # logger + profiler tests (native, self-contained: no core, no protocol)
 cmake -S libs/log/test -B build-log-test -DCMAKE_BUILD_TYPE=Release
@@ -168,12 +169,17 @@ cmake --build build-bench
 ./build-bench/perf_bench_off        # features compiled out (macros stripped ~0)
 ./build-bench/model_bench          # per-model integration cost (mean/p50/p95/max)
 
-# controller C++<->Python conformance (golden rule 10; iLQR today). ctypes, no
-# numpy: certifies the C++ solution against an independent Python oracle on a
-# synthetic model (for iLQR: a constrained optimum, box-projected KKT residual ~0)
+# controller C++<->Python conformance (golden rule 10). ctypes, no numpy:
+# certifies each hand-written solver against an independent Python oracle on a
+# synthetic model. iLQR: the returned command sequence is a constrained optimum
+# (box-projected KKT residual ~0). LQR: the returned gain is an optimum, checked
+# by a Lyapunov-stationarity residual ||K - R^-1 B' X|| ~0 (X from the Lyapunov
+# equation) with X positive-definite as the Hurwitz witness. Both bind libraries
+# build from the same CMake (build-ilqr-bind).
 cmake -S libs/control/bind -B build-ilqr-bind -DCMAKE_BUILD_TYPE=Release
 cmake --build build-ilqr-bind
 python3 libs/control/bind/ilqr_conformance.py build-ilqr-bind
+python3 libs/control/bind/lqr_conformance.py  build-ilqr-bind
 
 # QuadRotorMPC model test (native, exercises the model + solver end to end)
 cmake -S core/Models/test -B build-mpc-model-test -DCMAKE_BUILD_TYPE=Release

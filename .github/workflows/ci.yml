@@ -39,6 +39,7 @@ jobs:
           cmake -S libs/control/test -B build-ilqr-test -DCMAKE_BUILD_TYPE=Release
           cmake --build build-ilqr-test
           ./build-ilqr-test/ilqr_test
+          ./build-ilqr-test/lqr_test
           cmake -S core/Models/test -B build-mpc-model-test -DCMAKE_BUILD_TYPE=Release
           cmake --build build-mpc-model-test
           ./build-mpc-model-test/mpc_model_test
@@ -60,6 +61,7 @@ jobs:
           cmake -S libs/control/bind -B build-ilqr-bind -DCMAKE_BUILD_TYPE=Release
           cmake --build build-ilqr-bind
           python3 libs/control/bind/ilqr_conformance.py build-ilqr-bind
+          python3 libs/control/bind/lqr_conformance.py  build-ilqr-bind
 
       - name: Protocol end-to-end test
         run: python3 apps/ws-served/test/test_protocol.py ./build-server/cds_server
