@@ -147,6 +147,12 @@ const ui = {
     btnTrajSave:   $('btnTrajSave'),
     btnTrajLoad:   $('btnTrajLoad'),
     trajFileInput: $('trajFileInput'),
+    // controller parameters (data-driven panel + JSON save / load)
+    ctrlParamsInfo: $('ctrlParamsInfo'),
+    ctrlParams:     $('ctrlParams'),
+    btnCtrlSave:    $('btnCtrlSave'),
+    btnCtrlLoad:    $('btnCtrlLoad'),
+    ctrlFileInput:  $('ctrlFileInput'),
     // 3D view source toggles
     chkViewTraj:  $('chkViewTraj'),
     chkViewModel: $('chkViewModel'),
@@ -1401,10 +1407,16 @@ function reset() {
     ui.btnReset.disabled = true;
 
     // Re-init core. Init wipes the backend trajectory, so the JS-side
-    // sequence has to be replayed for the next run to be valid.
+    // sequence has to be replayed for the next run to be valid. It also rebuilds
+    // the model with default controller parameters, so carry the current tuning
+    // across the re-init rather than losing it on every Reset.
+    const savedCtrl = snapshotControllerParams();
     const err = initBackend(readParamsForm());
     if (err) { setError('init failed on reset'); return; }
     trajectoryBuilder.replayToBackend();
+    refreshControllerPanel();          // fresh model (defaults) + current manifest structure
+    applyControllerParams(savedCtrl);  // re-apply the user's controller tuning
+    refreshControllerPanel();          // reflect the re-applied values
 
     // 3D preview must be recomputed from the freshly-replayed backend state.
     renderer3d?.invalidateTrajectory?.();
@@ -1749,6 +1761,7 @@ function showView(name) {
     if (name === '3d')     renderer3d.show();
     else                   renderer3d.hide();
     if (name === 'diag')   diagnostics.onShow();
+    if (name === 'params') refreshControllerPanel();
 }
 
 ui.btnCharts.addEventListener('click', () => showView('charts'));
@@ -1784,6 +1797,7 @@ function switchModel(model) {
     trajectoryBuilder.replayToBackend();
     renderer3d?.rebuildVehicle?.();
     renderer3d?.invalidateTrajectory?.();
+    refreshControllerPanel();   // the new model exposes its own controller params
 
     renderers.forEach(r => r.reset());
     simTime = 0; stepCount = 0;
@@ -1801,12 +1815,16 @@ ui.btnApply.addEventListener('click', () => {
     const params = readParamsForm();
     timestep_s = readTimestep();
     stop();
+    const savedCtrl = snapshotControllerParams();   // keep the controller tuning across re-init
     const err = initBackend(params);
     if (err) { setError('init failed'); return; }
 
     // Init wipes the backend trajectory; replay the JS-side sequence.
     trajectoryBuilder.replayToBackend();
     renderer3d?.invalidateTrajectory?.();
+    refreshControllerPanel();
+    applyControllerParams(savedCtrl);
+    refreshControllerPanel();
 
     renderers.forEach(r => r.reset());
     simTime = 0; stepCount = 0;
@@ -1967,6 +1985,195 @@ ui.trajFileInput.addEventListener('change', (e) => {
 });
 
 // =============================================================================
+// Controller parameters (data-driven panel + JSON save / load)
+// =============================================================================
+//
+// The active controller describes its tunable and observed parameters through a
+// manifest -- one TSV record per parameter: id, group, label, flags, value. The
+// panel is built entirely from that manifest (no controller-specific UI code);
+// each writable field is committed one at a time via ext_setControllerParam. The
+// JSON file mirrors the trajectory's: a schema+version header, then the writable
+// parameters keyed by (group, label) so a file loads onto the matching controller.
+//
+const CTRL_FILE_SCHEMA  = 'cds-controller';
+const CTRL_FILE_VERSION = 1;
+
+let controllerManifest = [];   // [{ id, group, label, writable, value }]
+
+function parseControllerManifest(text) {
+    return text.split('\n').filter(l => l.length).map(l => {
+        const [id, group, label, flags, value] = l.split('\t');
+        return { id: Number(id), group, label, writable: flags === 'rw', value: Number(value) };
+    });
+}
+
+function fetchControllerManifest() {
+    if (!sim) return [];
+    try { return parseControllerManifest(sim.ext_getControllerManifest().text); }
+    catch { return []; }
+}
+
+function renderControllerPanel() {
+    const box = ui.ctrlParams;
+    box.innerHTML = '';
+    if (controllerManifest.length === 0) {
+        ui.ctrlParamsInfo.textContent = sim
+            ? 'This controller exposes no tunable parameters.'
+            : 'Initialize a model to load its controller parameters.';
+        ui.btnCtrlSave.disabled = true;
+        ui.btnCtrlLoad.disabled = !sim;
+        return;
+    }
+    ui.ctrlParamsInfo.textContent = 'Edit a value to retune the controller live. Read-only rows are derived.';
+    ui.btnCtrlSave.disabled = false;
+    ui.btnCtrlLoad.disabled = false;
+
+    let lastGroup = null;
+    for (const p of controllerManifest) {
+        if (p.group !== lastGroup) {
+            const h = document.createElement('div');
+            h.className = 'ctrl-group';
+            h.textContent = p.group;
+            box.appendChild(h);
+            lastGroup = p.group;
+        }
+        const row = document.createElement('div');
+        row.className = 'ctrl-row' + (p.writable ? '' : ' ro');
+        const lab = document.createElement('label');
+        lab.textContent = p.label;
+        const inp = document.createElement('input');
+        inp.type = 'number'; inp.step = 'any'; inp.value = String(p.value);
+        inp.dataset.id = String(p.id);
+        row.appendChild(lab);
+        row.appendChild(inp);
+        if (p.writable) {
+            inp.addEventListener('change', onControllerInputChange);
+        } else {
+            inp.readOnly = true;
+            const tag = document.createElement('span');
+            tag.className = 'ro-tag'; tag.textContent = 'read-only';
+            row.appendChild(tag);
+        }
+        box.appendChild(row);
+    }
+}
+
+function refreshControllerPanel() {
+    controllerManifest = fetchControllerManifest();
+    renderControllerPanel();
+}
+
+function syncControllerValues() {
+    // Refresh values in place (reflect clamping and updated read-only rows)
+    // without rebuilding the DOM, so the field the user just edited keeps focus.
+    controllerManifest = fetchControllerManifest();
+    const byId = new Map(controllerManifest.map(p => [p.id, p.value]));
+    ui.ctrlParams.querySelectorAll('input[data-id]').forEach(inp => {
+        if (document.activeElement === inp) return;
+        const v = byId.get(Number(inp.dataset.id));
+        if (v !== undefined) inp.value = String(v);
+    });
+}
+
+function onControllerInputChange(e) {
+    const id = Number(e.target.dataset.id);
+    const value = Number(e.target.value);
+    const label = e.target.previousSibling ? e.target.previousSibling.textContent : `id ${id}`;
+    if (!isFiniteNum(value)) { setError(`"${label}" must be a number.`); return; }
+    if (sim.ext_setControllerParam({ id, value })) {
+        // Rejected: an invalid value (e.g. a negative weight) or the controller
+        // could not re-synthesise its gain for these settings. The gain is kept.
+        setError(`"${label}" = ${value} rejected — invalid value or the controller could not re-synthesise (gain unchanged). See the Diag log.`);
+    } else {
+        setError('');
+    }
+    syncControllerValues();
+}
+
+function saveControllerParams() {
+    if (controllerManifest.length === 0) { setError('No controller parameters to save.'); return; }
+    const params = controllerManifest
+        .filter(p => p.writable)
+        .map(p => ({ group: p.group, label: p.label, value: p.value }));
+    const doc = { schema: CTRL_FILE_SCHEMA, version: CTRL_FILE_VERSION, model: currentModel, params };
+    const blob = new Blob([JSON.stringify(doc, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `controller-${currentModel}-${timestampSlug()}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    setError('');
+}
+
+function parseControllerFile(text) {
+    let doc;
+    try { doc = JSON.parse(text); }
+    catch { throw new Error('not valid JSON'); }
+    if (!doc || typeof doc !== 'object' || Array.isArray(doc)) throw new Error('root must be an object');
+    if (doc.schema !== CTRL_FILE_SCHEMA)   throw new Error(`unexpected schema (want "${CTRL_FILE_SCHEMA}")`);
+    if (doc.version !== CTRL_FILE_VERSION)  throw new Error(`unsupported version ${doc.version} (want ${CTRL_FILE_VERSION})`);
+    if (!Array.isArray(doc.params))         throw new Error('params must be an array');
+    doc.params.forEach((p, i) => {
+        if (!p || typeof p !== 'object')                              throw new Error(`param ${i}: not an object`);
+        if (typeof p.group !== 'string' || typeof p.label !== 'string') throw new Error(`param ${i}: missing group/label`);
+        if (!isFiniteNum(p.value))                                    throw new Error(`param ${i}: value must be a number`);
+    });
+    return doc.params;
+}
+
+// Snapshot the current writable parameters (to carry across a re-init).
+function snapshotControllerParams() {
+    return controllerManifest.filter(p => p.writable)
+        .map(p => ({ group: p.group, label: p.label, value: p.value }));
+}
+
+// Apply a list of {group, label, value} onto the current (live) controller,
+// matching by (group, label) so entries that don't fit are skipped rather than
+// failing the batch. Returns { applied, skipped, rejected }.
+function applyControllerParams(params) {
+    const idOf = new Map(controllerManifest.filter(p => p.writable).map(p => [`${p.group}\t${p.label}`, p.id]));
+    let applied = 0, skipped = 0, rejected = 0;
+    for (const p of params) {
+        const id = idOf.get(`${p.group}\t${p.label}`);
+        if (id === undefined) { skipped++; continue; }
+        if (sim.ext_setControllerParam({ id, value: p.value })) rejected++; else applied++;
+    }
+    return { applied, skipped, rejected };
+}
+
+function loadControllerParamsFromFile(file) {
+    if (!sim || controllerManifest.length === 0) {
+        setError('Initialize a model before loading controller parameters.');
+        return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+        let params;
+        try { params = parseControllerFile(String(reader.result)); }
+        catch (e) { setError(`Controller load failed: ${e.message}`); return; }
+        const { applied, skipped, rejected } = applyControllerParams(params);
+        refreshControllerPanel();
+        setStatus(`Controller parameters: ${applied} applied`
+                  + (skipped ? `, ${skipped} skipped` : '')
+                  + (rejected ? `, ${rejected} rejected` : '') + '.');
+        setError(rejected ? 'Some parameters were rejected by the controller.' : '');
+    };
+    reader.onerror = () => setError('Controller load failed: could not read file.');
+    reader.readAsText(file);
+}
+
+ui.btnCtrlSave.addEventListener('click', saveControllerParams);
+ui.btnCtrlLoad.addEventListener('click', () => ui.ctrlFileInput.click());
+ui.ctrlFileInput.addEventListener('change', (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (file) loadControllerParamsFromFile(file);
+    e.target.value = '';
+});
+
+// =============================================================================
 // Boot
 // =============================================================================
 (async () => {
@@ -2006,6 +2213,7 @@ ui.trajFileInput.addEventListener('change', (e) => {
         // initialVel of the form will reflect the end of the default item.
         trajectoryBuilder.loadPreset(DEFAULT_TRAJECTORY);
         setupForceButtons();
+        refreshControllerPanel();       // load the initial controller's parameters
         setStatus('Ready.');
         refreshStartEnabled();
         ui.btnReset.disabled = false;   // reset is safe whenever not running

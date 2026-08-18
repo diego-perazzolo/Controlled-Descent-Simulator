@@ -61,6 +61,21 @@ int main()
     if (tm.AppendPoly4(poly) || tm.AppendPoint(hold)) { printf("trajectory build failed\n"); return 1; }
     if (model.SetTrajectoryManager(&tm)) { printf("SetTrajectoryManager failed\n"); return 1; }
 
+    // Controller-parameter interface: 6 cost weights + dt_mpc + max_iters (rw) +
+    // horizon (ro) = 9 rows; a weight is settable, the horizon is not, bad id fails.
+    bool paramOk = true;
+    {
+        char buf[2048] = {0};
+        if (model.GetControllerManifest(buf, sizeof buf)) paramOk = false;
+        int rows = 0; for (const char* q = buf; *q; ++q) if (*q == '\n') ++rows;
+        if (rows != 9) paramOk = false;
+        if (model.SetControllerParam(0, 8.0)) paramOk = false;   // id 0 = weights/position (rw)
+        if (!model.SetControllerParam(8, 100.0)) paramOk = false; // id 8 = mpc/horizon (ro) -> rejected
+        if (!model.SetControllerParam(99, 1.0)) paramOk = false;  // bad id -> rejected
+        model.SetControllerParam(0, 6.0);                         // restore the default weight
+        printf("controller manifest = %d rows, set/reject checks = %s\n", rows, paramOk ? "ok" : "FAIL");
+    }
+
     const double dt  = 0.01;
     const int    SIM = 350;                 // 3.5 s
     double maxErr = 0.0, maxTilt = 0.0;
@@ -89,7 +104,7 @@ int main()
     printf("final pos = (%.3f, %.3f, %.3f),  final tracking error = %.4f m,  final tilt = %.3f deg\n",
            st.x, st.y, st.z, fErr, fTilt);
 
-    const bool ok = finite_ok && (maxErr < 0.6) && (fErr < 0.10) && (fTilt < 3.0);
+    const bool ok = paramOk && finite_ok && (maxErr < 0.6) && (fErr < 0.10) && (fTilt < 3.0);
     printf("%s\n", ok ? "MPC MODEL TEST PASSED" : "MPC MODEL TEST FAILED");
     return ok ? 0 : 1;
 }

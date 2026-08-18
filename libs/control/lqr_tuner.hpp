@@ -87,6 +87,13 @@ public:
             for (std::size_t j = 0; j < NX; ++j) K[a][j] = m_K[a][j];
     }
 
+    // Single diagonal weight access (for interactive per-coefficient tuning).
+    // The caller re-synthesises the gain after a set.
+    double qDiag(std::size_t i) const { return m_Q[i][i]; }
+    double rDiag(std::size_t a) const { return m_R[a][a]; }
+    void   setQDiag(std::size_t i, double v) { m_Q[i][i] = v; }
+    void   setRDiag(std::size_t a, double v) { m_R[a][a] = v; }
+
     // Max deviation of the last synthesised gain from the model's baked K_default.
     // Meaningful as a bridge certificate only at the default weights (~0 there).
     double bridgeError() const { return m_bridgeErr; }

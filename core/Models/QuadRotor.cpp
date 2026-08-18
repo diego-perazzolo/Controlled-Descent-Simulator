@@ -177,6 +177,7 @@ QuadRotor::QuadRotor()
     RecomputeGain();
     if (m_lqr.bridgeError() > 1e-6)
         CDS_LOG_ERROR(logger, "runtime LQR gain deviates from baked K_default by {}", m_lqr.bridgeError());
+    BuildParamTable();
 
     recorder.activateAsModel(); // this model owns the model data recorder while it lives
 }
@@ -392,12 +393,16 @@ bool QuadRotor::GetCurrentTimeSeconds(core_coord_t& currentTimeSeconds)
 // generated model; SetWeights retunes and re-synthesises. The physical model
 // parameters are untouched.
 // -----------------------------------------------------------------------------
-void QuadRotor::RecomputeGain()
+bool QuadRotor::RecomputeGain()
 {
     auto pDyn = static_cast<Dynamics::QUADROTOR_FF_LQR_01*>(m_modelPtr);
-    if (pDyn == nullptr) return;
+    if (pDyn == nullptr) return true;
     if (m_lqr.synthesize(*pDyn))
+    {
         CDS_LOG_ERROR(logger, "LQR gain synthesis failed; keeping previous gain");
+        return true;
+    }
+    return false;
 }
 
 void QuadRotor::SetWeights(const double Q[16][16], const double R[4][4])
@@ -409,5 +414,36 @@ void QuadRotor::SetWeights(const double Q[16][16], const double R[4][4])
 void QuadRotor::GetWeights(double Q[16][16], double R[4][4]) const { m_lqr.GetWeights(Q, R); }
 void QuadRotor::GetGain(double K[4][16]) const                    { m_lqr.GetGain(K); }
 double QuadRotor::GetGainBridgeError() const                      { return m_lqr.bridgeError(); }
+
+// ---- exposed controller parameters: the LQR cost diagonal (Q, R) -------------
+// Semantic labels for the 16-state error vector and the 4 inputs -- the anchor
+// that ties each parameter id (its manifest row) to a physical meaning.
+namespace {
+const char* const QUAD_ERR_LABELS[16] = {
+    "x", "y", "z", "roll", "pitch", "yaw", "vx", "vy", "vz",
+    "p", "q", "r", "int_x", "int_y", "int_z", "int_yaw" };
+const char* const QUAD_IN_LABELS[4] = { "T1", "T2", "T3", "T4" };
+} // namespace
+
+void QuadRotor::BuildParamTable()
+{
+    m_params.clear();
+    for (std::size_t i = 0; i < 16; ++i)
+        m_params.add("Q", QUAD_ERR_LABELS[i], true,
+                     [this, i] { return m_lqr.qDiag(i); },
+                     [this, i](double v) { if (v < 0.0) return true;  m_lqr.setQDiag(i, v); return RecomputeGain(); });
+    for (std::size_t a = 0; a < 4; ++a)
+        m_params.add("R", QUAD_IN_LABELS[a], true,
+                     [this, a] { return m_lqr.rDiag(a); },
+                     [this, a](double v) { if (v <= 0.0) return true; m_lqr.setRDiag(a, v); return RecomputeGain(); });
+}
+
+bool QuadRotor::GetControllerManifest(char* buf, std::size_t n)
+{
+    m_params.buildManifest(buf, n);
+    return false;
+}
+
+bool QuadRotor::SetControllerParam(int id, double value) { return m_params.set(id, value); }
 
 } // namespace CDS

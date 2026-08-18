@@ -342,6 +342,26 @@ std::vector<uint8_t> server_dispatch(const std::vector<uint8_t>& msg)
             return _serialize(resp);
         }
 
+        case WS_MSG_GET_CONTROLLER_MANIFEST:
+        {
+            reqGetControllerManifest_t req = {};
+            if(_parse(msg, req)) return _respBool(h, true);
+
+            respGetControllerManifest_t resp = {};
+            resp.h = h;
+            resp.p = ext_getControllerManifest();
+            return _serialize(resp);
+        }
+
+        case WS_MSG_SET_CONTROLLER_PARAM:
+        {
+            reqSetControllerParam_t req = {};
+            if(_parse(msg, req)) return _respBool(h, true);
+
+            printf("[cds-server] set controller param\n");
+            return _respBool(h, ext_setControllerParam(req.p));
+        }
+
         default:
             // Err: unknown message type
             return _respBool(h, true);

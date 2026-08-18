@@ -193,6 +193,14 @@ EMSCRIPTEN_BINDINGS(simulator) {
         .field("enabled",     &ext_recordStatus::enabled)
         .field("droppedRows", &ext_recordStatus::droppedRows);
 
+    value_object<ext_controllerManifest>("ext_controllerManifest")
+        .field("text", +[](const ext_controllerManifest& o){ return std::string(o.text); },
+               +[](ext_controllerManifest& o, const std::string& v){ std::strncpy(o.text, v.c_str(), sizeof(o.text) - 1); o.text[sizeof(o.text) - 1] = '\0'; });
+
+    value_object<ext_controllerParamSet>("ext_controllerParamSet")
+        .field("id",    &ext_controllerParamSet::id)
+        .field("value", &ext_controllerParamSet::value);
+
     // --- Functions exposed to JS ---
     function("ext_rocketInit", &ext_initRocket_FFLQR01);
     function("ext_quadRotorInit", &ext_initQuadRotor_FFLQR01);
@@ -218,4 +226,6 @@ EMSCRIPTEN_BINDINGS(simulator) {
     function("ext_setDiagFiles", &ext_setDiagFiles);
     function("ext_setRecording", &ext_setRecording);
     function("ext_getRecordStatus", &ext_getRecordStatus);
+    function("ext_getControllerManifest", &ext_getControllerManifest);
+    function("ext_setControllerParam", &ext_setControllerParam);
 }

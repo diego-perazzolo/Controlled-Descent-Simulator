@@ -202,6 +202,18 @@ bool core_getSnapshot(core_snapshotData_t &par)
                                 });
 }
 
+bool core_getControllerManifest(char *buf, std::size_t n)
+{
+    return _ctx.SM.ExecuteOnModel([&](BaseModel &model)
+                                  { return model.GetControllerManifest(buf, n); });
+}
+
+bool core_setControllerParam(int id, double value)
+{
+    return _ctx.SM.ExecuteOnModel([&](BaseModel &model)
+                                  { return model.SetControllerParam(id, value); });
+}
+
 bool core_getPlantSnapshot(core_plantSnapshotData_t &par)
 {
     CDS_PROFILE(profile, "Get plant snapshot");

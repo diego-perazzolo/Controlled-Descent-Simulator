@@ -303,6 +303,28 @@ def run_tests(s):
     assert enabled == 0.0, "recording should disable again"
     print("set recording toggle OK")
 
+    # controller parameters: the Rocket initialized earlier exposes its LQR cost
+    # diagonal (16 Q + 4 R = 20 rows). Read the manifest, set a weight by id, and
+    # confirm the change round-trips; a bad id must be rejected.
+    def manifest():
+        p = rpc(s, header(MSG["GET_CONTROLLER_MANIFEST"]))
+        assert len(p) == 2050, f"manifest size {len(p)}"
+        text = p[2:2050].split(b"\x00", 1)[0].decode("ascii", "replace")
+        rows = [ln.split("\t") for ln in text.splitlines() if ln]
+        return rows
+
+    rows = manifest()
+    assert len(rows) == 20, f"expected 20 controller params, got {len(rows)}"
+    assert rows[0][1] == "Q" and rows[0][3] == "rw", f"unexpected first row {rows[0]}"
+    old = float(rows[0][4])
+    p = rpc(s, header(MSG["SET_CONTROLLER_PARAM"]) + struct.pack("<2f", 0.0, 5000.0))
+    assert struct.unpack("<BBB", p)[2] == 0, "set controller param (id 0) failed"
+    assert abs(float(manifest()[0][4]) - 5000.0) < 1e-3, "controller param did not update"
+    p = rpc(s, header(MSG["SET_CONTROLLER_PARAM"]) + struct.pack("<2f", 999.0, 1.0))
+    assert struct.unpack("<BBB", p)[2] == 1, "out-of-range controller id should be rejected"
+    rpc(s, header(MSG["SET_CONTROLLER_PARAM"]) + struct.pack("<2f", 0.0, old))  # restore
+    print(f"controller params OK (20 rows, set/round-trip/reject)")
+
     # close politely
     s.sendall(bytes([0x88, 0x80]) + os.urandom(4))
 

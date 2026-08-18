@@ -32,7 +32,9 @@
 //               samples the reference over the horizon, solves the MPC problem
 //               (warm-started), applies the first command as a zero-order hold,
 //               and integrates the plant by the measured wall-clock step.
-//               Controller knobs (weights, horizon, dt) are hard-wired for now.
+//               Controller knobs (cost weights, control step, iterations) are
+//               runtime-tunable through the controller-parameter interface; the
+//               horizon N is compile-time (fixed buffers) and exposed read-only.
 //               Derived in modeling/notebooks/dynamics_quadRotor_MPC01.ipynb.
 // Author      : Diego Perazzolo
 // Created     : 2026
@@ -42,6 +44,7 @@
 #include <array>
 
 #include "BaseModel.hpp"
+#include "controller_params.hpp"
 
 namespace CDS
 {
@@ -59,6 +62,10 @@ namespace CDS
         virtual bool GetTrackingErrors(core_trackingErrors_t& tErrors) override;
         virtual bool GetCurrentTimeSeconds(core_coord_t& currentTimeSeconds) override;
 
+        // Controller-parameter interface (cost weights, control step, iterations).
+        bool GetControllerManifest(char* buf, std::size_t n) override;
+        bool SetControllerParam(int id, double value) override;
+
         // Physical runtime state (no LQR integrators):
         //   [r(3), q(4, quaternion), v(3), omega(3, body rates)]
         static constexpr std::size_t STATE_DIM = 13;
@@ -72,12 +79,22 @@ namespace CDS
         using UserForces  = std::array<double, 3>;      // user input forces [Fx, Fy, Fz]
 
         private:
+        void BuildParamTable();        // register the exposed MPC knobs
+
         void*              m_modelPtr;
         StateVec           m_state;
         TrajectoryManager* m_trajectoryManagerPtr;
         TrackingErr        m_trackingErr;
         UserForces         m_userForces;
         double             m_time;
+
+        // Runtime-tunable controller knobs (Gauss-Newton cost weights per block,
+        // the control step DT_MPC, and the iLQR iteration cap). Defaulted in the
+        // constructor to the values tuned in the notebook. HORIZON is compile-time.
+        double             m_wp, m_wq, m_wv, m_ww, m_wu, m_wterm;
+        double             m_dtMpc;
+        int                m_maxIters;
+        control::ParamTable<> m_params;
 
         // Warm-start command sequence: the previous solve, kept and shifted so the
         // next tick starts a few iterations away from the answer.

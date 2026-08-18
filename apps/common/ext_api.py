@@ -312,6 +312,22 @@ COMM = [
             F("enabled", doc="1.0 if it is currently recording, else 0.0"),
             F("droppedRows", pre="rows lost to a full ring since the run began"),
         ]),
+
+    Struct("ext_controllerManifest", file="comm",
+        doc="response: the active controller's exposed parameters, one record per\n"
+            "newline: 'id\\tgroup\\tlabel\\tflags\\tvalue' (flags = 'rw' | 'ro').\n"
+            "Fixed char buffer: text on the POD wire (empty if no tunable params)",
+        fields=[
+            F("text", type="char", count=2048),
+        ]),
+
+    Struct("ext_controllerParamSet", file="comm",
+        doc="request: set one controller parameter by its manifest id. id is\n"
+            "carried as ext_coord_t (exact up to 2^24) since the wire has no int",
+        fields=[
+            F("id",    pre="parameter id = its row index in the manifest"),
+            F("value", pre="new value for the parameter"),
+        ]),
 ]
 
 # --------------------------------------------------------------------------- #
@@ -424,4 +440,15 @@ COMMANDS = [
     Cmd(24, "GetRecordStatus", "ext_getRecordStatus", "ext_getRecordStatus",
         req=None, resp="ext_recordStatus",
         doc="Get the data recorder status (active model, enabled flag, dropped rows)"),
+
+    # ---- controller parameters (interactive tuning of the active controller) ----
+
+    Cmd(25, "GetControllerManifest", "ext_getControllerManifest", "ext_getControllerManifest",
+        req=None, resp="ext_controllerManifest",
+        doc="Get the active controller's parameter manifest (TSV listing)"),
+
+    Cmd(26, "SetControllerParam", "ext_setControllerParam", "ext_setControllerParam",
+        req="ext_controllerParamSet", resp="bool",
+        doc="Set one controller parameter by its manifest id; returns true on error",
+        log="set controller param"),
 ]

@@ -539,3 +539,20 @@ ext_recordStatus ext_getRecordStatus(void)
 {
     return _recordStatus();
 }
+
+// ---- controller parameters (interactive tuning of the active controller) ----
+
+ext_controllerManifest ext_getControllerManifest(void)
+{
+    ext_controllerManifest out = {};   // empty text if no model / no exposed params
+    core_getControllerManifest(out.text, sizeof(out.text));
+    return out;
+}
+
+bool ext_setControllerParam(ext_controllerParamSet params)
+{
+    // id crosses the wire as ext_coord_t (no int on the wire); round to the
+    // nearest integer manifest id.
+    const int id = static_cast<int>(params.id + (params.id >= 0 ? 0.5f : -0.5f));
+    return core_setControllerParam(id, params.value);
+}

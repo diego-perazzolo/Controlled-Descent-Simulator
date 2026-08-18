@@ -475,3 +475,35 @@ ext_recordStatus ext_getRecordStatus(void)
 
     return resp.p;
 }
+
+ext_controllerManifest ext_getControllerManifest(void)
+{
+    reqGetControllerManifest_t req = {};
+    respGetControllerManifest_t resp = {};
+
+    req.h.type = WS_MSG_GET_CONTROLLER_MANIFEST;
+
+    if(_rpc(req, resp))
+    {
+        // Err
+        return {};
+    }
+
+    return resp.p;
+}
+
+bool ext_setControllerParam(ext_controllerParamSet params)
+{
+    reqSetControllerParam_t req = {};
+    respBool_t resp = {};
+
+    req.h.type = WS_MSG_SET_CONTROLLER_PARAM;
+    req.p = params;
+
+    if(_rpc(req, resp))
+    {
+        return true;
+    }
+
+    return resp.isError != 0;
+}

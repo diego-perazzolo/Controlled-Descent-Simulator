@@ -30,6 +30,7 @@
 // =============================================================================
 #pragma once
 #include "core_defs.hpp"
+#include <cstddef>
 
 /* Public C-like interface */
 
@@ -82,3 +83,11 @@ bool core_beginStaging(core_coord_t safetyAltitude);
 
 // Abort auto-staging (hold in place). Returns true on error
 bool core_stopStaging(void);
+
+// Get the active controller's parameter manifest (a TSV listing of the exposed
+// parameters) into `buf` (capacity `n`). Returns true on error.
+bool core_getControllerManifest(char* buf, std::size_t n);
+
+// Set one controller parameter, identified by its manifest id, to `value`.
+// Returns true on error (no model, bad id, read-only or rejected value).
+bool core_setControllerParam(int id, double value);

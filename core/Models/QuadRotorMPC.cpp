@@ -103,10 +103,6 @@ constexpr std::size_t NX = 13;
 constexpr std::size_t NU = 4;
 constexpr std::size_t NR = 12;   // state-residual dimension
 
-// ---- hard-wired controller tuning (revisit for frontend exposure later) ----
-constexpr double DT_MPC    = 0.02;   // MPC prediction step [s]
-constexpr int    MAX_ITERS = 12;     // iLQR iterations per tick (warm-started)
-
 using V13    = std::array<double, NX>;
 using V4     = std::array<double, NU>;
 using V12    = std::array<double, NR>;
@@ -114,8 +110,6 @@ using M12x13 = std::array<V13, NR>;
 
 struct Weights { double wp, wq, wv, ww, wu, wterm; };
 struct StageRef { std::array<double,3> p; std::array<double,4> q; std::array<double,3> v; std::array<double,3> w; };
-
-const Weights W{6.0, 2.0, 1.0, 0.30, 0.10, 8.0};   // notebook defaults
 
 // ---- quaternion helpers ----
 inline void quatMul(const double a[4], const double b[4], double o[4])
@@ -218,6 +212,12 @@ QuadRotorMPC::QuadRotorMPC()
     m_seeded = false;
     m_lastSolveTime = 0;
 
+    // Controller knobs default to the values tuned in the notebook.
+    m_wp = 6.0; m_wq = 2.0; m_wv = 1.0; m_ww = 0.30; m_wu = 0.10; m_wterm = 8.0;
+    m_dtMpc = 0.02;      // MPC prediction / control step [s]
+    m_maxIters = 12;     // iLQR iterations per solve (warm-started)
+    BuildParamTable();
+
     recorder.activateAsModel(); // this model owns the model data recorder while it lives
 }
 
@@ -318,9 +318,10 @@ bool QuadRotorMPC::PerformIntegration(const core_stepParams_t& params)
     //      cheap: it keeps the expensive solve off most ticks, so a high tick
     //      rate cannot monopolise the system lock (the sim degrades gracefully
     //      instead of freezing). ----
-    if (!m_seeded || (m_time - m_lastSolveTime) >= DT_MPC)
+    if (!m_seeded || (m_time - m_lastSolveTime) >= m_dtMpc)
     {
         CDS_PROFILE(profile, "Total MPC execution");
+        const Weights W{m_wp, m_wq, m_wv, m_ww, m_wu, m_wterm};   // current cost weights
         // hover command and actuator box from the model params
         using PN = Dynamics::QUADROTOR_MPC_01::ParamName;
         const double mg = dynamics->GetParam(PN::Mass) * dynamics->GetParam(PN::Gravity);
@@ -336,7 +337,7 @@ bool QuadRotorMPC::PerformIntegration(const core_stepParams_t& params)
         for (std::size_t k = 0; k <= QuadRotorMPC::HORIZON; ++k)
         {
             Reference_t r;
-            if (m_trajectoryManagerPtr->GetReference(m_time + k * DT_MPC, r))
+            if (m_trajectoryManagerPtr->GetReference(m_time + k * m_dtMpc, r))
             {
                 refs[k] = refs[k - 1];           // beyond the trajectory: hold the last (defensive)
                 continue;
@@ -362,7 +363,7 @@ bool QuadRotorMPC::PerformIntegration(const core_stepParams_t& params)
         {
             CDS_PROFILE(profile, "MPC solve");
             control::solve<NX, NU, QuadRotorMPC::HORIZON>(
-                m_state, fdyn, jac, proj, scost, tcost, lo, hi, DT_MPC, MAX_ITERS, m_warmStart, u0);
+                m_state, fdyn, jac, proj, scost, tcost, lo, hi, m_dtMpc, m_maxIters, m_warmStart, u0);
         }
 
         m_lastU0        = u0;
@@ -433,5 +434,45 @@ bool QuadRotorMPC::GetCurrentTimeSeconds(core_coord_t& currentTimeSeconds)
     currentTimeSeconds = m_time;
     return false;
 }
+
+// ---- exposed controller parameters: the MPC cost weights and solver knobs ----
+// The weights are the per-block Gauss-Newton cost weights; dt_mpc is the control
+// step (also the horizon spacing); max_iters caps the iLQR iterations per solve.
+// The horizon N is compile-time (fixed buffers) and exposed read-only. No gain to
+// re-synthesise: the MPC re-solves from scratch every control step.
+void QuadRotorMPC::BuildParamTable()
+{
+    m_params.clear();
+    // State-error cost weights (the MPC's analogue of the LQR Q, one scalar per
+    // state block rather than a full diagonal).
+    m_params.add("Q (state cost)", "position", true, [this]{ return m_wp; },
+                 [this](double v){ if (v < 0.0) return true; m_wp = v; return false; });
+    m_params.add("Q (state cost)", "attitude", true, [this]{ return m_wq; },
+                 [this](double v){ if (v < 0.0) return true; m_wq = v; return false; });
+    m_params.add("Q (state cost)", "velocity", true, [this]{ return m_wv; },
+                 [this](double v){ if (v < 0.0) return true; m_wv = v; return false; });
+    m_params.add("Q (state cost)", "body rate", true, [this]{ return m_ww; },
+                 [this](double v){ if (v < 0.0) return true; m_ww = v; return false; });
+    // Control-effort cost weight (the analogue of the LQR R).
+    m_params.add("R (control cost)", "thrust", true, [this]{ return m_wu; },
+                 [this](double v){ if (v <= 0.0) return true; m_wu = v; return false; });
+    // Solver knobs: terminal-cost weight, control step, iteration cap, and the
+    // (compile-time, read-only) prediction horizon.
+    m_params.add("solver", "terminal weight", true, [this]{ return m_wterm; },
+                 [this](double v){ if (v < 0.0) return true; m_wterm = v; return false; });
+    m_params.add("solver", "dt_mpc [s]", true, [this]{ return m_dtMpc; },
+                 [this](double v){ if (v <= 0.0) return true; m_dtMpc = v; return false; });
+    m_params.add("solver", "max iters", true, [this]{ return static_cast<double>(m_maxIters); },
+                 [this](double v){ const int n = static_cast<int>(v + 0.5); if (n < 1) return true; m_maxIters = n; return false; });
+    m_params.add("solver", "horizon N", false, [this]{ return static_cast<double>(QuadRotorMPC::HORIZON); });
+}
+
+bool QuadRotorMPC::GetControllerManifest(char* buf, std::size_t n)
+{
+    m_params.buildManifest(buf, n);
+    return false;
+}
+
+bool QuadRotorMPC::SetControllerParam(int id, double value) { return m_params.set(id, value); }
 
 } // namespace CDS

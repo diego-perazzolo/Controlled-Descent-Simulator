@@ -163,6 +163,24 @@ typedef struct
     ext_coord_t droppedRows;
 } ext_recordStatus;
 
+/* response: the active controller's exposed parameters, one record per
+newline: 'id\tgroup\tlabel\tflags\tvalue' (flags = 'rw' | 'ro').
+Fixed char buffer: text on the POD wire (empty if no tunable params) */
+typedef struct
+{
+    char text[2048];
+} ext_controllerManifest;
+
+/* request: set one controller parameter by its manifest id. id is
+carried as ext_coord_t (exact up to 2^24) since the wire has no int */
+typedef struct
+{
+    /* parameter id = its row index in the manifest */
+    ext_coord_t id;
+    /* new value for the parameter */
+    ext_coord_t value;
+} ext_controllerParamSet;
+
 /* Initialize Rocket model: FF_LQR_01, returns true on error */
 bool ext_initRocket_FFLQR01(ext_initRocketParams params);
 
@@ -234,3 +252,9 @@ ext_recordStatus ext_setRecording(ext_recordParams params);
 
 /* Get the data recorder status (active model, enabled flag, dropped rows) */
 ext_recordStatus ext_getRecordStatus(void);
+
+/* Get the active controller's parameter manifest (TSV listing) */
+ext_controllerManifest ext_getControllerManifest(void);
+
+/* Set one controller parameter by its manifest id; returns true on error */
+bool ext_setControllerParam(ext_controllerParamSet params);

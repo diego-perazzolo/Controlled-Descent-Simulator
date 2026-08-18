@@ -316,6 +316,17 @@
         #btnTrajRemoveLast { border-color: #844; color: #fa6; }
         #btnTrajClear      { border-color: #844; color: #f66; }
 
+        /* ── Controller-parameter panel (data-driven from the manifest) ── */
+        .ctrl-info { color: #778; font-size: 0.88em; margin: 4px 2px 10px; }
+        .ctrl-group { color: #6cf; font-size: 0.8em; text-transform: uppercase;
+                      letter-spacing: 0.06em; margin: 12px 2px 4px; }
+        .ctrl-group:first-child { margin-top: 2px; }
+        .ctrl-row { display: flex; align-items: center; gap: 10px; margin: 3px 2px; }
+        .ctrl-row label { color: #aaa; font-size: 0.9em; min-width: 150px; white-space: nowrap; }
+        .ctrl-row input { width: 120px; }
+        .ctrl-row.ro input { color: #778; }
+        .ctrl-row .ro-tag { color: #556; font-size: 0.75em; }
+
         #btnTrajAppend {
             border-color: #0f8;
             color: #0f8;
@@ -731,6 +742,20 @@
             </div>
 
             <button id="btnTrajAppend">Append item</button>
+        </div>
+    </div>
+
+    <!-- Controller tuning (data-driven from the live model's parameter manifest) -->
+    <div class="params-grid">
+        <div class="panel panel-wide">
+            <h2>Controller parameters</h2>
+            <div id="ctrlParamsInfo" class="ctrl-info">Initialize a model to load its controller parameters.</div>
+            <div id="ctrlParams"></div>
+            <div class="traj-controls">
+                <button id="btnCtrlSave" disabled>Save JSON</button>
+                <button id="btnCtrlLoad" disabled>Load JSON…</button>
+                <input type="file" id="ctrlFileInput" accept=".json,application/json" hidden>
+            </div>
         </div>
     </div>
 </div>

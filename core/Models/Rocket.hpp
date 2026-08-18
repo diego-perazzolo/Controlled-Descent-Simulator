@@ -31,6 +31,7 @@
 
 #include "BaseModel.hpp"
 #include "lqr_tuner.hpp"
+#include "controller_params.hpp"
 
 namespace CDS
 {
@@ -56,6 +57,10 @@ namespace CDS
         void   GetGain(double K[4][16]) const;
         double GetGainBridgeError() const;   // max|runtime gain - baked K_default| at default weights
 
+        // Controller-parameter interface (Q/R diagonal weights).
+        bool GetControllerManifest(char* buf, std::size_t n) override;
+        bool SetControllerParam(int id, double value) override;
+
         using StateVec = std::array<double, 16>;   // augmented state (12 + 4 integrals)
         using InputVec = std::array<double, 4>;    // [F1, T1, T2, T3]
         using RefVec   = std::array<double, 3>;    // position reference [x_ref, y_ref, z_ref]
@@ -63,7 +68,8 @@ namespace CDS
         using UserForces = std::array<double, 3>;    // User input forces [Fx, Fy, Fz]
 
         private:
-        void RecomputeGain();          // (re)synthesise the LQR gain and install it
+        bool RecomputeGain();          // (re)synthesise the LQR gain and install it (true on error)
+        void BuildParamTable();        // register the exposed Q/R weights
 
         void* m_modelPtr;
         StateVec m_state;
@@ -74,6 +80,7 @@ namespace CDS
 
         // Runtime LQR gain manager: tunable weights + synthesised gain (libs/control).
         control::LqrGainTuner<16, 4> m_lqr;
+        control::ParamTable<>        m_params;   // exposed controller parameters (Q/R diagonal)
 
     };
 }

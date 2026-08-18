@@ -51,9 +51,22 @@ namespace CDS
         virtual bool SetModelParams(const std::any& params) = 0;
         virtual bool SetTrajectoryManager(TrajectoryManager* pTrajectoryManager) = 0;
         virtual bool PerformIntegration(const core_stepParams_t& params) = 0;
-        virtual bool GetState(core_state_t& state) = 0; 
-        virtual bool GetTrackingErrors(core_trackingErrors_t& tErrors) = 0; 
+        virtual bool GetState(core_state_t& state) = 0;
+        virtual bool GetTrackingErrors(core_trackingErrors_t& tErrors) = 0;
         virtual bool GetCurrentTimeSeconds(core_coord_t& currentTimeSeconds) = 0;
+
+        // Controller-parameter interface (interactive tuning; not on the tick
+        // path). GetControllerManifest writes a TSV listing of the exposed
+        // parameters (`id\tgroup\tlabel\tflags\tvalue\n` per line);
+        // SetControllerParam sets one parameter by its manifest id. The default
+        // is an empty manifest / no settable parameters -- a model with no
+        // exposed controller knobs need not override these. Returns true on error.
+        virtual bool GetControllerManifest(char* buf, std::size_t n)
+        {
+            if (buf != nullptr && n > 0) buf[0] = '\0';
+            return false;
+        }
+        virtual bool SetControllerParam(int /*id*/, double /*value*/) { return true; }
         /* Private variables */
 
     };

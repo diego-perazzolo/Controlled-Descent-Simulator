@@ -119,6 +119,19 @@ ext_recordStatus ext_setRecording(ext_recordParams params);
 /* Get the data recorder status without changing it (poll the dropped-row count
    and the active model+plant names from the frontend) */
 ext_recordStatus ext_getRecordStatus(void);
+
+/* Get the active controller's parameter manifest: a self-describing TSV listing
+   of its exposed parameters, one record per newline
+   ('id\tgroup\tlabel\tflags\tvalue', flags = 'rw' | 'ro'). The frontend builds
+   its tuning panel from this (no controller-specific UI). Empty text if no model
+   is running or the controller exposes no parameters */
+ext_controllerManifest ext_getControllerManifest(void);
+
+/* Set one controller parameter, addressed by its manifest id, to a new value.
+   Slow-path, one coefficient at a time (never on the tick). For the LQR models a
+   set re-synthesizes the gain; for the MPC it retunes the cost/solver knobs.
+   Returns true on error (no model, bad id, read-only or rejected value) */
+bool ext_setControllerParam(ext_controllerParamSet params);
 ```
 
 ## Key types
@@ -156,6 +169,8 @@ ext_profileEnableParams        { module, enabled (bool) }
 ext_diagFiles                  { logFile (bool), profileRaw (bool) }
 ext_recordParams               { enabled (bool) }
 ext_recordStatus               { modelName (char[64]), active, enabled, droppedRows }
+ext_controllerManifest         { text (char[2048]) }
+ext_controllerParamSet         { id, value }
 ```
 
 `ext_recordStatus.modelName` is a "model + plant" summary of the active
