@@ -148,6 +148,14 @@ Rocket::Rocket()
 
     m_time = 0;
 
+    // LQR weights default to the model's baked Q/R; synthesise the gain at runtime
+    // from the frozen error dynamics (rather than using the baked K literal) and
+    // certify it reproduces the notebook gain (bridge deviation ~0).
+    m_lqr.loadDefaults<Dynamics::ROCKET_FF_LQR_01>();
+    RecomputeGain();
+    if (m_lqr.bridgeError() > 1e-6)
+        CDS_LOG_ERROR(logger, "runtime LQR gain deviates from baked K_default by {}", m_lqr.bridgeError());
+
     recorder.activateAsModel(); // this model owns the model data recorder while it lives
 }
 
@@ -371,5 +379,29 @@ bool Rocket::GetCurrentTimeSeconds(core_coord_t& currentTimeSeconds)
     currentTimeSeconds = m_time;
     return false;
 }
+
+// -----------------------------------------------------------------------------
+// LQR gain synthesis (runtime). RecomputeGain re-solves the CARE from the frozen
+// error dynamics and the current weights and installs the gain into the
+// generated model; SetWeights retunes and re-synthesises. The physical model
+// parameters are untouched.
+// -----------------------------------------------------------------------------
+void Rocket::RecomputeGain()
+{
+    auto pDyn = static_cast<Dynamics::ROCKET_FF_LQR_01*>(m_modelPtr);
+    if (pDyn == nullptr) return;
+    if (m_lqr.synthesize(*pDyn))
+        CDS_LOG_ERROR(logger, "LQR gain synthesis failed; keeping previous gain");
+}
+
+void Rocket::SetWeights(const double Q[16][16], const double R[4][4])
+{
+    m_lqr.SetWeights(Q, R);
+    RecomputeGain();
+}
+
+void Rocket::GetWeights(double Q[16][16], double R[4][4]) const { m_lqr.GetWeights(Q, R); }
+void Rocket::GetGain(double K[4][16]) const                    { m_lqr.GetGain(K); }
+double Rocket::GetGainBridgeError() const                      { return m_lqr.bridgeError(); }
 
 } // namespace CDS

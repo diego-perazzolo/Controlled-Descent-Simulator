@@ -1,7 +1,8 @@
 """base_codegen.py — shared C++ generator base for the CDS models.
 
 Vehicle-agnostic: config, symbol bindings, param access (symbol-name -> field),
-K_e literal, CSE, header/source scaffolding, write. RocketCodegen and QuadCodegen
+LQR data (constant A_e/B_e/Q/R + default gain, runtime-settable via SetGain),
+CSE, header/source scaffolding, write. RocketCodegen and QuadCodegen
 derive from BaseCodegen and override only the two vehicle-specific emitters
 (_emit_dynamics_body / _emit_execute_control_body) and their feedforward interface.
 
@@ -59,6 +60,7 @@ class BaseCodegen:
     def __init__(self, cfg: CodegenConfig):
         self.cfg = cfg
         self._rhs = None; self._K_e = None
+        self._A_e = None; self._B_e = None; self._Q_lqr = None; self._R_lqr = None
         self._state_syms = None; self._input_syms = None; self._phys_syms = None
         self._uforce_syms = []
 
@@ -78,6 +80,22 @@ class BaseCodegen:
         K = np.asarray(K, float)
         assert K.shape == (self.cfg.input_dim, self.cfg.error_dim), K.shape
         self._K_e = K; return self
+
+    def set_error_dynamics(self, A_e, B_e, Q, R):
+        """Numeric error dynamics (A_e, B_e) and LQR weights (Q, R) at the nominal
+        operating point. Emitted as constants so the runtime can re-synthesise the
+        gain (CDS::control::lqr) -- e.g. after retuning Q, R -- without recomputing
+        the linearisation, which stays frozen. K from set_lqr_gain is the default/
+        reference gain (synthesised from these in the notebook)."""
+        import numpy as np
+        c = self.cfg
+        self._A_e = np.asarray(A_e, float); self._B_e = np.asarray(B_e, float)
+        self._Q_lqr = np.asarray(Q, float); self._R_lqr = np.asarray(R, float)
+        assert self._A_e.shape == (c.error_dim, c.error_dim), self._A_e.shape
+        assert self._B_e.shape == (c.error_dim, c.input_dim), self._B_e.shape
+        assert self._Q_lqr.shape == (c.error_dim, c.error_dim), self._Q_lqr.shape
+        assert self._R_lqr.shape == (c.input_dim, c.input_dim), self._R_lqr.shape
+        return self
 
     # ---- helpers ----
     def _param_names(self):
@@ -112,12 +130,23 @@ class BaseCodegen:
     def _idx(self, k):
         return "StateToIdx(StateName::" + self.cfg.state_enum_names[k] + ")"
 
-    def _emit_K_e_literal(self):
-        c = self.cfg
-        rows = ["        {" + ", ".join(sp.ccode(sp.N(self._K_e[i, j], 17))
-                for j in range(c.error_dim)) + "}" for i in range(c.input_dim)]
-        return (f"const double K_e[{c.input_dim}][{c.error_dim}] = {{\n"
-                + ",\n".join(rows) + "\n    };")
+    def _emit_lqr_data_defs(self):
+        """Out-of-line definitions of the constant LQR data: the frozen error
+        dynamics A_e, B_e, the default weights Q_default, R_default, and the
+        default/reference gain K_default (all static members of the model class)."""
+        c = self.cfg; cls = c.model_name
+        def mat(name, M, rows, cols):
+            body = ",\n".join("    {" + ", ".join(sp.ccode(sp.N(M[i, j], 17))
+                              for j in range(cols)) + "}" for i in range(rows))
+            return f"const double {cls}::{name}[{rows}][{cols}] = {{\n{body}\n}};"
+        E, I = c.error_dim, c.input_dim
+        return "\n\n".join([
+            mat("A_e",       self._A_e,   E, E),
+            mat("B_e",       self._B_e,   E, I),
+            mat("Q_default", self._Q_lqr, E, E),
+            mat("R_default", self._R_lqr, I, I),
+            mat("K_default", self._K_e,   I, E),
+        ])
 
     # ---- vehicle-specific hooks ----
     def _emit_dynamics_body(self):        raise NotImplementedError
@@ -170,11 +199,23 @@ public:
 {ind}void   SetParam(ParamName n, double v);
 {ind}static constexpr std::size_t StateToIdx(StateName n) noexcept {{ return static_cast<std::size_t>(n); }}
 
+{ind}// LQR error dynamics (A_e, B_e) and default weights (Q, R) at the nominal
+{ind}// operating point, plus the default/reference gain -- all constant, emitted
+{ind}// by codegen. The runtime re-synthesises the gain from these (CDS::control::lqr,
+{ind}// e.g. after retuning Q, R) and installs it with SetGain; A_e, B_e stay fixed.
+{ind}static const double A_e[{c.error_dim}][{c.error_dim}];
+{ind}static const double B_e[{c.error_dim}][{c.input_dim}];
+{ind}static const double Q_default[{c.error_dim}][{c.error_dim}];
+{ind}static const double R_default[{c.input_dim}][{c.input_dim}];
+{ind}static const double K_default[{c.input_dim}][{c.error_dim}];
+{ind}void SetGain(const double (&K)[{c.input_dim}][{c.error_dim}]);
+
 private:
 {ind}struct PhysicsParams {{
 {pstruct}
 {ind}}};
 {ind}PhysicsParams m_p;
+{ind}double m_K_e[{c.input_dim}][{c.error_dim}];   // active LQR gain (default K_default; SetGain overrides)
 }};
 
 {ns_close}
@@ -198,11 +239,19 @@ private:
 
 {ns_open}
 
-namespace {{
-{ind}{self._emit_K_e_literal()}
-}} // anonymous namespace
+{self._emit_lqr_data_defs()}
 
-{cls}::{cls}() = default;
+{cls}::{cls}()
+{{
+{ind}for (std::size_t i = 0; i < {c.input_dim}; ++i)
+{ind}{ind}for (std::size_t j = 0; j < {c.error_dim}; ++j) m_K_e[i][j] = K_default[i][j];
+}}
+
+void {cls}::SetGain(const double (&K)[{c.input_dim}][{c.error_dim}])
+{{
+{ind}for (std::size_t i = 0; i < {c.input_dim}; ++i)
+{ind}{ind}for (std::size_t j = 0; j < {c.error_dim}; ++j) m_K_e[i][j] = K[i][j];
+}}
 
 double {cls}::GetState(const StateVec& s, StateName n) {{
 {ind}switch (n) {{

@@ -64,6 +64,7 @@ class RocketCodegen(BaseCodegen):
 
     def _check_ready(self):
         assert self._rhs is not None and self._K_e is not None
+        assert self._A_e is not None, "call set_error_dynamics(A_e, B_e, Q, R)"
         assert self._ff_kin and self._ff_torque and self._ff_att_rate, \
             "rocket needs set_feedforward_kinematic / _torque / _attitude_rate"
 
@@ -211,12 +212,12 @@ class RocketCodegen(BaseCodegen):
               f"{ind}for (std::size_t j = 0; j < {self.cfg.aug_dim}; ++j) e[j] = s[j] - s_ref[j];",
               f"{ind}{{ double dp = e[StateToIdx(StateName::Psi)];",
               f"{ind}  e[StateToIdx(StateName::Psi)] = std::atan2(std::sin(dp), std::cos(dp)); }}", "",
-              f"{ind}// LQR correction: u_lqr = -K_e * e.",
+              f"{ind}// LQR correction: u_lqr = -m_K_e * e.",
               f"{ind}InputVec u_lqr{{}};",
               f"{ind}for (std::size_t i = 0; i < {self.cfg.input_dim}; ++i) {{",
               f"{ind}{ind}double v = 0.0;",
               f"{ind}{ind}for (std::size_t j = 0; j < {self.cfg.error_dim}; ++j) {{",
-              f"{ind}{ind}{ind}v += K_e[i][j] * e[j];",
+              f"{ind}{ind}{ind}v += m_K_e[i][j] * e[j];",
               f"{ind}{ind}}}",
               f"{ind}{ind}u_lqr[i] = -v;",
               f"{ind}}}", ""]

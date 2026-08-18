@@ -63,6 +63,17 @@ public:
     void   SetParam(ParamName n, double v);
     static constexpr std::size_t StateToIdx(StateName n) noexcept { return static_cast<std::size_t>(n); }
 
+    // LQR error dynamics (A_e, B_e) and default weights (Q, R) at the nominal
+    // operating point, plus the default/reference gain -- all constant, emitted
+    // by codegen. The runtime re-synthesises the gain from these (CDS::control::lqr,
+    // e.g. after retuning Q, R) and installs it with SetGain; A_e, B_e stay fixed.
+    static const double A_e[16][16];
+    static const double B_e[16][4];
+    static const double Q_default[16][16];
+    static const double R_default[4][4];
+    static const double K_default[4][16];
+    void SetGain(const double (&K)[4][16]);
+
 private:
     struct PhysicsParams {
             double m = 10.0;  // vehicle mass [kg]
@@ -82,6 +93,7 @@ private:
             double T3_min = -10;  // Torque T3, about body z axis (drives psi), lower saturation [Nm]
     };
     PhysicsParams m_p;
+    double m_K_e[4][16];   // active LQR gain (default K_default; SetGain overrides)
 };
 
 } }  // namespace CDS::Dynamics

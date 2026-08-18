@@ -30,6 +30,7 @@
 // =============================================================================
 
 #include "BaseModel.hpp"
+#include "lqr_tuner.hpp"
 
 namespace CDS
 {
@@ -44,8 +45,16 @@ namespace CDS
         virtual bool SetTrajectoryManager(TrajectoryManager* pTrajectoryManager) override;
         virtual bool PerformIntegration(const core_stepParams_t& params) override;
         virtual bool GetState(core_state_t& state) override;
-        virtual bool GetTrackingErrors(core_trackingErrors_t& tErrors) override; 
+        virtual bool GetTrackingErrors(core_trackingErrors_t& tErrors) override;
         virtual bool GetCurrentTimeSeconds(core_coord_t& currentTimeSeconds) override;
+
+        // Runtime-tunable LQR weights. Changing them re-synthesises the feedback
+        // gain from the (frozen) error dynamics via CDS::control::lqr; the
+        // physical parameters and the linearisation are unaffected.
+        void   SetWeights(const double Q[16][16], const double R[4][4]);
+        void   GetWeights(double Q[16][16], double R[4][4]) const;
+        void   GetGain(double K[4][16]) const;
+        double GetGainBridgeError() const;   // max|runtime gain - baked K_default| at default weights
 
         using StateVec = std::array<double, 16>;   // augmented state (12 + 4 integrals)
         using InputVec = std::array<double, 4>;    // [F1, T1, T2, T3]
@@ -54,12 +63,17 @@ namespace CDS
         using UserForces = std::array<double, 3>;    // User input forces [Fx, Fy, Fz]
 
         private:
+        void RecomputeGain();          // (re)synthesise the LQR gain and install it
+
         void* m_modelPtr;
         StateVec m_state;
         TrajectoryManager* m_trajectoryManagerPtr;
         TrackingErr m_trackingErr;
         UserForces m_userForces;
         double m_time;
+
+        // Runtime LQR gain manager: tunable weights + synthesised gain (libs/control).
+        control::LqrGainTuner<16, 4> m_lqr;
 
     };
 }

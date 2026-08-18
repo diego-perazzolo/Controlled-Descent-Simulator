@@ -43,6 +43,7 @@ jobs:
           cmake -S core/Models/test -B build-mpc-model-test -DCMAKE_BUILD_TYPE=Release
           cmake --build build-mpc-model-test
           ./build-mpc-model-test/mpc_model_test
+          ./build-mpc-model-test/lqr_model_test
 
       - name: Logger + profiler + recorder tests (native)
         run: |

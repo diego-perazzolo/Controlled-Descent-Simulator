@@ -13,3 +13,6 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../.. core)
 
 add_executable(mpc_model_test mpc_model_test.cpp)
 target_link_libraries(mpc_model_test PRIVATE cds_core)
+
+add_executable(lqr_model_test lqr_model_test.cpp)
+target_link_libraries(lqr_model_test PRIVATE cds_core)

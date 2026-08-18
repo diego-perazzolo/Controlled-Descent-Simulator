@@ -4,9 +4,11 @@ The full state-space, forces and controller details for every vehicle model.
 
 All models share the same core machinery: a 6-DOF rigid body, an RK4 integrator
 (`libs/integrate`), and a controller that runs each tick before the physics step.
-The dynamics and the LQR gains are **generated as C++** from the Jupyter notebooks
-(`modeling/`); the MPC solver is hand-written C++ validated against a Python
-reference (`libs/control`). How the code is generated is documented in
+The dynamics are **generated as C++** from the Jupyter notebooks (`modeling/`).
+The controllers are **hand-written C++** (`libs/control`) validated against a
+Python reference: the LQR gain is synthesised at model init from generated
+error-dynamics constants (a matrix-sign Riccati solve), and the MPC solver
+re-optimizes each tick. How the code is generated is documented in
 [build.md](build.md); this page is about *what* the models are.
 
 ---
@@ -78,9 +80,17 @@ or slow machine slows the simulation down rather than desyncing it.
 
 Acts on the tracking error (position + yaw, with the error integrators),
 plus a feedforward term on all actuators (differential flatness for the
-QuadRotor). Actuator saturation is applied on the final command. The gains are
-derived symbolically in the Jupyter notebooks and exported as C++ alongside the
-dynamics — see [build.md](build.md).
+QuadRotor). Actuator saturation is applied on the final command.
+
+The feedback gain is **synthesised at run time** by the hand-written
+`CDS::control::lqr` (continuous-time LQR via the matrix-sign function,
+`libs/control/lqr.hpp`) from the model's *frozen* error dynamics `A_e, B_e` and
+cost weights `Q, R` — constants the notebooks export alongside the dynamics (the
+linearisation stays fixed at the nominal operating point). Because the gain is
+recomputed from `Q, R`, the weights are **runtime-tunable**: `SetWeights`
+re-synthesises the gain while the physical parameters and the linearisation are
+untouched. A construction-time *bridge* check certifies the runtime gain
+reproduces the notebook's baked reference gain (`libs/control/lqr_tuner.hpp`).
 
 ### Nonlinear MPC (QuadRotor)
 
@@ -88,11 +98,12 @@ A **control-limited MPC**: an iLQR/DDP solver re-optimizes the 4 motor thrusts
 over a receding horizon each control step, with the actuator box enforced
 *inside* the optimization (not clipped afterwards).
 
-Every such controller ships a **C++↔Python conformance certificate**: a
+Every hand-written controller ships a **C++↔Python conformance certificate**: a
 stdlib-only script certifies the C++ result against an independent Python oracle
-on a synthetic benchmark (for iLQR, a ~0 box-projected KKT residual, i.e. the
-returned command sequence is a constrained optimum). The verification command is
-in [AGENTS.md](../AGENTS.md#verification-commands).
+on a synthetic benchmark — for iLQR, a ~0 box-projected KKT residual (the returned
+command sequence is a constrained optimum); for LQR, a ~0 Lyapunov-stationarity
+residual (the returned gain is the optimum). The verification commands are in
+[AGENTS.md](../AGENTS.md#verification-commands).
 
 The MPC only re-solves at its control cadence and holds the last command in
 between, which is why its per-tick cost is *bimodal* — see

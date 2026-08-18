@@ -181,10 +181,11 @@ cmake --build build-ilqr-bind
 python3 libs/control/bind/ilqr_conformance.py build-ilqr-bind
 python3 libs/control/bind/lqr_conformance.py  build-ilqr-bind
 
-# QuadRotorMPC model test (native, exercises the model + solver end to end)
+# model tests (native, exercise the runtime models end to end)
 cmake -S core/Models/test -B build-mpc-model-test -DCMAKE_BUILD_TYPE=Release
 cmake --build build-mpc-model-test
-./build-mpc-model-test/mpc_model_test   # Poly4 tracking + gust rejection
+./build-mpc-model-test/mpc_model_test   # QuadRotorMPC: Poly4 tracking + gust rejection
+./build-mpc-model-test/lqr_model_test   # Rocket/QuadRotor FF-LQR: runtime gain bridge + Q/R retune
 
 # Python codegen sanity (base_codegen shared at root; model codegens under model/)
 python3 -c "import ast; [ast.parse(open(f).read()) for f in ( \

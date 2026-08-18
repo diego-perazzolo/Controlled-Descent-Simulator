@@ -30,6 +30,7 @@ class QuadCodegen(BaseCodegen):
 
     def _check_ready(self):
         assert self._rhs is not None and self._K_e is not None and self._ff is not None
+        assert self._A_e is not None, "call set_error_dynamics(A_e, B_e, Q, R)"
 
     def _emit_dynamics_body(self):
         SN = [str(s) for s in self._state_syms]; IN = [str(s) for s in self._input_syms]
@@ -97,7 +98,7 @@ class QuadCodegen(BaseCodegen):
               "    err[9]=s[10]-wref_x; err[10]=s[11]-wref_y; err[11]=s[12]-wref_z;",
               "    err[12]= cpsi*iix + spsi*iiy; err[13]=-spsi*iix + cpsi*iiy; err[14]=s[15]; err[15]=s[16];", ""]
         for i, n in enumerate(["F","tx","ty","tz"]):
-            L.append(f"    const double u_{n} = -({'+'.join(f'K_e[{i}][{j}]*err[{j}]' for j in range(16))});")
+            L.append(f"    const double u_{n} = -({'+'.join(f'm_K_e[{i}][{j}]*err[{j}]' for j in range(16))});")
         L += ["    const double Fc  = F_ff  + u_F;",
               "    const double tcx = tff_x + u_tx;",
               "    const double tcy = tff_y + u_ty;",
