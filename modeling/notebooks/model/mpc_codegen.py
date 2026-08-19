@@ -1,9 +1,14 @@
-"""mpc_codegen.py -- QuadRotor MPC C++ generator (derives from BaseCodegen).
+"""mpc_codegen.py -- MPC prediction-model C++ generator (derives from BaseCodegen).
 
 Emits the *prediction model* the nonlinear MPC (control-limited iLQR/DDP) needs:
 the continuous dynamics f(x,u) with an external world-frame force, and its
 Jacobians f_x, f_u. Unlike the FF+LQR generator it emits NO control law and NO
 K_e literal -- the iLQR solver is hand-written C++ and consumes f, f_x, f_u.
+
+The emitter is model-agnostic (it CSEs whatever f, f_x, f_u it is handed); the
+per-vehicle shape lives in the config factories below -- mpc_config() for the
+quaternion quadrotor (QUADROTOR_MPC_01) and rocket_mpc_config() for the
+Euler-angle rocket (ROCKET_MPC_01).
 
 Author: Diego Perazzolo, 2026.
 """
@@ -29,9 +34,42 @@ def mpc_config(model_name="QUADROTOR_MPC_01"):
         user_forces_type="std::array<double, 3>")
 
 
+def rocket_mpc_config(model_name="ROCKET_MPC_01"):
+    return CodegenConfig(
+        parent_namespace="CDS::Dynamics", model_name=model_name,
+        state_dim=12, aug_dim=12, error_dim=12, input_dim=4,
+        notebook_name="dynamics_rocket_MPC01.ipynb",
+        state_enum_names=("X","Y","Z","Alpha","Beta","Psi","XDot","YDot","ZDot",
+                          "AlphaDot","BetaDot","PsiDot"),
+        # Same physical parameter set as the FF-LQR rocket: the dynamics uses only
+        # m..cz, but the actuator box (F1/T1/T2/T3 min/max) rides along so the core
+        # model can read it for the solver's control limits (per-input box).
+        param_enum_names=("Mass","Ix","Iy","Iz","Gravity","DragLateral","DragAxial",
+                          "ThrustMax","ThrustMin","TorqueXMax","TorqueXMin","TorqueYMax","TorqueYMin",
+                          "TorqueZMax","TorqueZMin"),
+        param_field_names=("m","Ix","Iy","Iz","g","c","cz","F1_max","F1_min","T1_max","T1_min",
+                           "T2_max","T2_min","T3_max","T3_min"),
+        # NOTE on torque naming: T1 acts about body Y (drives alpha/pitch) and T2
+        # about body X (drives beta); enum/field names keep the legacy X/Y labels.
+        param_field_comments=("vehicle mass [kg]","inertia around body x [kg m^2]",
+            "inertia around body y [kg m^2]","inertia around body z [kg m^2]","gravity [m/s^2]",
+            "lateral drag coeff (body x, y) [N s/m]","axial drag coeff (body z) [N s/m]",
+            "thrust upper saturation [N]","thrust lower saturation [N]",
+            "Torque T1, about body y axis (drives alpha), upper saturation [Nm]",
+            "Torque T1, about body y axis (drives alpha), lower saturation [Nm]",
+            "Torque T2, about body x axis (drives beta), upper saturation [Nm]",
+            "Torque T2, about body x axis (drives beta), lower saturation [Nm]",
+            "Torque T3, about body z axis (drives psi), upper saturation [Nm]",
+            "Torque T3, about body z axis (drives psi), lower saturation [Nm]"),
+        param_default_values=(10.0, 10.0/3.0, 10.0/3.0, 1.0, 9.81, 1.0, 0.02, 500.0, 0.0,
+                              10, -10, 10, -10, 10, -10),
+        user_forces_type="std::array<double, 3>")
+
+
 class MpcCodegen(BaseCodegen):
-    """Nonlinear 6-DOF prediction model for MPC. InputVec = [T1..T4] (motor thrusts).
-    Emits Dynamics(s,u,userF) and Jacobians(s,u) -> f_x, f_u; no control law."""
+    """Nonlinear 6-DOF prediction model for MPC. InputVec = [F1/T1..T4] wrench or
+    [T1..T4] motor thrusts, per the config. Emits Dynamics(s,u,userF) and
+    Jacobians(s,u) -> f_x, f_u; no control law."""
 
     def __init__(self, cfg=None):
         super().__init__(cfg or mpc_config())
