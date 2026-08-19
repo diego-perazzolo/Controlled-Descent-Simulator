@@ -140,6 +140,11 @@ cmake --build build-ilqr-test
 ./build-ilqr-test/ilqr_test        # double-integrator: loose-box reach + tight-box feasibility
 ./build-ilqr-test/lqr_test         # LQR synthesis: known-answer gains + closed-loop stability
 
+# generic estimator tests (native, self-contained: no core, no quaternions)
+cmake -S libs/estimate/test -B build-observer-test -DCMAKE_BUILD_TYPE=Release
+cmake --build build-observer-test
+./build-observer-test/observer_test # observer synthesis (dual LQR): known-answer gains + Step convergence
+
 # logger + profiler tests (native, self-contained: no core, no protocol)
 cmake -S libs/log/test -B build-log-test -DCMAKE_BUILD_TYPE=Release
 cmake --build build-log-test
@@ -181,6 +186,15 @@ cmake -S libs/control/bind -B build-ilqr-bind -DCMAKE_BUILD_TYPE=Release
 cmake --build build-ilqr-bind
 python3 libs/control/bind/ilqr_conformance.py build-ilqr-bind
 python3 libs/control/bind/lqr_conformance.py  build-ilqr-bind
+
+# estimator C++<->Python conformance (golden rule 10, dual of the LQR one). The
+# observer gain is synthesised as the LQR dual (L = lqr(A',C',Qw,Rv)') and here
+# certified an optimum by the filtering Lyapunov-stationarity residual
+# ||L - P C' Rv^-1|| ~0 (P from A_cl P + P A_cl' = -(Qw + L Rv L'), A_cl = A - L C)
+# with P positive-definite as the Hurwitz witness.
+cmake -S libs/estimate/bind -B build-observer-bind -DCMAKE_BUILD_TYPE=Release
+cmake --build build-observer-bind
+python3 libs/estimate/bind/observer_conformance.py build-observer-bind
 
 # model tests (native, exercise the runtime models end to end)
 cmake -S core/Models/test -B build-mpc-model-test -DCMAKE_BUILD_TYPE=Release
