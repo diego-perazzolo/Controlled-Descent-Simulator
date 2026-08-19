@@ -50,6 +50,7 @@
 #include "Rocket.hpp"
 #include "QuadRotor.hpp"
 #include "QuadRotorMPC.hpp"
+#include "RocketMPC.hpp"
 
 using Clock = std::chrono::steady_clock;
 static inline long long ns(Clock::duration d)
@@ -128,6 +129,7 @@ int main()
     err |= benchModel<CDS::Rocket>("Rocket", rocket);
     err |= benchModel<CDS::QuadRotor>("Quadrotor", quad);
     err |= benchModel<CDS::QuadRotorMPC>("Quadrotor MPC", quad);
+    err |= benchModel<CDS::RocketMPC>("Rocket MPC", rocket);
 
     return err ? 1 : 0;
 }

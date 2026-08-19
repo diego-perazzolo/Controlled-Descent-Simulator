@@ -23,9 +23,9 @@ It is a learning and portfolio project, it is a work in progress.
 
 ## Highlights
 
-- **Three vehicle models**, switchable at runtime — a **Rocket** (Euler-angle
-  powered descent, Falcon 9 style), a **QuadRotor** (quaternion 6-DOF), and the
-  same **QuadRotor driven by a nonlinear MPC**.
+- **Four vehicle models**, switchable at runtime — a **Rocket** (Euler-angle
+  powered descent, Falcon 9 style), a **QuadRotor** (quaternion 6-DOF), and each
+  airframe **driven by a nonlinear MPC** as well.
 - **Two controller families** — parametric **LQR + differential-flatness
   feedforward**, generated as C++ from the notebooks; and a
   control-limited **nonlinear MPC** (iLQR/DDP) with a C++↔Python conformance
@@ -70,6 +70,13 @@ box natively instead of clipping after the fact.
 
 ![QuadRotor MPC demo](docs/demo-quadrotor-mpc.gif)
 
+### Rocket (MPC) — nonlinear model-predictive control
+
+The same rocket, flown by the same shared iLQR/DDP solver. Being Euler-angle, it
+tracks a direct (heading-wrapped) attitude error — no error-quaternion, no state
+projection — and commands the wrench `[F1, T1, T2, T3]` **directly**, with a
+per-input actuator box (thrust and torques live on different scales).
+
 ### Plant in the loop — ArduPilot SITL
 
 In the client+server deployment, the trajectory can be flown by an external
@@ -93,6 +100,7 @@ One physics tick, on a developer laptop, as orders of magnitude:
 | Rocket (feed-forward + LQR) | **~0.4 µs** |
 | QuadRotor (feed-forward + LQR) | **~0.9 µs** |
 | QuadRotor **MPC** | **~0.5 µs / ~5 ms** *(bimodal: held command vs. full solve)* |
+| Rocket **MPC** | **~0.3 µs / ~4 ms** *(bimodal: held command vs. full solve)* |
 
 The diagnostics are built to disappear when off: a filtered log line costs
 **~1 ns** (its arguments are not even evaluated), a disabled profiler scope
@@ -240,7 +248,7 @@ deployment are all in **[docs/build.md](docs/build.md)**.
 - [x] ws-served app: core on a native WebSocket server, browser as thin client
 - [x] SITL plant over MAVLink/UDP (ArduCopter): link, telemetry, Guided-mode setpoints, auto arm/takeoff staging
 - [x] Save / load of parameters and trajectories from the frontend
-- [x] Nonlinear model-predictive control (control-limited iLQR/DDP) for the QuadRotor: shared C++ solver (`libs/control`) with a Python reference and conformance certificate
+- [x] Nonlinear model-predictive control (control-limited iLQR/DDP) for both the QuadRotor and the Rocket: one shared C++ solver (`libs/control`) with a Python reference and conformance certificate
 - [ ] Real hardware interface (MAVLink over serial to a Pixhawk): the SITL plant's link layer is the same, only the transport changes
 
 ---

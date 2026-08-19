@@ -14,9 +14,12 @@ const TIMESTEP_MAX_S     = 0.5;
 const MODEL_ROCKET        = 'rocket';
 const MODEL_QUADROTOR     = 'quadrotor';
 const MODEL_QUADROTOR_MPC = 'quadrotor_mpc';   // same airframe, nonlinear MPC controller
-// The two quadrotor variants share airframe params, mesh, panels and camera;
-// they differ only in which backend init entry point they call.
-const isQuadFamily = (m) => m === MODEL_QUADROTOR || m === MODEL_QUADROTOR_MPC;
+const MODEL_ROCKET_MPC    = 'rocket_mpc';      // same airframe, nonlinear MPC controller
+// Each airframe has two variants that share params, mesh, panels and camera and
+// differ only in which backend init entry point they call: the quadrotor family
+// (FF-LQR vs MPC) and the rocket family (FF-LQR vs MPC).
+const isQuadFamily   = (m) => m === MODEL_QUADROTOR || m === MODEL_QUADROTOR_MPC;
+const isRocketFamily = (m) => m === MODEL_ROCKET    || m === MODEL_ROCKET_MPC;
 
 // Hardcoded fallback for the very first Poly4 when the trajectory list is
 // empty and the user has no rocket state to seed from. Matches the reference
@@ -100,6 +103,7 @@ const DEFAULT_INIT_PARAMS = {
     [MODEL_ROCKET]:        ROCKET_INIT_PARAMS,
     [MODEL_QUADROTOR]:     QUADROTOR_INIT_PARAMS,
     [MODEL_QUADROTOR_MPC]: QUADROTOR_INIT_PARAMS,   // MPC reuses the airframe params
+    [MODEL_ROCKET_MPC]:    ROCKET_INIT_PARAMS,      // MPC reuses the airframe params
 };
 
 // =============================================================================
@@ -115,7 +119,7 @@ let lastFpsTs  = performance.now();
 let fpsCounter = 0;
 let fpsDisplay = 0;
 let timestep_s = DEFAULT_TIMESTEP_S;
-let currentModel = MODEL_ROCKET;   // 'rocket' | 'quadrotor'
+let currentModel = MODEL_ROCKET;   // 'rocket' | 'rocket_mpc' | 'quadrotor' | 'quadrotor_mpc'
 let plantAvailable = false;        // plant attached AND publishing fresh samples
 
 // =============================================================================
@@ -340,6 +344,7 @@ function initBackend(params) {
     let err;
     if (currentModel === MODEL_QUADROTOR)          err = sim.ext_quadRotorInit(params);
     else if (currentModel === MODEL_QUADROTOR_MPC) err = sim.ext_quadRotorMpcInit(params);
+    else if (currentModel === MODEL_ROCKET_MPC)    err = sim.ext_rocketMpcInit(params);
     else                                           err = sim.ext_rocketInit(params);
     if (err) return err;
     return sendSystemParams();
@@ -1782,7 +1787,7 @@ function applyModelPanelVisibility() {
 // new model's default params, and replays the (shared) trajectory so the run
 // stays valid. The trajectory sequence itself is model-agnostic and preserved.
 function switchModel(model) {
-    if (model !== MODEL_ROCKET && model !== MODEL_QUADROTOR && model !== MODEL_QUADROTOR_MPC) return;
+    if (!isRocketFamily(model) && !isQuadFamily(model)) return;
     stop();
     currentModel = model;
 

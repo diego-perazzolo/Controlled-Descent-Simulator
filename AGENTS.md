@@ -116,7 +116,8 @@ clang++ -std=c++20 -fsyntax-only \
   -Ilibs/log -Ilibs/profile -Ilibs/record \
   -Imodeling/notebooks/exported_cpp/ROCKET_FF_LQR_01 \
   -Imodeling/notebooks/exported_cpp/QUADROTOR_FF_LQR_01 \
-  -Imodeling/notebooks/exported_cpp/QUADROTOR_MPC_01 <file.cpp>
+  -Imodeling/notebooks/exported_cpp/QUADROTOR_MPC_01 \
+  -Imodeling/notebooks/exported_cpp/ROCKET_MPC_01 <file.cpp>
 
 # Frontend syntax check (main.js is an ES module)
 cp frontend/main.js /tmp/main_check.mjs && node --check /tmp/main_check.mjs
@@ -184,8 +185,9 @@ python3 libs/control/bind/lqr_conformance.py  build-ilqr-bind
 # model tests (native, exercise the runtime models end to end)
 cmake -S core/Models/test -B build-mpc-model-test -DCMAKE_BUILD_TYPE=Release
 cmake --build build-mpc-model-test
-./build-mpc-model-test/mpc_model_test   # QuadRotorMPC: Poly4 tracking + gust rejection
-./build-mpc-model-test/lqr_model_test   # Rocket/QuadRotor FF-LQR: runtime gain bridge + Q/R retune
+./build-mpc-model-test/mpc_model_test        # QuadRotorMPC: Poly4 tracking + gust rejection
+./build-mpc-model-test/rocket_mpc_model_test # RocketMPC: Poly4+yaw tracking + gust rejection
+./build-mpc-model-test/lqr_model_test        # Rocket/QuadRotor FF-LQR: runtime gain bridge + Q/R retune
 
 # Python codegen sanity (base_codegen shared at root; model codegens under model/)
 python3 -c "import ast; [ast.parse(open(f).read()) for f in ( \

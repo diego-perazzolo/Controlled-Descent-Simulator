@@ -33,14 +33,17 @@ advance the physics by 10 ms (for the MPC model, also re-solve the optimisation)
 | Rocket (feed-forward + LQR) | **~0.4 µs** | closed-form control + one RK4 step |
 | Quadrotor (feed-forward + LQR) | **~0.9 µs** | same, with quaternion attitude |
 | Quadrotor **MPC** | **~0.5 µs or ~5 ms** | *bimodal* — see below |
+| Rocket **MPC** | **~0.3 µs or ~4 ms** | *bimodal* — see below (Euler, 12 states) |
 
-The MPC is different: it only re-solves its optimisation at the control cadence
-(every 20 ms), and holds the last command in between. So most ticks are ~0.5 µs
-(just applying the held command), and one tick in two is a full **~5 ms solve**
-(p95 ≈ 6.5 ms). That is by design — the expensive solve is kept off most ticks so
-a high tick rate cannot stall the simulation, and 5 ms comfortably fits the 20 ms
-control period. It also means the MPC is the one model whose cost matters when
-sizing the loop.
+The MPC models are different: they only re-solve their optimisation at the
+control cadence (every 20 ms), and hold the last command in between. So most
+ticks are sub-µs (just applying the held command), and one tick in two is a full
+solve — **~5 ms** for the Quadrotor (p95 ≈ 6.5 ms), **~4 ms** for the Rocket (p95
+≈ 3.6 ms; its 12-state Euler model and quaternion-free cost make each solve
+cheaper). That is by design — the expensive solve is kept off most ticks so a
+high tick rate cannot stall the simulation, and the solve comfortably fits the
+20 ms control period. It also means the MPC models are the ones whose cost
+matters when sizing the loop.
 
 ## 2. What the diagnostics cost
 

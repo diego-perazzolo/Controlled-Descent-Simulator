@@ -35,6 +35,11 @@ alpha_dot, beta_dot, psi_dot  — angular rates (rad/s)
 IntX, IntY, IntZ, IntPsi      — tracking-error integrators
 ```
 
+**Rocket (MPC)** — the same 12 physical states **without** the 4 integrators:
+the receding-horizon MPC needs no integral action, so the augmented state is
+dropped. This model has non-zero steady state error in presence of external
+disturbances.
+
 **QuadRotor (FF + LQR)** — 13 physical states + 4 tracking-error integrators:
 
 ```
@@ -92,11 +97,20 @@ re-synthesises the gain while the physical parameters and the linearisation are
 untouched. A construction-time *bridge* check certifies the runtime gain
 reproduces the notebook's baked reference gain (`libs/control/lqr_tuner.hpp`).
 
-### Nonlinear MPC (QuadRotor)
+### Nonlinear MPC (QuadRotor, Rocket)
 
-A **control-limited MPC**: an iLQR/DDP solver re-optimizes the 4 motor thrusts
-over a receding horizon each control step, with the actuator box enforced
-*inside* the optimization (not clipped afterwards).
+A **control-limited MPC**: an iLQR/DDP solver re-optimizes the command over a
+receding horizon each control step, with the actuator box enforced *inside* the
+optimization (not clipped afterwards). The generic solver lives in
+`libs/control/ilqr.hpp`; each model supplies only its dynamics (generated) and
+its Gauss-Newton tracking cost (hand-written).
+
+- *QuadRotor*: re-optimizes the 4 motor thrusts; the attitude error is an
+  error-quaternion, and the quaternion is renormalised after each step.
+- *Rocket*: re-optimizes the wrench `[F1, T1, T2, T3]` **directly** (no motor
+  allocation), with a **per-input** actuator box (thrust and torques live on
+  different scales). Being Euler-angle, the attitude error is a direct,
+  heading-wrapped angle difference — no error-quaternion, no state projection.
 
 Every hand-written controller ships a **C++↔Python conformance certificate**: a
 stdlib-only script certifies the C++ result against an independent Python oracle
