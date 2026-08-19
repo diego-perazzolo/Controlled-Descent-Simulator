@@ -422,7 +422,11 @@ namespace {
 const char* const QUAD_ERR_LABELS[16] = {
     "x", "y", "z", "roll", "pitch", "yaw", "vx", "vy", "vz",
     "p", "q", "r", "int_x", "int_y", "int_z", "int_yaw" };
-const char* const QUAD_IN_LABELS[4] = { "T1", "T2", "T3", "T4" };
+// The LQR acts on the virtual wrench [F, tau_x, tau_y, tau_z] (collective thrust
+// + 3 torques), NOT the 4 motor thrusts: the QuadX allocation maps the wrench to
+// the rotors downstream. So the R diagonal weights the wrench (thrust cheap,
+// torques dearer) and these labels name the wrench, not motors T1..T4.
+const char* const QUAD_IN_LABELS[4] = { "F", "Tx", "Ty", "Tz" };
 } // namespace
 
 void QuadRotor::BuildParamTable()
