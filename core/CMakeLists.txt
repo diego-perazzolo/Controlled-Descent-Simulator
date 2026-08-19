@@ -14,6 +14,7 @@ add_library(cds_core STATIC
     Models/Rocket.cpp
     Models/QuadRotor.cpp
     Models/QuadRotorMPC.cpp
+    Models/RocketMPC.cpp
     Trajectory/Trajectory.cpp
     Trajectory/TrajectoryManager.cpp
     Trajectory/Poly4.cpp
@@ -21,6 +22,7 @@ add_library(cds_core STATIC
     ${CMAKE_CURRENT_SOURCE_DIR}/../modeling/notebooks/exported_cpp/ROCKET_FF_LQR_01/dynamics_rocket_ff_lqr_01.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../modeling/notebooks/exported_cpp/QUADROTOR_FF_LQR_01/dynamics_quadrotor_ff_lqr_01.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../modeling/notebooks/exported_cpp/QUADROTOR_MPC_01/dynamics_quadrotor_mpc_01.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../modeling/notebooks/exported_cpp/ROCKET_MPC_01/dynamics_rocket_mpc_01.cpp
 )
 
 target_compile_features(cds_core PUBLIC cxx_std_20)
@@ -41,4 +43,5 @@ target_include_directories(cds_core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/../modeling/notebooks/exported_cpp/ROCKET_FF_LQR_01/
     ${CMAKE_CURRENT_SOURCE_DIR}/../modeling/notebooks/exported_cpp/QUADROTOR_FF_LQR_01/
     ${CMAKE_CURRENT_SOURCE_DIR}/../modeling/notebooks/exported_cpp/QUADROTOR_MPC_01/
+    ${CMAKE_CURRENT_SOURCE_DIR}/../modeling/notebooks/exported_cpp/ROCKET_MPC_01/
 )

@@ -507,3 +507,19 @@ bool ext_setControllerParam(ext_controllerParamSet params)
 
     return resp.isError != 0;
 }
+
+bool ext_initRocket_MPC01(ext_initRocketParams params)
+{
+    reqInitRocketMPC_t req = {};
+    respBool_t resp = {};
+
+    req.h.type = WS_MSG_INIT_ROCKET_MPC;
+    req.p = params;
+
+    if(_rpc(req, resp))
+    {
+        return true;
+    }
+
+    return resp.isError != 0;
+}

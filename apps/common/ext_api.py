@@ -451,4 +451,11 @@ COMMANDS = [
         req="ext_controllerParamSet", resp="bool",
         doc="Set one controller parameter by its manifest id; returns true on error",
         log="set controller param"),
+
+    # ---- additional model inits (appended to keep command ids contiguous) ----
+
+    Cmd(27, "InitRocketMPC", "ext_initRocket_MPC01", "ext_rocketMpcInit",
+        req="ext_initRocketParams", resp="bool",
+        doc="Initialize Rocket model: MPC_01 (nonlinear MPC), returns true on error",
+        log="init rocket mpc"),
 ]

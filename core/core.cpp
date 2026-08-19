@@ -38,6 +38,7 @@
 #include "Models/Rocket.hpp"
 #include "Models/QuadRotor.hpp"
 #include "Models/QuadRotorMPC.hpp"
+#include "Models/RocketMPC.hpp"
 #include "Trajectory/TrajectoryManager.hpp"
 
 using namespace CDS;
@@ -133,6 +134,20 @@ bool core_quadRotorMPC01_init(const core_quadRotorParams_t rPar)
     if (model->SetModelParams(rPar))
     {
         CDS_LOG_ERROR(logger, "Cannot initialize Quadrotor MPC model");
+        return true;
+    }
+
+    return _ctx.SM.InitModel(std::move(model));
+}
+
+bool core_rocketMPC01_init(const core_rocketParams_t rPar)
+{
+    // Configure the model. The SystemManager always
+    // receives a fully-initialized model
+    auto model = std::make_unique<RocketMPC>();
+    if (model->SetModelParams(rPar))
+    {
+        CDS_LOG_ERROR(logger, "Cannot initialize Rocket MPC model");
         return true;
     }
 

@@ -228,4 +228,5 @@ EMSCRIPTEN_BINDINGS(simulator) {
     function("ext_getRecordStatus", &ext_getRecordStatus);
     function("ext_getControllerManifest", &ext_getControllerManifest);
     function("ext_setControllerParam", &ext_setControllerParam);
+    function("ext_rocketMpcInit", &ext_initRocket_MPC01);
 }

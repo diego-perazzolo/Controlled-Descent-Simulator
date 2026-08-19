@@ -362,6 +362,15 @@ std::vector<uint8_t> server_dispatch(const std::vector<uint8_t>& msg)
             return _respBool(h, ext_setControllerParam(req.p));
         }
 
+        case WS_MSG_INIT_ROCKET_MPC:
+        {
+            reqInitRocketMPC_t req = {};
+            if(_parse(msg, req)) return _respBool(h, true);
+
+            printf("[cds-server] init rocket mpc\n");
+            return _respBool(h, ext_initRocket_MPC01(req.p));
+        }
+
         default:
             // Err: unknown message type
             return _respBool(h, true);

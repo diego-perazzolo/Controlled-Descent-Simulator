@@ -236,6 +236,29 @@ bool ext_initQuadRotor_MPC01(ext_initQuadRotorParams params)
     return ret;
 }
 
+bool ext_initRocket_MPC01(ext_initRocketParams params)
+{
+
+    /* Initialize core, return true if error */
+
+    // Struct conversion (same physical params as the FF+LQR rocket)
+    core_rocketParams_t rPar = _convertExtToCore_rocketParams(params.params, params.actuatorLimits);
+
+    // Core initialization
+    bool ret = core_init();
+    RETURN_IF_TRUE(ret);
+
+    // Rocket MPC initialization
+    ret = core_rocketMPC01_init(rPar);
+    RETURN_IF_TRUE(ret);
+
+    // Trajectory initialization
+    ret = core_trajectoryInit();
+    RETURN_IF_TRUE(ret);
+
+    return ret;
+}
+
 bool ext_trajectory_append_poly4(ext_trajectoryPoly4Params_t params)
 {
     bool ret = false;

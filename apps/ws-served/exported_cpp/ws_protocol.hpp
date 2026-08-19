@@ -50,7 +50,7 @@ constexpr uint16_t WS_DEFAULT_PORT = 9002;
    carry different bytes, and both sides refuse to talk: a stale
    simulator.wasm against a newer cds_server fails loudly instead
    of corrupting the parsing. */
-constexpr uint8_t WS_PROTOCOL_VERSION = 0xEA;
+constexpr uint8_t WS_PROTOCOL_VERSION = 0xD1;
 
 /* Message types: request and matching response carry the same type id */
 enum MsgType : uint8_t
@@ -81,6 +81,7 @@ enum MsgType : uint8_t
     WS_MSG_GET_RECORD_STATUS       = 24, // -> respGetRecordStatus_t
     WS_MSG_GET_CONTROLLER_MANIFEST = 25, // -> respGetControllerManifest_t
     WS_MSG_SET_CONTROLLER_PARAM    = 26, // -> respBool_t
+    WS_MSG_INIT_ROCKET_MPC         = 27, // -> respBool_t
 };
 
 #pragma pack(push, 1)
@@ -239,6 +240,12 @@ typedef struct
     ext_controllerParamSet p;
 } reqSetControllerParam_t;
 
+typedef struct
+{
+    header_t h;
+    ext_initRocketParams p;
+} reqInitRocketMPC_t;
+
 /* ------------------------------ responses ------------------------------- */
 
 /* generic boolean response: isError follows the core convention (1 = error) */
@@ -354,6 +361,7 @@ static_assert(sizeof(reqSetRecording_t)           ==  3, "wire layout drift"); /
 static_assert(sizeof(reqGetRecordStatus_t)        ==  2, "wire layout drift");
 static_assert(sizeof(reqGetControllerManifest_t)  ==  2, "wire layout drift");
 static_assert(sizeof(reqSetControllerParam_t)     == 10, "wire layout drift"); // 2 + 2f
+static_assert(sizeof(reqInitRocketMPC_t)          == 58, "wire layout drift"); // 2 + 14f
 static_assert(sizeof(respBool_t)                  ==  3, "wire layout drift"); // 2 + u8
 static_assert(sizeof(respTrajGetPoint_t)          == 14, "wire layout drift"); // 2 + 1f + 1f + 1f
 static_assert(sizeof(respGetSnapshot_t)           == 71, "wire layout drift"); // 2 + 1f + 12f + 4f + u8

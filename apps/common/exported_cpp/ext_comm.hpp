@@ -258,3 +258,6 @@ ext_controllerManifest ext_getControllerManifest(void);
 
 /* Set one controller parameter by its manifest id; returns true on error */
 bool ext_setControllerParam(ext_controllerParamSet params);
+
+/* Initialize Rocket model: MPC_01 (nonlinear MPC), returns true on error */
+bool ext_initRocket_MPC01(ext_initRocketParams params);

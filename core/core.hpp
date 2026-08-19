@@ -45,6 +45,9 @@ bool core_quadRotorFfLqr01_init(const core_quadRotorParams_t rPar);
 
 bool core_quadRotorMPC01_init(const core_quadRotorParams_t rPar);
 
+// Set rocket MPC01 (nonlinear MPC) parameters, returns true on error
+bool core_rocketMPC01_init(const core_rocketParams_t rPar);
+
 // Set trajectory initial parameters, returns true on error
 bool core_trajectoryInit(void);
 
