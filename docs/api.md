@@ -123,14 +123,17 @@ ext_recordStatus ext_getRecordStatus(void);
 /* Get the active controller's parameter manifest: a self-describing TSV listing
    of its exposed parameters, one record per newline
    ('id\tgroup\tlabel\tflags\tvalue', flags = 'rw' | 'ro'). The frontend builds
-   its tuning panel from this (no controller-specific UI). Empty text if no model
-   is running or the controller exposes no parameters */
+   its tuning panel from this (no controller-specific UI). Besides the controller
+   knobs, the manifest also carries the optional disturbance-observer and sensor
+   knobs (groups 'Observer', 'Sensor x/y/z' — see docs/estimation.md). Empty text
+   if no model is running or nothing is exposed */
 ext_controllerManifest ext_getControllerManifest(void);
 
 /* Set one controller parameter, addressed by its manifest id, to a new value.
    Slow-path, one coefficient at a time (never on the tick). For the LQR models a
-   set re-synthesizes the gain; for the MPC it retunes the cost/solver knobs.
-   Returns true on error (no model, bad id, read-only or rejected value) */
+   set re-synthesizes the gain; for the MPC it retunes the cost/solver knobs; an
+   observer covariance re-synthesizes the observer gain. Returns true on error
+   (no model, bad id, read-only or rejected value) */
 bool ext_setControllerParam(ext_controllerParamSet params);
 ```
 

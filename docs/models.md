@@ -38,7 +38,8 @@ IntX, IntY, IntZ, IntPsi      — tracking-error integrators
 **Rocket (MPC)** — the same 12 physical states **without** the 4 integrators:
 the receding-horizon MPC needs no integral action, so the augmented state is
 dropped. This model has non-zero steady state error in presence of external
-disturbances.
+disturbances — removed by the optional disturbance observer, see
+[estimation.md](estimation.md).
 
 **QuadRotor (FF + LQR)** — 13 physical states + 4 tracking-error integrators:
 
@@ -52,7 +53,9 @@ IntX, IntY, IntZ, IntPsi  — tracking-error integrators
 
 **QuadRotor (MPC)** — the same 13 physical states **without** the 4 integrators:
 the receding-horizon MPC needs no integral action, so the augmented state is
-dropped. This model has non-zero steady state error in presence of external disturbances.
+dropped. This model has non-zero steady state error in presence of external
+disturbances — removed by the optional disturbance observer, see
+[estimation.md](estimation.md).
 
 ---
 
@@ -122,6 +125,17 @@ residual (the returned gain is the optimum). The verification commands are in
 The MPC only re-solves at its control cadence and holds the last command in
 between, which is why its per-tick cost is *bimodal* — see
 [benchmark.md](benchmark.md).
+
+---
+
+## Estimation & sensors
+
+Every model carries an optional **disturbance observer** and **sensor model**,
+both off by default. The observer gives the MPC models offset-free tracking
+(estimating the external force) and the FF-LQR models sensor robustness (a
+filtered state estimate); the sensor model injects per-axis noise / bias / dropout
+on the measurement. Both are configurable live from the frontend. Full reference:
+[estimation.md](estimation.md).
 
 ---
 
