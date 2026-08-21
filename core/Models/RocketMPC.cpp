@@ -53,6 +53,7 @@
 #include "log.hpp"
 #include "profile.hpp"
 #include "Recorder.hpp"
+#include "estimator_params.hpp"
 
 
 // State indexes (match CDS::Dynamics::ROCKET_MPC_01::StateName)
@@ -201,7 +202,47 @@ RocketMPC::RocketMPC()
     m_maxIters = 12;     // iLQR iterations per solve (warm-started)
     BuildParamTable();
 
+    // Offset-free disturbance observer: OFF by default (opt-in). Gain synthesised
+    // in SetModelParams, once the model is parameterised. The rocket is heavy
+    // (small disturbance-input coupling Bd = 1/m), so the disturbance is weakly
+    // observed; a larger disturbance-state process variance raises the observer
+    // bandwidth to keep convergence brisk (still well inside the numerically safe
+    // qDist/rPos ratio).
+    m_obsEnabled = false;
+    m_obsQpos = 1.0e-4; m_obsQvel = 1.0e-2; m_obsQdist = 25.0; m_obsRpos = 1.0e-4;
+
     recorder.activateAsModel(); // this model owns the model data recorder while it lives
+}
+
+// Synthesise the translational disturbance observer. The only physical input is
+// the disturbance-input coupling Bd = d(v_dot)/d(F_ext), read FROM the generated
+// model by finite-differencing Dynamics w.r.t. the external force (the force
+// enters additively, so Bd is state/input-independent -- evaluated once at the
+// upright hover). Everything generic lives in the reusable helper.
+void RocketMPC::BuildObserver()
+{
+    auto dyn = (Dynamics::ROCKET_MPC_01*) m_modelPtr;
+    if (dyn == nullptr) return;
+
+    using PN = Dynamics::ROCKET_MPC_01::ParamName;
+    const double mg = dyn->GetParam(PN::Mass) * dyn->GetParam(PN::Gravity);
+    V12 x{}; x.fill(0.0);                 // upright, at rest, at the origin
+    const V4 u{{mg, 0.0, 0.0, 0.0}};      // hover wrench
+
+    const std::array<double,3> zeroF{{0.0, 0.0, 0.0}};
+    const V12 d0 = dyn->Dynamics(x, u, zeroF);
+    control::Mat<POS_DIM, POS_DIM> Bd{}; for (auto& r : Bd) r.fill(0.0);
+    for (std::size_t j = 0; j < POS_DIM; ++j)
+    {
+        std::array<double,3> Fe{{0.0, 0.0, 0.0}}; Fe[j] = 1.0;   // unit external force on axis j
+        const V12 dj = dyn->Dynamics(x, u, Fe);
+        Bd[0][j] = dj[IDX_VX] - d0[IDX_VX];
+        Bd[1][j] = dj[IDX_VY] - d0[IDX_VY];
+        Bd[2][j] = dj[IDX_VZ] - d0[IDX_VZ];
+    }
+
+    if (m_obs.Build(Bd, m_obsQpos, m_obsQvel, m_obsQdist, m_obsRpos))
+        CDS_LOG_ERROR(logger, "Disturbance-observer synthesis failed");
 }
 
 RocketMPC::~RocketMPC()
@@ -234,6 +275,9 @@ bool RocketMPC::SetModelParams(const std::any& params)
     dynamics->SetParam(PN::TorqueYMin,  p.T2_min);
     dynamics->SetParam(PN::TorqueZMax,  p.T3_max);
     dynamics->SetParam(PN::TorqueZMin,  p.T3_min);
+
+    // Synthesise the disturbance observer now the model is parameterised.
+    BuildObserver();
 
     // Recorder run metadata: full model parameters (trajectory added in
     // SetTrajectoryManager, the last setup step).
@@ -334,9 +378,23 @@ bool RocketMPC::PerformIntegration(const core_stepParams_t& params)
         }
 
         // build the rocket closures and hand off to the generic iLQR. The MPC
-        // predicts with no external force (userF = 0); the plant is advanced below
-        // with the true user force. Euler state needs no projection (no-op).
-        const std::array<double,3> predForce{{0.0, 0.0, 0.0}};
+        // predicts the external force as the observer's disturbance estimate
+        // (predForce = d_hat, constant over the horizon) so the steady-state
+        // tracking error is driven to zero; with the observer off this is the
+        // former zero-force prediction, unchanged. The initial state likewise
+        // uses the observer's position/velocity estimate when active. Euler state
+        // needs no projection (no-op).
+        std::array<double,3> predForce{{0.0, 0.0, 0.0}};
+        V12 x0 = m_state;
+        if (m_obsEnabled && m_obs.Seeded())
+        {
+            const auto rHat = m_obs.Position();
+            const auto vHat = m_obs.Velocity();
+            const auto dHat = m_obs.Disturbance();
+            x0[IDX_X]=rHat[0];  x0[IDX_Y]=rHat[1];  x0[IDX_Z]=rHat[2];
+            x0[IDX_VX]=vHat[0]; x0[IDX_VY]=vHat[1]; x0[IDX_VZ]=vHat[2];
+            predForce = {{dHat[0], dHat[1], dHat[2]}};
+        }
         auto fdyn  = [&](const V12& x, const V4& u){ return dynamics->Dynamics(x, u, predForce); };
         auto jac   = [&](const V12& x, const V4& u, double fx[NX][NX], double fu[NX][NU]){ dynamics->Jacobians(x, u, fx, fu); };
         auto proj  = [](V12&){ /* Euler: no state projection */ };
@@ -347,7 +405,7 @@ bool RocketMPC::PerformIntegration(const core_stepParams_t& params)
         {
             CDS_PROFILE(profile, "MPC solve");
             control::solve<NX, NU, RocketMPC::HORIZON>(
-                m_state, fdyn, jac, proj, scost, tcost, lo, hi, m_dtMpc, m_maxIters, m_warmStart, u0);
+                x0, fdyn, jac, proj, scost, tcost, lo, hi, m_dtMpc, m_maxIters, m_warmStart, u0);
         }
 
         m_lastU0        = u0;
@@ -362,6 +420,28 @@ bool RocketMPC::PerformIntegration(const core_stepParams_t& params)
     {
         CDS_PROFILE(profile, "Rk4 integration");
         m_state = integrateStep(*dynamics, m_state, m_lastU0, m_userForces, params.timestep);
+    }
+
+    // ---- disturbance observer update (opt-in) -------------------------------
+    // Every tick at the measured dt off the fresh state: known input a_known is
+    // the model's force-free acceleration; position measured through the sensor
+    // bank; a dropped axis is handled as predict-only inside the helper.
+    if (m_obsEnabled)
+    {
+        if (!m_obs.Seeded())
+            m_obs.Seed({{ m_state[IDX_X],  m_state[IDX_Y],  m_state[IDX_Z]  }},
+                       {{ m_state[IDX_VX], m_state[IDX_VY], m_state[IDX_VZ] }});
+
+        const std::array<double,3> zeroF{{0.0, 0.0, 0.0}};
+        const V12 xdot = dynamics->Dynamics(m_state, m_lastU0, zeroF);
+        const std::array<double,POS_DIM> aKnown{{ xdot[IDX_VX], xdot[IDX_VY], xdot[IDX_VZ] }};
+
+        const std::array<double,POS_DIM> truthPos{{ m_state[IDX_X], m_state[IDX_Y], m_state[IDX_Z] }};
+        std::array<double,POS_DIM> yPos{};
+        std::array<bool,POS_DIM>   valid{};
+        m_posSensor.Apply(truthPos, yPos, valid);
+
+        m_obs.Step(aKnown, yPos, valid, params.timestep);
     }
 
     m_time += params.timestep;
@@ -450,6 +530,9 @@ void RocketMPC::BuildParamTable()
     m_params.add("solver", "max iters", true, [this]{ return static_cast<double>(m_maxIters); },
                  [this](double v){ const int n = static_cast<int>(v + 0.5); if (n < 1) return true; m_maxIters = n; return false; });
     m_params.add("solver", "horizon N", false, []{ return static_cast<double>(RocketMPC::HORIZON); });
+
+    // Observer + per-axis position sensor knobs (ride the same manifest).
+    appendEstimatorParams(m_params, m_obsEnabled, m_posSensor);
 }
 
 bool RocketMPC::GetControllerManifest(char* buf, std::size_t n)

@@ -51,6 +51,7 @@
 #include "log.hpp"
 #include "profile.hpp"
 #include "Recorder.hpp"
+#include "estimator_params.hpp"
 
 
 // State indexes (match CDS::Dynamics::QUADROTOR_MPC_01::StateName)
@@ -218,7 +219,46 @@ QuadRotorMPC::QuadRotorMPC()
     m_maxIters = 12;     // iLQR iterations per solve (warm-started)
     BuildParamTable();
 
+    // Offset-free disturbance observer: OFF by default (opt-in). Diagonal noise
+    // covariances trade convergence speed against noise rejection; the large
+    // disturbance-state variance lets d_hat integrate the position residual. The
+    // gain is synthesised in SetModelParams, once the model is parameterised.
+    m_obsEnabled = false;
+    m_obsQpos = 1.0e-4; m_obsQvel = 1.0e-2; m_obsQdist = 1.0; m_obsRpos = 1.0e-4;
+
     recorder.activateAsModel(); // this model owns the model data recorder while it lives
+}
+
+// Synthesise the translational disturbance observer. The only physical input is
+// the disturbance-input coupling Bd = d(v_dot)/d(F_ext), which is read FROM the
+// generated model by finite-differencing Dynamics w.r.t. the external force (the
+// force enters additively, so Bd is state/input-independent -- evaluated once at
+// the hover). Everything else (the r_dot = v kinematics, the position
+// measurement, the constant-disturbance model) lives in the reusable helper.
+void QuadRotorMPC::BuildObserver()
+{
+    auto dyn = (Dynamics::QUADROTOR_MPC_01*) m_modelPtr;
+    if (dyn == nullptr) return;
+
+    using PN = Dynamics::QUADROTOR_MPC_01::ParamName;
+    const double Th = dyn->GetParam(PN::Mass) * dyn->GetParam(PN::Gravity) / 4.0;
+    V13 x{}; x.fill(0.0); x[IDX_QW] = 1.0;   // level, at rest, at the origin
+    const V4 u{{Th, Th, Th, Th}};
+
+    const std::array<double,3> zeroF{{0.0, 0.0, 0.0}};
+    const V13 d0 = dyn->Dynamics(x, u, zeroF);
+    control::Mat<POS_DIM, POS_DIM> Bd{}; for (auto& r : Bd) r.fill(0.0);
+    for (std::size_t j = 0; j < POS_DIM; ++j)
+    {
+        std::array<double,3> Fe{{0.0, 0.0, 0.0}}; Fe[j] = 1.0;   // unit external force on axis j
+        const V13 dj = dyn->Dynamics(x, u, Fe);
+        Bd[0][j] = dj[IDX_VX] - d0[IDX_VX];
+        Bd[1][j] = dj[IDX_VY] - d0[IDX_VY];
+        Bd[2][j] = dj[IDX_VZ] - d0[IDX_VZ];
+    }
+
+    if (m_obs.Build(Bd, m_obsQpos, m_obsQvel, m_obsQdist, m_obsRpos))
+        CDS_LOG_ERROR(logger, "Disturbance-observer synthesis failed");
 }
 
 QuadRotorMPC::~QuadRotorMPC()
@@ -249,6 +289,9 @@ bool QuadRotorMPC::SetModelParams(const std::any& params)
     dynamics->SetParam(PN::Arm,       p.L);
     dynamics->SetParam(PN::ThrustMax, p.Fm_max);
     dynamics->SetParam(PN::ThrustMin, p.Fm_min);
+
+    // Synthesise the disturbance observer now the model is parameterised.
+    BuildObserver();
 
     // Recorder run metadata: full model parameters (trajectory added in
     // SetTrajectoryManager, the last setup step).
@@ -350,9 +393,23 @@ bool QuadRotorMPC::PerformIntegration(const core_stepParams_t& params)
         }
 
         // build the quad closures and hand off to the generic iLQR. The MPC
-        // predicts with no external force (userF = 0); the plant is advanced
-        // below with the true user force. (Offset-free force estimation lands here.)
-        const std::array<double,3> predForce{{0.0, 0.0, 0.0}};
+        // predicts the external force as the observer's disturbance estimate
+        // (predForce = d_hat, constant over the horizon) so the steady-state
+        // tracking error is driven to zero; with the observer off this is the
+        // former zero-force prediction, unchanged. The initial state likewise
+        // uses the observer's position/velocity estimate when active, so a noisy
+        // or dropped position sensor degrades gracefully through x_hat.
+        std::array<double,3> predForce{{0.0, 0.0, 0.0}};
+        V13 x0 = m_state;
+        if (m_obsEnabled && m_obs.Seeded())
+        {
+            const auto rHat = m_obs.Position();
+            const auto vHat = m_obs.Velocity();
+            const auto dHat = m_obs.Disturbance();
+            x0[IDX_X]=rHat[0];  x0[IDX_Y]=rHat[1];  x0[IDX_Z]=rHat[2];
+            x0[IDX_VX]=vHat[0]; x0[IDX_VY]=vHat[1]; x0[IDX_VZ]=vHat[2];
+            predForce = {{dHat[0], dHat[1], dHat[2]}};
+        }
         auto fdyn  = [&](const V13& x, const V4& u){ return dynamics->Dynamics(x, u, predForce); };
         auto jac   = [&](const V13& x, const V4& u, double fx[NX][NX], double fu[NX][NU]){ dynamics->Jacobians(x, u, fx, fu); };
         auto proj  = [](V13& s){ normalizeQuat(s); };
@@ -363,7 +420,7 @@ bool QuadRotorMPC::PerformIntegration(const core_stepParams_t& params)
         {
             CDS_PROFILE(profile, "MPC solve");
             control::solve<NX, NU, QuadRotorMPC::HORIZON>(
-                m_state, fdyn, jac, proj, scost, tcost, lo, hi, m_dtMpc, m_maxIters, m_warmStart, u0);
+                x0, fdyn, jac, proj, scost, tcost, lo, hi, m_dtMpc, m_maxIters, m_warmStart, u0);
         }
 
         m_lastU0        = u0;
@@ -378,6 +435,34 @@ bool QuadRotorMPC::PerformIntegration(const core_stepParams_t& params)
     {
         CDS_PROFILE(profile, "Rk4 integration");
         m_state = integrateAndNormalize(*dynamics, m_state, m_lastU0, m_userForces, params.timestep);
+    }
+
+    // ---- disturbance observer update (opt-in) -------------------------------
+    // Runs every tick at the measured dt off the fresh (post-integration) state.
+    // The known input a_known is the model's force-free acceleration (exactly
+    // the MPC's prediction assumption); the position measurement passes through
+    // the sensor bank (noise / bias / per-axis enable). A disabled or invalid
+    // channel is handled as predict-only by making its innovation zero.
+    if (m_obsEnabled)
+    {
+        if (!m_obs.Seeded())
+            m_obs.Seed({{ m_state[IDX_X],  m_state[IDX_Y],  m_state[IDX_Z]  }},
+                       {{ m_state[IDX_VX], m_state[IDX_VY], m_state[IDX_VZ] }});
+
+        // known force-free acceleration: v_dot from the model with zero external
+        // force (exactly the MPC's prediction assumption).
+        const std::array<double,3> zeroF{{0.0, 0.0, 0.0}};
+        const V13 xdot = dynamics->Dynamics(m_state, m_lastU0, zeroF);
+        const std::array<double,POS_DIM> aKnown{{ xdot[IDX_VX], xdot[IDX_VY], xdot[IDX_VZ] }};
+
+        // position measurement through the sensor bank (noise / bias / per-axis
+        // enable); the helper handles a dropped axis as predict-only.
+        const std::array<double,POS_DIM> truthPos{{ m_state[IDX_X], m_state[IDX_Y], m_state[IDX_Z] }};
+        std::array<double,POS_DIM> yPos{};
+        std::array<bool,POS_DIM>   valid{};
+        m_posSensor.Apply(truthPos, yPos, valid);
+
+        m_obs.Step(aKnown, yPos, valid, params.timestep);
     }
 
     m_time += params.timestep;
@@ -465,6 +550,9 @@ void QuadRotorMPC::BuildParamTable()
     m_params.add("solver", "max iters", true, [this]{ return static_cast<double>(m_maxIters); },
                  [this](double v){ const int n = static_cast<int>(v + 0.5); if (n < 1) return true; m_maxIters = n; return false; });
     m_params.add("solver", "horizon N", false, [this]{ return static_cast<double>(QuadRotorMPC::HORIZON); });
+
+    // Observer + per-axis position sensor knobs (ride the same manifest).
+    appendEstimatorParams(m_params, m_obsEnabled, m_posSensor);
 }
 
 bool QuadRotorMPC::GetControllerManifest(char* buf, std::size_t n)

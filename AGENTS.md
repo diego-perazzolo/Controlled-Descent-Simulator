@@ -144,6 +144,12 @@ cmake --build build-ilqr-test
 cmake -S libs/estimate/test -B build-observer-test -DCMAKE_BUILD_TYPE=Release
 cmake --build build-observer-test
 ./build-observer-test/observer_test # observer synthesis (dual LQR): known-answer gains + Step convergence
+./build-observer-test/tdo_test      # translational disturbance observer: d_hat recovery + dropped-axis coast
+
+# generic sensor-model tests (native, self-contained: no core, no external deps)
+cmake -S libs/sensor/test -B build-sensor-test -DCMAKE_BUILD_TYPE=Release
+cmake --build build-sensor-test
+./build-sensor-test/sensor_model_test # measurement corruptor: passthrough + bias + runtime disable + noise stats + determinism
 
 # logger + profiler tests (native, self-contained: no core, no protocol)
 cmake -S libs/log/test -B build-log-test -DCMAKE_BUILD_TYPE=Release
@@ -202,6 +208,8 @@ cmake --build build-mpc-model-test
 ./build-mpc-model-test/mpc_model_test        # QuadRotorMPC: Poly4 tracking + gust rejection
 ./build-mpc-model-test/rocket_mpc_model_test # RocketMPC: Poly4+yaw tracking + gust rejection
 ./build-mpc-model-test/lqr_model_test        # Rocket/QuadRotor FF-LQR: runtime gain bridge + Q/R retune
+./build-mpc-model-test/offset_free_model_test # Quad/Rocket MPC disturbance observer: offset-free vs baseline + sensor-drop coast
+./build-mpc-model-test/lqr_observer_model_test # Quad/Rocket FF-LQR state estimator: clean baseline + noisy-sensor filtering + drop coast
 
 # Python codegen sanity (base_codegen shared at root; model codegens under model/)
 python3 -c "import ast; [ast.parse(open(f).read()) for f in ( \

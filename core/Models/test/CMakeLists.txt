@@ -19,3 +19,9 @@ target_link_libraries(rocket_mpc_model_test PRIVATE cds_core)
 
 add_executable(lqr_model_test lqr_model_test.cpp)
 target_link_libraries(lqr_model_test PRIVATE cds_core)
+
+add_executable(offset_free_model_test offset_free_model_test.cpp)
+target_link_libraries(offset_free_model_test PRIVATE cds_core)
+
+add_executable(lqr_observer_model_test lqr_observer_model_test.cpp)
+target_link_libraries(lqr_observer_model_test PRIVATE cds_core)

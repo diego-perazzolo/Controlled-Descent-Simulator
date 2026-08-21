@@ -19,3 +19,13 @@ target_include_directories(observer_test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../../control    # libs/control  (lqr.hpp)
     ${CMAKE_CURRENT_SOURCE_DIR}/../../integrate  # libs/integrate (rk4.hpp)
 )
+
+# reusable translational disturbance observer (offset-free wiring pattern)
+add_executable(tdo_test tdo_test.cpp)
+target_compile_features(tdo_test PRIVATE cxx_std_20)
+target_compile_options(tdo_test PRIVATE -Wall -Wextra)
+target_include_directories(tdo_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/..              # libs/estimate (trans_disturbance_observer.hpp)
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../control    # libs/control  (lqr.hpp)
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../integrate  # libs/integrate (rk4.hpp)
+)

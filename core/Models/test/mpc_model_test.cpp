@@ -68,7 +68,7 @@ int main()
         char buf[2048] = {0};
         if (model.GetControllerManifest(buf, sizeof buf)) paramOk = false;
         int rows = 0; for (const char* q = buf; *q; ++q) if (*q == '\n') ++rows;
-        if (rows != 9) paramOk = false;
+        if (rows != 19) paramOk = false;   // 9 controller + 10 estimator (observer + 3-axis sensor)
         if (model.SetControllerParam(0, 8.0)) paramOk = false;   // id 0 = weights/position (rw)
         if (!model.SetControllerParam(8, 100.0)) paramOk = false; // id 8 = mpc/horizon (ro) -> rejected
         if (!model.SetControllerParam(99, 1.0)) paramOk = false;  // bad id -> rejected

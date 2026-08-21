@@ -45,6 +45,8 @@
 
 #include "BaseModel.hpp"
 #include "controller_params.hpp"
+#include "trans_disturbance_observer.hpp"  // libs/estimate -- reusable offset-free observer
+#include "sensor_model.hpp"                // libs/sensor   -- position measurement corruptor
 
 namespace CDS
 {
@@ -78,6 +80,19 @@ namespace CDS
         using TrackingErr = std::array<double, 4>;      // tracking err w.r.t. [x, y, z, yaw]
         using UserForces  = std::array<double, 3>;      // user input forces [Fx, Fy, Fz]
 
+        // Translational disturbance-observer size: the vehicle has 3 position
+        // axes, so the sensor bank and the observer both work in 3 dimensions.
+        static constexpr std::size_t POS_DIM = 3;
+
+        // Offset-free observer feature toggle (opt-in; OFF by default so the
+        // model is unchanged until switched on). Not part of the BaseModel
+        // interface -- surfaced to the frontend later through the ext API.
+        void SetObserverEnabled(bool on) { m_obsEnabled = on; }
+        bool IsObserverEnabled() const   { return m_obsEnabled; }
+        // Runtime access to the position sensor bank (per-axis noise / bias /
+        // enable) so a dropped or noisy sensor can be configured live.
+        sensor::SensorModel<POS_DIM>& PositionSensor() { return m_posSensor; }
+
         private:
         void BuildParamTable();        // register the exposed MPC knobs
 
@@ -107,5 +122,24 @@ namespace CDS
         // not monopolise the system lock and the simulation degrades gracefully.
         InputVec           m_lastU0;
         double             m_lastSolveTime;
+
+        // ---- Offset-free disturbance observer (opt-in, OFF by default) --------
+        // Estimates the external force disturbance from the (optionally corrupted)
+        // position measurement so the MPC can predict with predForce = d_hat and
+        // drive the steady-state tracking error to zero. Translational, Euclidean:
+        // state [r(3), v(3), d(3)] with the constant-disturbance model d_dot = 0
+        // (the integrating states that supply the missing integral action);
+        // known input a_known(3) = the model's force-free acceleration; measure
+        // r(3). When m_obsEnabled is false the model behaves exactly as before.
+        // The disturbance-input coupling Bd is read FROM the generated model
+        // (a finite difference of Dynamics w.r.t. the external force), so the
+        // physics derives from the notebook-exported C++, not from hand code.
+        void BuildObserver();   // read Bd from the model and synthesise the gain
+
+        estimate::TransDisturbanceObserver<POS_DIM> m_obs;
+        sensor::SensorModel<POS_DIM> m_posSensor;   // per-axis noise/bias/enable
+        bool   m_obsEnabled;                        // feature toggle (default false)
+        double m_obsQpos, m_obsQvel, m_obsQdist;    // process-noise covariance diag
+        double m_obsRpos;                           // measurement-noise covariance
     };
 }

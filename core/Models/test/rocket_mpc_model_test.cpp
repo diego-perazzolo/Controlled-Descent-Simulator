@@ -73,7 +73,7 @@ int main()
         char buf[2048] = {0};
         if (model.GetControllerManifest(buf, sizeof buf)) paramOk = false;
         int rows = 0; for (const char* q = buf; *q; ++q) if (*q == '\n') ++rows;
-        if (rows != 12) paramOk = false;
+        if (rows != 22) paramOk = false;   // 12 controller + 10 estimator (observer + 3-axis sensor)
         if (model.SetControllerParam(0, 8.0)) paramOk = false;    // id 0 = Q/position (rw)
         if (!model.SetControllerParam(11, 100.0)) paramOk = false; // id 11 = solver/horizon (ro) -> rejected
         if (!model.SetControllerParam(99, 1.0)) paramOk = false;   // bad id -> rejected

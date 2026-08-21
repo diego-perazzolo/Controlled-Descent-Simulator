@@ -36,6 +36,8 @@
 #include "BaseModel.hpp"
 #include "lqr_tuner.hpp"
 #include "controller_params.hpp"
+#include "trans_disturbance_observer.hpp"  // libs/estimate -- state estimate that feeds the LQR
+#include "sensor_model.hpp"                // libs/sensor   -- position measurement corruptor
 
 namespace CDS
 {
@@ -73,9 +75,26 @@ namespace CDS
         using TrackingErr = std::array<double, 4>;    // tracking err w.r.t. [x, y, z, yaw]
         using UserForces  = std::array<double, 3>;    // user input forces [Fx, Fy, Fz]
 
+        // Translational disturbance-observer size: 3 position axes.
+        static constexpr std::size_t POS_DIM = 3;
+
+        // State-estimator feature toggle (opt-in; OFF by default so the model is
+        // unchanged until switched on). When on, the observer's filtered position/
+        // velocity estimate replaces the true state in the LQR *feedback* term
+        // (the integral action, baked into the generated dynamics, still uses the
+        // true state -- so this is a partial, sensor-robustness integration, not
+        // offset-free: the LQR already integrates for that). Not part of the
+        // BaseModel interface -- surfaced to the frontend later through the ext API.
+        void SetObserverEnabled(bool on) { m_obsEnabled = on; }
+        bool IsObserverEnabled() const   { return m_obsEnabled; }
+        // Runtime access to the position sensor bank (per-axis noise / bias /
+        // enable) so a dropped or noisy sensor can be configured live.
+        sensor::SensorModel<POS_DIM>& PositionSensor() { return m_posSensor; }
+
         private:
         bool RecomputeGain();          // (re)synthesise the LQR gain and install it (true on error)
         void BuildParamTable();        // register the exposed Q/R weights
+        void BuildObserver();          // read Bd from the model and synthesise the estimator gain
 
         void*              m_modelPtr;
         StateVec           m_state;
@@ -88,5 +107,16 @@ namespace CDS
         control::LqrGainTuner<16, 4> m_lqr;
         control::ParamTable<>        m_params;   // exposed controller parameters (Q/R diagonal)
 
+        // ---- State estimator + sensor bank (opt-in, OFF by default) ----------
+        // The translational observer supplies a filtered position/velocity to the
+        // LQR feedback; the sensor bank corrupts (noise/bias) or drops the position
+        // measurement it consumes. The disturbance state is kept only to keep the
+        // estimate accurate under an unmodeled force -- it is NOT fed forward (the
+        // LQR integral states reject constant disturbances themselves).
+        estimate::TransDisturbanceObserver<POS_DIM> m_obs;
+        sensor::SensorModel<POS_DIM> m_posSensor;   // per-axis noise/bias/enable
+        bool   m_obsEnabled;                        // feature toggle (default false)
+        double m_obsQpos, m_obsQvel, m_obsQdist;    // process-noise covariance diag
+        double m_obsRpos;                           // measurement-noise covariance
     };
 }

@@ -50,6 +50,8 @@
 
 #include "BaseModel.hpp"
 #include "controller_params.hpp"
+#include "trans_disturbance_observer.hpp"  // libs/estimate -- reusable offset-free observer
+#include "sensor_model.hpp"                // libs/sensor   -- position measurement corruptor
 
 namespace CDS
 {
@@ -82,6 +84,18 @@ namespace CDS
         using RefVec      = std::array<double, 3>;      // position reference [x_ref, y_ref, z_ref]
         using TrackingErr = std::array<double, 4>;      // tracking err w.r.t. [x, y, z, yaw]
         using UserForces  = std::array<double, 3>;      // user input forces [Fx, Fy, Fz]
+
+        // Translational disturbance-observer size: 3 position axes.
+        static constexpr std::size_t POS_DIM = 3;
+
+        // Offset-free observer feature toggle (opt-in; OFF by default so the
+        // model is unchanged until switched on). Not part of the BaseModel
+        // interface -- surfaced to the frontend later through the ext API.
+        void SetObserverEnabled(bool on) { m_obsEnabled = on; }
+        bool IsObserverEnabled() const   { return m_obsEnabled; }
+        // Runtime access to the position sensor bank (per-axis noise / bias /
+        // enable) so a dropped or noisy sensor can be configured live.
+        sensor::SensorModel<POS_DIM>& PositionSensor() { return m_posSensor; }
 
         private:
         void BuildParamTable();        // register the exposed MPC knobs
@@ -117,5 +131,20 @@ namespace CDS
         // not monopolise the system lock and the simulation degrades gracefully.
         InputVec           m_lastU0;
         double             m_lastSolveTime;
+
+        // ---- Offset-free disturbance observer (opt-in, OFF by default) --------
+        // Translational estimator [r(3), v(3), d(3)] that recovers the external
+        // force disturbance so the MPC predicts predForce = d_hat and reaches
+        // zero steady-state error. The only physics, the disturbance-input
+        // coupling Bd, is read FROM the generated model (finite difference of
+        // Dynamics w.r.t. the external force); everything generic lives in the
+        // reusable helper. When m_obsEnabled is false the model is unchanged.
+        void BuildObserver();   // read Bd from the model and synthesise the gain
+
+        estimate::TransDisturbanceObserver<POS_DIM> m_obs;
+        sensor::SensorModel<POS_DIM> m_posSensor;   // per-axis noise/bias/enable
+        bool   m_obsEnabled;                        // feature toggle (default false)
+        double m_obsQpos, m_obsQvel, m_obsQdist;    // process-noise covariance diag
+        double m_obsRpos;                           // measurement-noise covariance
     };
 }
