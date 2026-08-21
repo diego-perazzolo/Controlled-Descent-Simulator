@@ -252,6 +252,80 @@ int main()
         ok = pass && ok;
     }
 
+    // ---- sensor injection WITHOUT the observer -----------------------------
+    // With the estimator off, the sensor now feeds the controller directly: a
+    // position bias fools the MPC (no integrators), which drives the vehicle to
+    // an offset of ~the bias. Proves sensors bite independently of the observer.
+    {
+        QuadRotorMPC model;
+        core_quadRotorParams_t p{ .m = 2.4, .Ix = 0.025, .Iy = 0.025, .Iz = 0.045,
+                                  .g = 9.81, .c = 0.20, .cz = 0.30, .kT = 1.0e-5,
+                                  .kQ = 1.6e-7, .L = 0.275, .Irot = 3.0e-5,
+                                  .Fm_max = 36.0, .Fm_min = 0.0 };
+        model.SetModelParams(std::any(p));
+        TrajectoryManager tm;
+        core_trajectoryPointParams_t hold{ .finalPos = {{1.0, 0.5, 1.0}}, .finalYaw = 0.0, .time_s = 12.0 };
+        tm.AppendPoint(hold);
+        model.SetTrajectoryManager(&tm);
+        model.SetObserverEnabled(false);          // estimator OFF
+        model.PositionSensor().SetBias(0, 0.5);   // +0.5 m bias on the x sensor
+
+        double sumX = 0.0; core_state_t st{};
+        for (int t = 0; t < 1200; ++t)
+        {
+            core_stepParams_t sp{ .timestep = 0.01, .user_fX = 0.0, .user_fY = 0.0, .user_fZ = 0.0 };
+            model.PerformIntegration(sp);
+            model.GetState(st);
+            if (t >= 1100) sumX += (1.0 - st.x);   // signed x tracking error
+        }
+        const double eX = sumX / 100.0;
+        // fooled by +0.5 m bias, the true x settles ~0.5 m short of the target.
+        const bool pass = std::fabs(eX - 0.5) < 0.1;
+        std::printf("[sensor-no-observer] +0.5 m x-bias, observer OFF -> x offset %.4f m (expect ~0.5) -> %s\n",
+                    eX, pass ? "PASS" : "FAIL");
+        ok = pass && ok;
+    }
+
+    // ---- observer mistuning vs matched Rv ----------------------------------
+    // Heavy position noise (std 1 m), observer ON. With the measurement-noise
+    // covariance rPos left at its small default the filter over-trusts the sensor
+    // (chases the noise, its disturbance state injects spurious forces); matching
+    // rPos to the noise makes it filter properly and track much tighter. Proves
+    // both the phenomenon and that the exposed covariance fixes it (set by id
+    // through the manifest, so the ext path is exercised too).
+    {
+        auto noisyObserverErr = [](double rPos) {
+            QuadRotorMPC model;
+            core_quadRotorParams_t p{ .m = 2.4, .Ix = 0.025, .Iy = 0.025, .Iz = 0.045,
+                                      .g = 9.81, .c = 0.20, .cz = 0.30, .kT = 1.0e-5,
+                                      .kQ = 1.6e-7, .L = 0.275, .Irot = 3.0e-5,
+                                      .Fm_max = 36.0, .Fm_min = 0.0 };
+            model.SetModelParams(std::any(p));
+            TrajectoryManager tm;
+            core_trajectoryPointParams_t hold{ .finalPos = {{1.0, 0.5, 1.0}}, .finalYaw = 0.0, .time_s = 12.0 };
+            tm.AppendPoint(hold);
+            model.SetTrajectoryManager(&tm);
+            model.SetObserverEnabled(true);
+            for (std::size_t a = 0; a < 3; ++a) model.PositionSensor().SetNoiseStd(a, 1.0);
+            char buf[2048] = {0}; model.GetControllerManifest(buf, sizeof buf);
+            const int id = manifestId(buf, "Observer", "measurement noise");
+            if (id >= 0) model.SetControllerParam(id, rPos);
+            double s = 0.0; core_state_t st{};
+            for (int t = 0; t < 1200; ++t) {
+                core_stepParams_t sp{ .timestep = 0.01, .user_fX = 0.0, .user_fY = 0.0, .user_fZ = 0.0 };
+                model.PerformIntegration(sp); model.GetState(st);
+                if (t >= 1100) s += std::sqrt((st.x-1)*(st.x-1)+(st.y-0.5)*(st.y-0.5)+(st.z-1)*(st.z-1));
+            }
+            return s / 100.0;
+        };
+        const double eMistuned = noisyObserverErr(1.0e-4);   // default: too confident
+        const double eMatched  = noisyObserverErr(1.0);      // rPos ~ noise variance
+        const bool pass = std::isfinite(eMistuned) && std::isfinite(eMatched) && eMatched < eMistuned;
+        std::printf("[observer tuning] std=1 noise -> err mistuned(rPos=1e-4)=%.4f m, matched(rPos=1)=%.4f m -> %s\n",
+                    eMistuned, eMatched, pass ? "PASS" : "FAIL");
+        ok = pass && ok;
+    }
+
     std::printf("%s\n", ok ? "OFFSET-FREE MODEL TEST PASSED" : "OFFSET-FREE MODEL TEST FAILED");
     return ok ? 0 : 1;
 }

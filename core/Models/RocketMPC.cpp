@@ -386,14 +386,26 @@ bool RocketMPC::PerformIntegration(const core_stepParams_t& params)
         // needs no projection (no-op).
         std::array<double,3> predForce{{0.0, 0.0, 0.0}};
         V12 x0 = m_state;
-        if (m_obsEnabled && m_obs.Seeded())
+        if (m_obsEnabled)
         {
-            const auto rHat = m_obs.Position();
-            const auto vHat = m_obs.Velocity();
-            const auto dHat = m_obs.Disturbance();
-            x0[IDX_X]=rHat[0];  x0[IDX_Y]=rHat[1];  x0[IDX_Z]=rHat[2];
-            x0[IDX_VX]=vHat[0]; x0[IDX_VY]=vHat[1]; x0[IDX_VZ]=vHat[2];
-            predForce = {{dHat[0], dHat[1], dHat[2]}};
+            if (m_obs.Seeded())
+            {
+                const auto rHat = m_obs.Position();
+                const auto vHat = m_obs.Velocity();
+                const auto dHat = m_obs.Disturbance();
+                x0[IDX_X]=rHat[0];  x0[IDX_Y]=rHat[1];  x0[IDX_Z]=rHat[2];
+                x0[IDX_VX]=vHat[0]; x0[IDX_VY]=vHat[1]; x0[IDX_VZ]=vHat[2];
+                predForce = {{dHat[0], dHat[1], dHat[2]}};
+            }
+        }
+        else
+        {
+            // No estimator: the controller reads the raw (sensor-corrupted)
+            // position measurement directly, so sensor noise/bias bite without
+            // any filtering. Identity sensor -> the true position, unchanged.
+            const auto yPos = measuredThrough(m_posSensor,
+                std::array<double,POS_DIM>{{ m_state[IDX_X], m_state[IDX_Y], m_state[IDX_Z] }});
+            x0[IDX_X]=yPos[0]; x0[IDX_Y]=yPos[1]; x0[IDX_Z]=yPos[2];
         }
         auto fdyn  = [&](const V12& x, const V4& u){ return dynamics->Dynamics(x, u, predForce); };
         auto jac   = [&](const V12& x, const V4& u, double fx[NX][NX], double fu[NX][NU]){ dynamics->Jacobians(x, u, fx, fu); };
@@ -531,8 +543,11 @@ void RocketMPC::BuildParamTable()
                  [this](double v){ const int n = static_cast<int>(v + 0.5); if (n < 1) return true; m_maxIters = n; return false; });
     m_params.add("solver", "horizon N", false, []{ return static_cast<double>(RocketMPC::HORIZON); });
 
-    // Observer + per-axis position sensor knobs (ride the same manifest).
-    appendEstimatorParams(m_params, m_obsEnabled, m_posSensor);
+    // Observer covariances + per-axis position sensor knobs (ride the same
+    // manifest; a covariance change re-synthesises the gain).
+    appendEstimatorParams(m_params, m_obsEnabled, m_posSensor,
+                          m_obsQpos, m_obsQvel, m_obsQdist, m_obsRpos,
+                          [this]{ BuildObserver(); });
 }
 
 bool RocketMPC::GetControllerManifest(char* buf, std::size_t n)

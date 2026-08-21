@@ -2012,6 +2012,15 @@ function parseControllerManifest(text) {
     });
 }
 
+// A writable knob whose label carries the "(0|1)" convention is a boolean flag
+// (observer / sensor enables): render it as a checkbox rather than a number box.
+function isBooleanParam(p) { return p.writable && /\(0\|1\)/.test(p.label); }
+function paramDisplayLabel(p) { return p.label.replace(/\s*\(0\|1\)\s*/, ''); }
+
+// The estimator/sensor knobs (appended to the same manifest) are demarcated into
+// their own section so they read as a sensor panel, not controller tuning.
+function isEstimatorGroup(g) { return g === 'Observer' || /^Sensor /.test(g); }
+
 function fetchControllerManifest() {
     if (!sim) return [];
     try { return parseControllerManifest(sim.ext_getControllerManifest().text); }
@@ -2034,7 +2043,15 @@ function renderControllerPanel() {
     ui.btnCtrlLoad.disabled = false;
 
     let lastGroup = null;
+    let sensorSectionStarted = false;
     for (const p of controllerManifest) {
+        if (!sensorSectionStarted && isEstimatorGroup(p.group)) {
+            const sec = document.createElement('div');
+            sec.className = 'ctrl-section';
+            sec.textContent = 'Estimator & sensors';
+            box.appendChild(sec);
+            sensorSectionStarted = true;
+        }
         if (p.group !== lastGroup) {
             const h = document.createElement('div');
             h.className = 'ctrl-group';
@@ -2045,19 +2062,29 @@ function renderControllerPanel() {
         const row = document.createElement('div');
         row.className = 'ctrl-row' + (p.writable ? '' : ' ro');
         const lab = document.createElement('label');
-        lab.textContent = p.label;
         const inp = document.createElement('input');
-        inp.type = 'number'; inp.step = 'any'; inp.value = String(p.value);
         inp.dataset.id = String(p.id);
-        row.appendChild(lab);
-        row.appendChild(inp);
-        if (p.writable) {
-            inp.addEventListener('change', onControllerInputChange);
+        if (isBooleanParam(p)) {
+            lab.textContent = paramDisplayLabel(p);
+            inp.type = 'checkbox';
+            inp.checked = p.value >= 0.5;
+            inp.dataset.bool = '1';
+            row.appendChild(lab);
+            row.appendChild(inp);
+            inp.addEventListener('change', onControllerToggleChange);
         } else {
-            inp.readOnly = true;
-            const tag = document.createElement('span');
-            tag.className = 'ro-tag'; tag.textContent = 'read-only';
-            row.appendChild(tag);
+            lab.textContent = p.label;
+            inp.type = 'number'; inp.step = 'any'; inp.value = String(p.value);
+            row.appendChild(lab);
+            row.appendChild(inp);
+            if (p.writable) {
+                inp.addEventListener('change', onControllerInputChange);
+            } else {
+                inp.readOnly = true;
+                const tag = document.createElement('span');
+                tag.className = 'ro-tag'; tag.textContent = 'read-only';
+                row.appendChild(tag);
+            }
         }
         box.appendChild(row);
     }
@@ -2076,7 +2103,9 @@ function syncControllerValues() {
     ui.ctrlParams.querySelectorAll('input[data-id]').forEach(inp => {
         if (document.activeElement === inp) return;
         const v = byId.get(Number(inp.dataset.id));
-        if (v !== undefined) inp.value = String(v);
+        if (v === undefined) return;
+        if (inp.dataset.bool === '1') inp.checked = v >= 0.5;
+        else                          inp.value = String(v);
     });
 }
 
@@ -2089,6 +2118,21 @@ function onControllerInputChange(e) {
         // Rejected: an invalid value (e.g. a negative weight) or the controller
         // could not re-synthesise its gain for these settings. The gain is kept.
         setError(`"${label}" = ${value} rejected — invalid value or the controller could not re-synthesise (gain unchanged). See the Diag log.`);
+    } else {
+        setError('');
+    }
+    syncControllerValues();
+}
+
+// Boolean knob (observer / sensor enable): commit as 1 / 0. On rejection revert
+// the checkbox to its prior state so the UI reflects what the backend accepted.
+function onControllerToggleChange(e) {
+    const id = Number(e.target.dataset.id);
+    const value = e.target.checked ? 1 : 0;
+    const label = e.target.previousSibling ? e.target.previousSibling.textContent : `id ${id}`;
+    if (sim.ext_setControllerParam({ id, value })) {
+        setError(`"${label}" toggle rejected. See the Diag log.`);
+        e.target.checked = !e.target.checked;
     } else {
         setError('');
     }

@@ -346,12 +346,25 @@ bool QuadRotor::PerformIntegration(const core_stepParams_t& params)
     // inside the generated dynamics, still use the true state -- offset-free stays
     // with them). With the estimator off this is the former true-state feedback.
     QuadRotor::StateVec stateForControl = m_state;
-    if (m_obsEnabled && m_obs.Seeded())
+    if (m_obsEnabled)
     {
-        const auto rHat = m_obs.Position();
-        const auto vHat = m_obs.Velocity();
-        stateForControl[IDX_X]=rHat[0];  stateForControl[IDX_Y]=rHat[1];  stateForControl[IDX_Z]=rHat[2];
-        stateForControl[IDX_VX]=vHat[0]; stateForControl[IDX_VY]=vHat[1]; stateForControl[IDX_VZ]=vHat[2];
+        if (m_obs.Seeded())
+        {
+            const auto rHat = m_obs.Position();
+            const auto vHat = m_obs.Velocity();
+            stateForControl[IDX_X]=rHat[0];  stateForControl[IDX_Y]=rHat[1];  stateForControl[IDX_Z]=rHat[2];
+            stateForControl[IDX_VX]=vHat[0]; stateForControl[IDX_VY]=vHat[1]; stateForControl[IDX_VZ]=vHat[2];
+        }
+    }
+    else
+    {
+        // No estimator: the LQR feedback reads the raw (sensor-corrupted) position
+        // directly, so sensor noise/bias bite without filtering. Identity sensor
+        // -> the true position, unchanged. (Integral states still use the true
+        // state inside the generated dynamics.)
+        const auto yPos = measuredThrough(m_posSensor,
+            std::array<double,POS_DIM>{{ m_state[IDX_X], m_state[IDX_Y], m_state[IDX_Z] }});
+        stateForControl[IDX_X]=yPos[0]; stateForControl[IDX_Y]=yPos[1]; stateForControl[IDX_Z]=yPos[2];
     }
     QuadRotor::InputVec uApplied{};
     {
@@ -516,8 +529,11 @@ void QuadRotor::BuildParamTable()
                      [this, a] { return m_lqr.rDiag(a); },
                      [this, a](double v) { if (v <= 0.0) return true; m_lqr.setRDiag(a, v); return RecomputeGain(); });
 
-    // Observer + per-axis position sensor knobs (ride the same manifest).
-    appendEstimatorParams(m_params, m_obsEnabled, m_posSensor);
+    // Observer covariances + per-axis position sensor knobs (ride the same
+    // manifest; a covariance change re-synthesises the gain).
+    appendEstimatorParams(m_params, m_obsEnabled, m_posSensor,
+                          m_obsQpos, m_obsQvel, m_obsQdist, m_obsRpos,
+                          [this]{ BuildObserver(); });
 }
 
 bool QuadRotor::GetControllerManifest(char* buf, std::size_t n)
