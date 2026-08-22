@@ -42,6 +42,13 @@
 //               adds only the transpose plumbing -- new code kept minimal. This is
 //               an init-time, one-shot synthesis; only Step() runs on the tick
 //               path. Fixed compile-time dimensions (NX, NU, NY); no heap.
+//
+//               Two companions to the gain itself: observable() rank tests the
+//               (A, C) pair -- the dual of the control layer's controllable() --
+//               and is checked before every synthesis, so a measurement layout
+//               that cannot see a state fails loudly; and the Riccati solution P,
+//               the stationary error covariance, is kept and read back through
+//               Covariance() / Sigma() for the per-state 1 sigma bands.
 //               Header-only; depends only on <array>, <cstddef>, the LQR solver
 //               (libs/control/lqr.hpp) and the RK4 step (libs/integrate/rk4.hpp),
 //               so it may live under libs/. It ships a C++<->Python conformance
@@ -53,6 +60,7 @@
 #pragma once
 
 #include <array>
+#include <cmath>     // std::sqrt, for the 1 sigma bands
 #include <cstddef>
 
 #include "lqr.hpp"                     // libs/control -- Mat + certified Riccati
@@ -80,12 +88,41 @@ using CDS::control::Mat;
 // -----------------------------------------------------------------------------
 
 // -----------------------------------------------------------------------------
+//  observable() -- Kalman rank test on the pair (A, C), the dual of the control
+//  layer's controllable(): (A, C) is observable exactly when (A', C') is
+//  controllable, so this is one transpose away from the certified helper rather
+//  than a second implementation.
+//
+//  True when every state direction leaves a trace in the measurement. Sufficient
+//  (not necessary) for the synthesis: a merely DETECTABLE pair -- unobservable
+//  but already-stable modes -- also admits a stabilising observer, so a false
+//  here means "look at your measurement", not "the synthesis cannot work".
+// -----------------------------------------------------------------------------
+template <std::size_t NX, std::size_t NY>
+bool observable(const Mat<NX, NX>& A, const Mat<NY, NX>& C, double relTol = 1e-9)
+{
+    Mat<NX, NX> At;
+    for (std::size_t i = 0; i < NX; ++i)
+        for (std::size_t j = 0; j < NX; ++j) At[i][j] = A[j][i];
+
+    Mat<NX, NY> Ct;
+    for (std::size_t i = 0; i < NX; ++i)
+        for (std::size_t a = 0; a < NY; ++a) Ct[i][a] = C[a][i];
+
+    return control::controllable<NX, NY>(At, Ct, relTol);
+}
+
+// -----------------------------------------------------------------------------
 //  observer_gain() -- continuous-time steady-state (Kalman-Bucy) observer gain.
 //
 //  Returns the L minimising the stationary estimation-error covariance for
 //      x' = A x + B u + w,   y = C x + v,   cov(w) = Qw,  cov(v) = Rv,
 //  namely L = P C' Rv^-1 with P the stabilising solution of the filtering CARE
 //      A P + P A' - P C' Rv^-1 C P + Qw = 0.
+//
+//  Pout, when given, receives P itself: the stationary covariance of the
+//  estimation error, whose diagonal is the per-state variance (sqrt -> the 1
+//  sigma band around each estimate).
 //
 //  By LQR/filter duality this is exactly the transpose of an LQR gain: with
 //  Abar = A', Bbar = C', Qbar = Qw, Rbar = Rv, the LQR solver returns
@@ -101,7 +138,8 @@ using CDS::control::Mat;
 template <std::size_t NX, std::size_t NY>
 bool observer_gain(const Mat<NX, NX>& A, const Mat<NY, NX>& C,
                    const Mat<NX, NX>& Qw, const Mat<NY, NY>& Rv,
-                   Mat<NX, NY>& L, int maxIters = 100, double tol = 1e-13)
+                   Mat<NX, NY>& L, int maxIters = 100, double tol = 1e-13,
+                   Mat<NX, NX>* Pout = nullptr)
 {
     // Dual LQR data: Abar = A' (NX x NX), Bbar = C' (NX x NY).
     Mat<NX, NX> At;
@@ -112,9 +150,11 @@ bool observer_gain(const Mat<NX, NX>& A, const Mat<NY, NX>& C,
     for (std::size_t i = 0; i < NX; ++i)
         for (std::size_t a = 0; a < NY; ++a) Ct[i][a] = C[a][i];
 
-    // Kbar = Rv^-1 C P  (NY x NX); L = Kbar'  (NX x NY).
+    // Kbar = Rv^-1 C P  (NY x NX); L = Kbar'  (NX x NY). The dual problem's CARE
+    // solution IS the estimation-error covariance P, so asking the control layer
+    // for X is all it takes to hand P back.
     Mat<NY, NX> Kbar;
-    if (control::lqr<NX, NY>(At, Ct, Qw, Rv, Kbar, maxIters, tol)) return true;
+    if (control::lqr<NX, NY>(At, Ct, Qw, Rv, Kbar, maxIters, tol, Pout)) return true;
 
     for (std::size_t i = 0; i < NX; ++i)
         for (std::size_t a = 0; a < NY; ++a) L[i][a] = Kbar[a][i];
@@ -136,13 +176,45 @@ struct LinearObserver
     Mat<NY, NX> C;
     Mat<NX, NY> L;
 
+    // Filled by Synthesize(); read through Covariance() / Sigma(), which say so
+    // when there is nothing to read yet.
+    Mat<NX, NX> m_P{};
+    bool        m_hasP{false};
+
     // Synthesise L from the noise covariances (dual LQR). Returns true on error;
     // A and C must already be populated. B is unused by the synthesis -- it only
-    // feeds the deterministic prediction in Step().
+    // feeds the deterministic prediction in Step(). The pair (A, C) is rank
+    // tested first, so an unobservable measurement layout is refused up front
+    // with a clear failure instead of surfacing as a Riccati that will not
+    // converge -- or, worse, as a gain that quietly means nothing. On success the
+    // stationary error covariance P is kept, and can be read back for the 1 sigma
+    // bands (see Covariance() / Sigma()).
     bool Synthesize(const Mat<NX, NX>& Qw, const Mat<NY, NY>& Rv,
                     int maxIters = 100, double tol = 1e-13)
     {
-        return observer_gain<NX, NY>(A, C, Qw, Rv, L, maxIters, tol);
+        if (!observable<NX, NY>(A, C)) return true;
+        m_hasP = false;
+        if (observer_gain<NX, NY>(A, C, Qw, Rv, L, maxIters, tol, &m_P)) return true;
+        m_hasP = true;
+        return false;
+    }
+
+    // Stationary covariance of the estimation error, as synthesised. Returns true
+    // on error (no successful Synthesize yet), leaving `P` untouched.
+    bool Covariance(Mat<NX, NX>& P) const
+    {
+        if (!m_hasP) return true;
+        P = m_P;
+        return false;
+    }
+
+    // One-sigma bound on the estimate of state `i` -- sqrt of that state's
+    // variance, i.e. how far off this estimate is expected to sit at steady
+    // state. Returns a negative value when no covariance is available.
+    double Sigma(std::size_t i) const
+    {
+        if (!m_hasP || i >= NX || m_P[i][i] < 0.0) return -1.0;
+        return std::sqrt(m_P[i][i]);
     }
 
     // Advance the estimate by dt with the continuous correction

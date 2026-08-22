@@ -146,6 +146,94 @@ int main()
         if (err || e > 1e-6) ok = false;
     }
 
+    // -- Case 5: observability rank test. A pair whose second state never reaches
+    //    the measurement must be rejected BEFORE the Riccati is attempted, so an
+    //    unusable measurement layout fails loudly instead of returning a gain
+    //    that means nothing. The test is conservative on purpose: it asks for
+    //    observability, so an unobservable-but-detectable pair is refused too.
+    {
+        const Mat<2, 2> Aobs{{ {{0.0, 0.0}}, {{1.0, 0.0}} }};       // case 2's pair
+        const Mat<1, 2> Cobs{{ {{0.0, 1.0}} }};
+        const Mat<2, 2> Ablind{{ {{1.0, 0.0}}, {{0.0, 2.0}} }};     // decoupled states
+        const Mat<1, 2> Cblind{{ {{1.0, 0.0}} }};                   // state 2 invisible
+        const Mat<2, 2> Astable{{ {{1.0, 0.0}}, {{0.0, -2.0}} }};   // invisible mode, stable
+
+        const bool obsOk    = estimate::observable<2, 1>(Aobs,    Cobs);
+        const bool blindBad = estimate::observable<2, 1>(Ablind,  Cblind);
+        const bool detBad   = estimate::observable<2, 1>(Astable, Cblind);
+
+        estimate::LinearObserver<2, 1, 1> blind;
+        blind.A = Ablind;
+        blind.B = Mat<2, 1>{{ {{0.0}}, {{0.0}} }};
+        blind.C = Cblind;
+        const Mat<2, 2> Qw{{ {{1.0, 0.0}}, {{0.0, 1.0}} }};
+        const Mat<1, 1> Rv{{ {{1.0}} }};
+        const bool refused = blind.Synthesize(Qw, Rv);              // must be an error
+
+        std::printf("observability     : observable pair = %s, blind pair = %s, "
+                    "detectable-only pair = %s, synthesis refused = %s\n",
+                    obsOk ? "yes" : "no", blindBad ? "yes" : "no",
+                    detBad ? "yes" : "no", refused ? "yes" : "no");
+        if (!obsOk || blindBad || detBad || !refused) ok = false;
+    }
+
+    // -- Case 6: the stationary error covariance P handed back by the synthesis.
+    //    Certified from its own definition rather than from a hand-derived
+    //    number: P must be symmetric and positive definite, must reproduce the
+    //    gain through L = P C' Rv^-1, and must zero the filtering CARE
+    //    A P + P A' - P C' Rv^-1 C P + Qw = 0.
+    {
+        const Mat<2, 2> A{{ {{0.0, 0.0}}, {{1.0, 0.0}} }};
+        const Mat<1, 2> C{{ {{0.0, 1.0}} }};
+        const Mat<2, 2> Qw{{ {{1.0, 0.0}}, {{0.0, 1.0}} }};
+        const Mat<1, 1> Rv{{ {{1.0}} }};
+
+        estimate::LinearObserver<2, 1, 1> obs;
+        obs.A = A;
+        obs.B = Mat<2, 1>{{ {{0.0}}, {{0.0}} }};
+        obs.C = C;
+        const bool err = obs.Synthesize(Qw, Rv);
+
+        Mat<2, 2> P{};
+        const bool noP = obs.Covariance(P);
+
+        const double sym = std::fabs(P[0][1] - P[1][0]);
+        const bool   pd  = (P[0][0] > 0.0) && (P[0][0]*P[1][1] - P[0][1]*P[1][0] > 0.0);
+
+        // gain relation: L = P C' Rv^-1, with Rv scalar here
+        double gainErr = 0.0;
+        for (std::size_t i = 0; i < 2; ++i)
+        {
+            double pc = 0.0;
+            for (std::size_t j = 0; j < 2; ++j) pc += P[i][j] * C[0][j];
+            gainErr = std::fmax(gainErr, std::fabs(obs.L[i][0] - pc / Rv[0][0]));
+        }
+
+        // filtering CARE residual
+        double careErr = 0.0;
+        for (std::size_t i = 0; i < 2; ++i)
+            for (std::size_t j = 0; j < 2; ++j)
+            {
+                double ap = 0.0, pa = 0.0;
+                for (std::size_t k = 0; k < 2; ++k) { ap += A[i][k]*P[k][j]; pa += P[i][k]*A[j][k]; }
+                double pc_i = 0.0, pc_j = 0.0;
+                for (std::size_t k = 0; k < 2; ++k) { pc_i += P[i][k]*C[0][k]; pc_j += P[j][k]*C[0][k]; }
+                careErr = std::fmax(careErr, std::fabs(ap + pa - pc_i*pc_j/Rv[0][0] + Qw[i][j]));
+            }
+
+        // the 1 sigma bands come straight off the diagonal
+        const double s0 = obs.Sigma(0), s1 = obs.Sigma(1);
+        const bool sigmaOk = std::fabs(s0 - std::sqrt(P[0][0])) < 1e-12
+                          && std::fabs(s1 - std::sqrt(P[1][1])) < 1e-12;
+
+        std::printf("error covariance  : P = [[%.6f, %.6f], [%.6f, %.6f]]  sigma = [%.4f, %.4f]\n",
+                    P[0][0], P[0][1], P[1][0], P[1][1], s0, s1);
+        std::printf("                    symmetric err = %.2e, positive definite = %s, "
+                    "L = P C' Rv^-1 err = %.2e, CARE residual = %.2e\n",
+                    sym, pd ? "yes" : "no", gainErr, careErr);
+        if (err || noP || !pd || !sigmaOk || sym > 1e-12 || gainErr > 1e-9 || careErr > 1e-8) ok = false;
+    }
+
     std::printf(ok ? "OBSERVER SOLVER TEST PASSED\n" : "OBSERVER SOLVER TEST FAILED\n");
     return ok ? 0 : 1;
 }

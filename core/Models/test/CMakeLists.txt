@@ -5,6 +5,8 @@
 #   cmake -S core/Models/test -B build-mpc-model-test -DCMAKE_BUILD_TYPE=Release
 #   cmake --build build-mpc-model-test
 #   ./build-mpc-model-test/mpc_model_test   # Poly4 tracking + gust rejection
+# Also built here: the per-model determinism regression and the MPC horizon-edge
+# cases (preview running off the end of the trajectory).
 # =============================================================================
 cmake_minimum_required(VERSION 3.15)
 project(cds_mpc_model_test CXX)
@@ -25,3 +27,9 @@ target_link_libraries(offset_free_model_test PRIVATE cds_core)
 
 add_executable(lqr_observer_model_test lqr_observer_model_test.cpp)
 target_link_libraries(lqr_observer_model_test PRIVATE cds_core)
+
+add_executable(determinism_model_test determinism_model_test.cpp)
+target_link_libraries(determinism_model_test PRIVATE cds_core)
+
+add_executable(horizon_edge_model_test horizon_edge_model_test.cpp)
+target_link_libraries(horizon_edge_model_test PRIVATE cds_core)

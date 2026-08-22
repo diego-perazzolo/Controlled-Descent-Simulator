@@ -483,7 +483,11 @@ bool SystemManager::_attachTrajectoryToModel(void)
     Reference_t ref;
     if (m_pTrajectoryManager->GetReference(0, ref))
     {
-        CDS_LOG_ERROR(logger, "Cannot attach an empty trajectory");
+        /* An empty trajectory is a legitimate state, not a failure: it is what
+           the user is left with after clearing the sequence or removing its last
+           item. Nothing to attach, and the caller is told so by the success
+           return -- the model simply keeps no trajectory until one is built. */
+        CDS_LOG_INFO(logger, "Trajectory is now empty: nothing attached to the model");
         return false;
     }
 

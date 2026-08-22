@@ -131,7 +131,8 @@ namespace CDS
         private:
 
         /* Attach the current trajectory to the model, if both exist and the
-           trajectory has at least one item. Caller must hold m_mutex */
+           trajectory has at least one item. An empty trajectory is not an error:
+           nothing is attached and success is returned. Caller must hold m_mutex */
         bool _attachTrajectoryToModel(void);
 
         modelPtr_t m_pModel;

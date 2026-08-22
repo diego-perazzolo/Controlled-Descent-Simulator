@@ -152,12 +152,46 @@ Native, self-contained tests (full command list in
 [AGENTS.md](../AGENTS.md#verification-commands)):
 
 ```bash
-./build-observer-test/observer_test    # observer synthesis (dual LQR): known-answer gains
-./build-observer-test/tdo_test         # translational observer: d̂ recovery + dropped-axis coast
-./build-sensor-test/sensor_model_test  # corruptor: passthrough + bias + disable + noise stats
-./build-mpc-model-test/offset_free_model_test   # MPC: offset-free + sensor injection + tuning
-./build-mpc-model-test/lqr_observer_model_test  # FF-LQR: clean baseline + noise filtering + coast
+./build/observer-test/observer_test    # dual-LQR synthesis: known-answer gains, observability, covariance
+./build/observer-test/tdo_test         # translational observer: d̂ recovery + dropped-axis coast
+./build/sensor-test/sensor_model_test  # corruptor: passthrough + bias + disable + noise stats
+./build/mpc-model-test/offset_free_model_test   # MPC: offset-free + sensor injection + tuning
+./build/mpc-model-test/lqr_observer_model_test  # FF-LQR: clean baseline + noise filtering + coast
 ```
+
+The synthesis is also certified against an independent Python oracle
+(`libs/estimate/bind/observer_conformance.py`), the dual of the LQR one.
+
+---
+
+## Is the measurement enough? (observability)
+
+A gain can only be synthesised for state directions the measurement actually
+sees. `estimate::observable(A, C)` is the Kalman rank test on that pair — the
+exact dual of `control::controllable(A, B)`, reached by one transpose rather than
+a second implementation — and `LinearObserver::Synthesize` runs it before the
+Riccati. A measurement layout that leaves a state invisible is therefore refused
+up front, instead of surfacing later as a solver that will not converge or, worse,
+as a gain that quietly means nothing.
+
+The test is deliberately conservative: it asks for *observability*, while a merely
+**detectable** pair (invisible modes that are already stable) would also admit a
+stabilising observer. Refusing those is the price of a cheap, allocation-free
+check; every layout the runtime models use is observable.
+
+## How wrong is the estimate? (error covariance)
+
+The synthesis solves a Riccati equation whose solution `P` is the stationary
+covariance of the estimation error, so it costs nothing to keep:
+`LinearObserver::Covariance(P)` returns the matrix and `Sigma(i)` the square root
+of its i-th diagonal entry — the 1σ band the estimate of that state is expected
+to sit within at steady state. Two uses: plotting `x̂ ± σ` against truth is the
+graph that shows whether a filter is doing its job, and `S = C P Cᵀ + Rv` is the
+scale the innovation `y − C x̂` should be measured against (a consistency test,
+not yet implemented).
+
+`P` is the same object as the LQR's cost-to-go `X` — duality again — so it comes
+out of `control::lqr()` through its optional `Xout`.
 
 ---
 

@@ -45,6 +45,10 @@ jobs:
           ./build/mpc-model-test/mpc_model_test
           ./build/mpc-model-test/rocket_mpc_model_test
           ./build/mpc-model-test/lqr_model_test
+          ./build/mpc-model-test/offset_free_model_test
+          ./build/mpc-model-test/lqr_observer_model_test
+          ./build/mpc-model-test/determinism_model_test
+          ./build/mpc-model-test/horizon_edge_model_test
 
       - name: Logger + profiler + recorder tests (native)
         run: |
@@ -58,12 +62,25 @@ jobs:
           cmake --build build/record-test
           ./build/record-test/record_test
 
+      - name: Estimator + sensor tests (native)
+        run: |
+          cmake -S libs/estimate/test -B build/observer-test -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/observer-test
+          ./build/observer-test/observer_test
+          ./build/observer-test/tdo_test
+          cmake -S libs/sensor/test -B build/sensor-test -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/sensor-test
+          ./build/sensor-test/sensor_model_test
+
       - name: Solver C++/Python conformance certificate
         run: |
           cmake -S libs/control/bind -B build/ilqr-bind -DCMAKE_BUILD_TYPE=Release
           cmake --build build/ilqr-bind
           python3 libs/control/bind/ilqr_conformance.py build/ilqr-bind
           python3 libs/control/bind/lqr_conformance.py  build/ilqr-bind
+          cmake -S libs/estimate/bind -B build/observer-bind -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/observer-bind
+          python3 libs/estimate/bind/observer_conformance.py build/observer-bind
 
       - name: Protocol end-to-end test
         run: python3 apps/ws-served/test/test_protocol.py ./build/server/cds_server

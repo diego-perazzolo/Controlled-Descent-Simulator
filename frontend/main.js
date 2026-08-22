@@ -111,6 +111,7 @@ const DEFAULT_INIT_PARAMS = {
 // =============================================================================
 let sim        = null;
 let renderer3d = null;
+let chartsRenderer = null;
 let running    = false;
 let frameId    = null;
 let simTime    = 0;
@@ -825,71 +826,200 @@ function make3DRenderer() {
 }
 
 // =============================================================================
-// Canvas renderer
+// Charts renderer (canvas 2D, no charting library)
 // =============================================================================
-function makeUplotRenderer() {
-    const MAX_PTS = 3000;
+// Time-series panels drawn by hand: a ring buffer per series (no per-frame array
+// copying), a real simulated-time x axis over a sliding window, labelled y
+// ticks, and the commanded reference drawn under the measured value so tracking
+// is readable at a glance. The buffers fill on every tick, but nothing is
+// rasterised while the charts view is off screen -- on the wasm-only build the
+// canvases share a thread with the simulation, so drawing what nobody is looking
+// at would slow the run down.
+function makeChartsRenderer() {
+    const CAP      = 6000;   // ring capacity (samples)
+    const WINDOW_S = 12.0;   // simulated seconds shown
+    const PAD_L = 46, PAD_R = 10, PAD_T = 10, PAD_B = 18;
 
-    const bufs = { x: [], y: [], z: [], yaw: [], e: [] };
-
-    // One chart per canvas id
+    // One panel per canvas. `ref` marks the series that have a commanded value
+    // to compare against (|err| is an error magnitude: nothing to track).
     const charts = [
-        { id: 'chartX',   key: 'x',   color: '#f80', label: 'x (m)'     },
-        { id: 'chartY',   key: 'y',   color: '#0f8', label: 'y (m)'     },
-        { id: 'chartZ',   key: 'z',   color: '#0cf', label: 'z (m)'     },
-        { id: 'chartYaw', key: 'yaw', color: '#c8f', label: 'yaw (rad)' },
-        { id: 'chartErr', key: 'e',   color: '#fa0', label: '|err| (m)' },
+        { id: 'chartX',   key: 'x',   color: '#f80', unit: 'm',   ref: true  },
+        { id: 'chartY',   key: 'y',   color: '#0f8', unit: 'm',   ref: true  },
+        { id: 'chartZ',   key: 'z',   color: '#0cf', unit: 'm',   ref: true  },
+        { id: 'chartYaw', key: 'yaw', color: '#c8f', unit: 'rad', ref: true  },
+        { id: 'chartErr', key: 'e',   color: '#fa0', unit: 'm',   ref: false },
     ];
 
-    function drawChart({ id, key, color }) {
-        const canvas = $(id);
-        if (!canvas) return;
-        const data = bufs[key];
+    // Ring buffer: `head` is the next write slot, `n` the samples held.
+    const t   = new Float64Array(CAP);
+    const val = {}, ref = {};
+    for (const c of charts) { val[c.key] = new Float64Array(CAP); ref[c.key] = new Float64Array(CAP); }
+    let head = 0, n = 0;
 
-        const w = canvas.width  = canvas.offsetWidth;
-        const h = canvas.height = canvas.offsetHeight;
+    function push(time, values, references) {
+        t[head] = time;
+        for (const c of charts) {
+            val[c.key][head] = values[c.key];
+            ref[c.key][head] = references[c.key] ?? 0;
+        }
+        head = (head + 1) % CAP;
+        if (n < CAP) n++;
+    }
+
+    // Indices of the samples inside the visible window, oldest first. Walking
+    // the ring backwards from the newest stops as soon as the window is filled,
+    // so the cost follows what is drawn, not what is stored.
+    function windowIndices() {
+        const out = [];
+        if (n === 0) return out;
+        const newest = (head - 1 + CAP) % CAP;
+        const tEnd   = t[newest];
+        for (let k = 0; k < n; k++) {
+            const i = (newest - k + CAP) % CAP;
+            if (tEnd - t[i] > WINDOW_S) break;
+            out.push(i);
+        }
+        out.reverse();
+        return out;
+    }
+
+    // Match the backing store to the CSS box and the device pixel ratio, so
+    // lines stay crisp on a HiDPI screen instead of being upscaled.
+    function fitCanvas(canvas) {
+        const w = canvas.offsetWidth, h = canvas.offsetHeight;
+        if (!w || !h) return null;
+        const dpr = Math.min(window.devicePixelRatio || 1, 2);
+        const bw = Math.round(w * dpr), bh = Math.round(h * dpr);
+        if (canvas.width !== bw || canvas.height !== bh) { canvas.width = bw; canvas.height = bh; }
         const ctx = canvas.getContext('2d');
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        return { ctx, w, h };
+    }
+
+    const fmtAxis = v => (Math.abs(v) >= 100 ? v.toFixed(0)
+                        : Math.abs(v) >= 10  ? v.toFixed(1)
+                                             : v.toFixed(2));
+
+    function drawChart(chart, idx) {
+        const canvas = $(chart.id);
+        if (!canvas) return;
+        const fit = fitCanvas(canvas);
+        if (!fit) return;
+        const { ctx, w, h } = fit;
+
         ctx.clearRect(0, 0, w, h);
-        if (data.length < 2) return;
+        if (idx.length < 2) return;
 
-        const min   = Math.min(...data);
-        const max   = Math.max(...data);
-        const range = max - min || 1;
+        const series = val[chart.key];
+        const target = ref[chart.key];
 
-        // zero line
-        if (min <= 0 && max >= 0) {
-            const y0 = h - ((-min) / range) * (h - 4) - 2;
-            ctx.strokeStyle = '#2a2a2a';
-            ctx.lineWidth = 1;
-            ctx.beginPath(); ctx.moveTo(0, y0); ctx.lineTo(w, y0); ctx.stroke();
+        // vertical range over what is actually on screen, value and reference
+        let lo = Infinity, hi = -Infinity;
+        for (const i of idx) {
+            const v = series[i];
+            if (v < lo) lo = v;
+            if (v > hi) hi = v;
+            if (chart.ref) {
+                const r = target[i];
+                if (r < lo) lo = r;
+                if (r > hi) hi = r;
+            }
+        }
+        if (!isFinite(lo) || !isFinite(hi)) return;
+        if (hi - lo < 1e-9) { lo -= 0.5; hi += 0.5; }          // flat series: give it room
+        const margin = (hi - lo) * 0.08;
+        lo -= margin; hi += margin;
+
+        const t0 = t[idx[0]], t1 = t[idx[idx.length - 1]];
+        const span = (t1 - t0) || 1;
+        const plotW = w - PAD_L - PAD_R, plotH = h - PAD_T - PAD_B;
+        const X = time  => PAD_L + ((time - t0) / span) * plotW;
+        const Y = value => PAD_T + (1 - (value - lo) / (hi - lo)) * plotH;
+
+        // ---- grid + labels
+        ctx.font = '10px monospace';
+        ctx.textBaseline = 'middle';
+        ctx.strokeStyle = '#1e1e1e';
+        ctx.fillStyle   = '#556';
+        ctx.lineWidth   = 1;
+        for (let g = 0; g <= 2; g++) {
+            const value = lo + (hi - lo) * (g / 2);
+            const y = Math.round(Y(value)) + 0.5;
+            ctx.beginPath(); ctx.moveTo(PAD_L, y); ctx.lineTo(w - PAD_R, y); ctx.stroke();
+            ctx.textAlign = 'right';
+            ctx.fillText(fmtAxis(value), PAD_L - 6, y);
+        }
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'top';
+        for (let g = 0; g <= 2; g++) {
+            const time = t0 + span * (g / 2);
+            const x = Math.round(X(time)) + 0.5;
+            ctx.strokeStyle = '#1a1a1a';
+            ctx.beginPath(); ctx.moveTo(x, PAD_T); ctx.lineTo(x, h - PAD_B); ctx.stroke();
+            ctx.fillStyle = '#556';
+            ctx.fillText(`${time.toFixed(1)}s`, x, h - PAD_B + 4);
         }
 
-        ctx.strokeStyle = color;
+        // zero line, when the window straddles it
+        if (lo <= 0 && hi >= 0) {
+            const y = Math.round(Y(0)) + 0.5;
+            ctx.strokeStyle = '#333';
+            ctx.beginPath(); ctx.moveTo(PAD_L, y); ctx.lineTo(w - PAD_R, y); ctx.stroke();
+        }
+
+        // ---- reference first, so the measured value reads on top of it
+        if (chart.ref) {
+            ctx.strokeStyle = '#667';
+            ctx.lineWidth = 1;
+            ctx.setLineDash([4, 3]);
+            ctx.beginPath();
+            idx.forEach((i, k) => { const px = X(t[i]), py = Y(target[i]); k ? ctx.lineTo(px, py) : ctx.moveTo(px, py); });
+            ctx.stroke();
+            ctx.setLineDash([]);
+        }
+
+        ctx.strokeStyle = chart.color;
         ctx.lineWidth   = 1.5;
         ctx.beginPath();
-        data.forEach((v, i) => {
-            const px = (i / (MAX_PTS - 1)) * w;
-            const py = h - ((v - min) / range) * (h - 4) - 2;
-            i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
-        });
+        idx.forEach((i, k) => { const px = X(t[i]), py = Y(series[i]); k ? ctx.lineTo(px, py) : ctx.moveTo(px, py); });
         ctx.stroke();
+
+        // ---- current value, top right
+        const last = idx[idx.length - 1];
+        ctx.textAlign = 'right';
+        ctx.textBaseline = 'top';
+        ctx.fillStyle = chart.color;
+        ctx.fillText(`${fmtAxis(series[last])} ${chart.unit}`, w - PAD_R, PAD_T);
+    }
+
+    // Drawing is skipped unless the charts view is the one on screen: the
+    // buffers keep filling regardless, so switching to it shows the history.
+    function chartsVisible() {
+        return ui.viewCharts && ui.viewCharts.style.display !== 'none' && !document.hidden;
     }
 
     return {
-        update(state, err) {
+        update(state, err, simTime) {
             const eMag = Math.sqrt(err.xErr**2 + err.yErr**2 + err.zErr**2);
-            bufs.x.push(state.x);
-            bufs.y.push(state.y);
-            bufs.z.push(state.z);
-            bufs.yaw.push(state.yaw);
-            bufs.e.push(eMag);
-            for (const k of ['x', 'y', 'z', 'yaw', 'e'])
-                if (bufs[k].length > MAX_PTS) bufs[k].shift();
+            // The backend reports the tracking error as (reference - state), so
+            // the commanded value comes back by adding it to the measurement.
+            push(simTime,
+                 { x: state.x, y: state.y, z: state.z, yaw: state.yaw, e: eMag },
+                 { x: state.x + err.xErr, y: state.y + err.yErr, z: state.z + err.zErr,
+                   yaw: state.yaw + err.yawErr });
 
-            charts.forEach(drawChart);
+            if (!chartsVisible()) return;
+            const idx = windowIndices();
+            charts.forEach(c => drawChart(c, idx));
+        },
+        // Redraw on demand (entering the charts view) without adding a sample.
+        redraw() {
+            if (!chartsVisible()) return;
+            const idx = windowIndices();
+            charts.forEach(c => drawChart(c, idx));
         },
         reset() {
-            for (const k of ['x', 'y', 'z', 'yaw', 'e']) bufs[k] = [];
+            head = 0; n = 0;
             charts.forEach(({ id }) => {
                 const c = $(id);
                 if (c) c.getContext('2d').clearRect(0, 0, c.width, c.height);
@@ -1348,6 +1478,32 @@ function handleTransportStall() {
 }
 
 // =============================================================================
+// Chrome metrics
+// =============================================================================
+// The app bar wraps and the log dock collapses, so their heights are not
+// constants: measure them and publish them as CSS variables, which is what the
+// full-height views size themselves against (instead of a hard-coded guess).
+function publishChromeMetrics() {
+    const appBar  = $('appBar');
+    const logDock = $('logDock');
+    const root    = document.documentElement;
+    if (appBar)  root.style.setProperty('--chrome-h', `${Math.round(appBar.getBoundingClientRect().height)}px`);
+    if (logDock) root.style.setProperty('--dock-h',   `${Math.round(logDock.getBoundingClientRect().height)}px`);
+}
+
+function trackChromeSize() {
+    if (typeof ResizeObserver === 'function') {
+        const ro = new ResizeObserver(publishChromeMetrics);
+        const appBar  = $('appBar');
+        const logDock = $('logDock');
+        if (appBar)  ro.observe(appBar);
+        if (logDock) ro.observe(logDock);
+    }
+    window.addEventListener('resize', publishChromeMetrics);
+    publishChromeMetrics();
+}
+
+// =============================================================================
 // Speed watchdog
 // =============================================================================
 // The backend never refuses to run: an over-heavy model just advances the
@@ -1668,7 +1824,9 @@ const diagnostics = (() => {
     // persistent log dock: collapse toggle (state remembered). Keep the body
     // padded by the dock's height so the fixed dock never covers content.
     const logDock = $('logDock'), logDockToggle = $('logDockToggle');
-    function padBodyForDock() { document.body.style.paddingBottom = logDock.offsetHeight + 'px'; }
+    // The dock's height is published as --dock-h; the body padding and the
+    // full-height views both derive from it (see the :root block in index.html).
+    function padBodyForDock() { publishChromeMetrics(); }
     function setDockCollapsed(collapsed) {
         logDock.classList.toggle('collapsed', collapsed);
         logDockToggle.textContent = collapsed ? 'Expand' : 'Collapse';
@@ -1877,6 +2035,7 @@ function showView(name) {
     ui.btnDiag.classList.toggle('active',   name === 'diag');
     if (name === '3d')     renderer3d.show();
     else                   renderer3d.hide();
+    if (name === 'charts') chartsRenderer?.redraw();   // show the buffered history at once
     if (name === 'diag')   diagnostics.onShow();
     if (name === 'params') refreshControllerPanel();
 }
@@ -2371,11 +2530,14 @@ ui.ctrlFileInput.addEventListener('change', (e) => {
         diagnostics.setFileSinksAvailable(!!globalThis.__cdsWs);
 
         // Register renderers
-        renderers.push(makeUplotRenderer());
+        chartsRenderer = makeChartsRenderer();
+        renderers.push(chartsRenderer);
 
+        trackChromeSize();              // publish --chrome-h / --dock-h for the views
         renderer3d = make3DRenderer();
         renderers.push(renderer3d);
         ui.btn3d.disabled = false;
+        showView('3d');                 // home view (the CSS starts on it too)
 
         // Reflect the default model in the selector and show its params panel.
         currentModel = ui.modelSelect ? ui.modelSelect.value : MODEL_ROCKET;

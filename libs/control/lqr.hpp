@@ -52,6 +52,7 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <utility>   // std::swap, for the rank elimination
 
 namespace CDS { namespace control {
 
@@ -152,7 +153,73 @@ bool inv(const Mat<K, K>& A, Mat<K, K>& Ainv)
     return false;
 }
 
+// ---- numerical rank by Gauss-Jordan elimination with partial pivoting. The
+//      tolerance is relative to the largest pivot seen, so it scales with the
+//      matrix instead of assuming unit entries.
+template <std::size_t R, std::size_t C>
+std::size_t rank(Mat<R, C> M, double relTol = 1e-9)
+{
+    double biggest = 0.0;
+    for (std::size_t i = 0; i < R; ++i)
+        for (std::size_t j = 0; j < C; ++j) biggest = std::fmax(biggest, std::fabs(M[i][j]));
+    if (biggest == 0.0) return 0;
+    const double tol = relTol * biggest;
+
+    std::size_t rows = 0;
+    for (std::size_t col = 0; col < C && rows < R; ++col)
+    {
+        std::size_t piv = rows;
+        for (std::size_t i = rows + 1; i < R; ++i)
+            if (std::fabs(M[i][col]) > std::fabs(M[piv][col])) piv = i;
+        if (std::fabs(M[piv][col]) <= tol) continue;              // column adds nothing
+
+        std::swap(M[rows], M[piv]);
+        const double p = M[rows][col];
+        for (std::size_t i = 0; i < R; ++i)
+        {
+            if (i == rows) continue;
+            const double f = M[i][col] / p;
+            if (f == 0.0) continue;
+            for (std::size_t j = col; j < C; ++j) M[i][j] -= f * M[rows][j];
+        }
+        ++rows;
+    }
+    return rows;
+}
+
 } // namespace detail
+
+// -----------------------------------------------------------------------------
+//  controllable() -- Kalman rank test on the pair (A, B).
+//
+//  True when [B, AB, A^2 B, ..., A^(n-1) B] has full row rank, i.e. every state
+//  direction can be driven. Sufficient (not necessary) for lqr() to have a
+//  stabilising solution: a pair that is merely STABILISABLE -- uncontrollable
+//  but already-stable modes -- is fine for the synthesis too, so a false here is
+//  a reason to look, not proof that the synthesis will fail.
+// -----------------------------------------------------------------------------
+template <std::size_t NX, std::size_t NU>
+bool controllable(const Mat<NX, NX>& A, const Mat<NX, NU>& B, double relTol = 1e-9)
+{
+    Mat<NX, NX * NU> ctrb{};
+    Mat<NX, NU> block = B;                       // A^k B, starting at k = 0
+    for (std::size_t k = 0; k < NX; ++k)
+    {
+        for (std::size_t i = 0; i < NX; ++i)
+            for (std::size_t a = 0; a < NU; ++a) ctrb[i][k * NU + a] = block[i][a];
+
+        Mat<NX, NU> next{};                      // next block = A * block
+        for (std::size_t i = 0; i < NX; ++i)
+            for (std::size_t a = 0; a < NU; ++a)
+            {
+                double s = 0.0;
+                for (std::size_t j = 0; j < NX; ++j) s += A[i][j] * block[j][a];
+                next[i][a] = s;
+            }
+        block = next;
+    }
+    return detail::rank<NX, NX * NU>(ctrb, relTol) == NX;
+}
 
 // -----------------------------------------------------------------------------
 //  lqr() -- continuous-time infinite-horizon LQR gain.
@@ -176,11 +243,16 @@ bool inv(const Mat<K, K>& A, Mat<K, K>& Ainv)
 //  semidefinite; (A,B) stabilisable and (A, Q^{1/2}) detectable. Returns true on
 //  error (non-invertible R, sign iteration that did not converge, or a singular
 //  normal-equation solve) -- K is then left unspecified.
+//
+//  Xout, when given, receives the CARE solution X itself: the optimal
+//  cost-to-go x'Xx of the control problem, and -- through duality -- the
+//  stationary estimation-error covariance of the filtering problem.
 // -----------------------------------------------------------------------------
 template <std::size_t NX, std::size_t NU>
 bool lqr(const Mat<NX, NX>& A, const Mat<NX, NU>& B,
          const Mat<NX, NX>& Q, const Mat<NU, NU>& R,
-         Mat<NU, NX>& K, int maxIters = 100, double tol = 1e-13)
+         Mat<NU, NX>& K, int maxIters = 100, double tol = 1e-13,
+         Mat<NX, NX>* Xout = nullptr)
 {
     constexpr std::size_t M2 = 2 * NX;
 
@@ -265,6 +337,8 @@ bool lqr(const Mat<NX, NX>& A, const Mat<NX, NU>& B,
             const double a = 0.5 * (X[i][j] + X[j][i]);
             X[i][j] = a; X[j][i] = a;
         }
+
+    if (Xout != nullptr) *Xout = X;      // the CARE solution itself, when asked for
 
     // K = R^-1 B' X  =  (B R^-1)' X
     for (std::size_t a = 0; a < NU; ++a)

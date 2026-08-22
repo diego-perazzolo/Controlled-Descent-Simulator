@@ -150,7 +150,7 @@ cmake --build build/ilqr-test
 # generic estimator tests (native, self-contained: no core, no quaternions)
 cmake -S libs/estimate/test -B build/observer-test -DCMAKE_BUILD_TYPE=Release
 cmake --build build/observer-test
-./build/observer-test/observer_test # observer synthesis (dual LQR): known-answer gains + Step convergence
+./build/observer-test/observer_test # observer synthesis (dual LQR): known-answer gains + Step convergence + observability rank test + error covariance P
 ./build/observer-test/tdo_test      # translational disturbance observer: d_hat recovery + dropped-axis coast
 
 # generic sensor-model tests (native, self-contained: no core, no external deps)
@@ -217,6 +217,8 @@ cmake --build build/mpc-model-test
 ./build/mpc-model-test/lqr_model_test        # Rocket/QuadRotor FF-LQR: runtime gain bridge + Q/R retune
 ./build/mpc-model-test/offset_free_model_test # Quad/Rocket MPC disturbance observer: offset-free vs baseline + sensor-drop coast
 ./build/mpc-model-test/lqr_observer_model_test # Quad/Rocket FF-LQR state estimator: clean baseline + noisy-sensor filtering + drop coast
+./build/mpc-model-test/determinism_model_test  # all 4 models: same inputs twice -> bit-identical trace (observer on, sensors noisy)
+./build/mpc-model-test/horizon_edge_model_test # MPC preview off the end of the trajectory (short traj, sub-control-step traj, N=MAX)
 
 # Python codegen sanity (base_codegen shared at root; model codegens under model/)
 python3 -c "import ast; [ast.parse(open(f).read()) for f in ( \
