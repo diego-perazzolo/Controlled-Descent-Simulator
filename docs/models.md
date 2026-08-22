@@ -75,10 +75,14 @@ disturbances — removed by the optional disturbance observer, see
 
 ## Integration
 
-Runge-Kutta 4 (RK4). The step `dt` is the
-**measured** wall-clock time elapsed on the backend tick thread (wall-anchored
-simulation time, clamped after stalls), not the nominal tick period — so a busy
-or slow machine slows the simulation down rather than desyncing it.
+Runge-Kutta 4 (RK4). The step `dt` chosen by the tick generator depends on
+whether a plant is attached. **With a plant** it is the **measured** wall-clock
+time elapsed (clamped after stalls), so the exchange stays real-time and a busy
+machine slows the simulation rather than desyncing it. **Without a plant** (pure
+simulation) it is the **fixed nominal period**, advanced through a rate-scaled
+fixed-timestep accumulator, so the run is deterministic and reproducible and its
+speed is tunable; if the machine can't sustain the requested rate it runs below
+it (and logs a warning) rather than taking bigger steps.
 
 ---
 

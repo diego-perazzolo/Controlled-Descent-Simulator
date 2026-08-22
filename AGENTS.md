@@ -61,11 +61,16 @@ conventions, invariants, verification commands and the review procedure.
    point takes the lock. The tick path never blocks: no I/O, no unbounded
    waits; the plant exchange goes exclusively through the wait-free mailboxes
    (`PushCommands` / `PullMeasurements` are non-virtual by design — do not
-   bypass or override them). The dt passed to `ExecuteTick` is the *measured*
-   wall-clock elapsed, clamped by the tick generator: simulation time is
-   wall-anchored by design — do not replace it with the nominal tick period,
-   and do not reintroduce integer `duration_cast` in the elapsed measurement
-   (sub-unit iterations truncate to zero and silently freeze the simulation).
+   bypass or override them). The dt fed to `ExecuteTick` is picked by the tick
+   generator from whether a plant is attached: WITH a plant it is the *measured*
+   wall-clock elapsed (clamped after a stall), so the exchange stays real-time;
+   WITHOUT a plant it is the *fixed nominal period*, advanced through a
+   rate-scaled fixed-timestep accumulator (bounded by a per-frame wall-time
+   budget, and warning when it can't keep up), so a pure simulation is
+   deterministic and reproducible and its speed is tunable. Both are deliberate —
+   do not "fix" the plant-less fixed step back to the wall clock. Do not
+   reintroduce integer `duration_cast` in the elapsed measurement (sub-unit
+   iterations truncate to zero and silently freeze the simulation).
 10. **Controllers are generic C++ plus a Python conformance certificate.**
     Hand-written control algorithms (iLQR today, LQR next) live in
     `libs/control` as model- and protocol-agnostic, header-only infrastructure —

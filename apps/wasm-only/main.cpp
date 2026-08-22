@@ -119,7 +119,24 @@ static void _tick_generator(void)
 
         _tickAccumulator += elapsed_seconds * rate;
         constexpr double MAX_BACKLOG_SECONDS = 0.25;
-        if (_tickAccumulator > MAX_BACKLOG_SECONDS) _tickAccumulator = MAX_BACKLOG_SECONDS;
+        if (_tickAccumulator > MAX_BACKLOG_SECONDS)
+        {
+            /* sim-seconds requested this frame beyond the deliverable budget */
+            const double overshoot = _tickAccumulator - MAX_BACKLOG_SECONDS;
+            _tickAccumulator = MAX_BACKLOG_SECONDS;
+            /* The backlog saturated: the machine cannot sustain the requested
+               rate (the model is too slow — e.g. a Debug MPC build). The sim
+               keeps running, just below `rate`. Warn, rate-limited so it does
+               not spam the log. */
+            static Clock::time_point lastRateWarn{};
+            const auto nowW = Clock::now();
+            if (FpSeconds(nowW - lastRateWarn).count() >= 2.0)
+            {
+                lastRateWarn = nowW;
+                CDS_LOG_WARN(logger, "Cannot keep up with sim rate {}x: running below it, {} s of sim dropped this frame (model too slow for this build)",
+                             static_cast<double>(rate), overshoot);
+            }
+        }
 
         constexpr double STEP_BUDGET_SECONDS = 0.008; // wall time to spend sub-stepping per frame
         constexpr int    MAX_STEPS = 2000;            // hard fallback cap
