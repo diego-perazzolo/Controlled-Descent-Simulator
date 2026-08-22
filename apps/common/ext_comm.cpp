@@ -139,23 +139,31 @@ static core_systemParams_t _convertExtToCore_systemParams(ext_systemParams& ext)
     return coreParam; 
 }
 
+static ext_fullState _convertCoreToExt_fullState(const core_state_t& s)
+{
+    ext_fullState ext = {};
+    ext.x_dot     = s.x_dot;
+    ext.y_dot     = s.y_dot;
+    ext.z_dot     = s.z_dot;
+    ext.x         = s.x;
+    ext.y         = s.y;
+    ext.z         = s.z;
+    ext.roll_dot  = s.roll_dot;
+    ext.pitch_dot = s.pitch_dot;
+    ext.yaw_dot   = s.yaw_dot;
+    ext.roll      = s.roll;
+    ext.pitch     = s.pitch;
+    ext.yaw       = s.yaw;
+
+    return ext;
+}
+
 static ext_snapshotData _convertCoreToExt_snapshotParams(core_snapshotData_t& core)
 {
     ext_snapshotData ext = {};
 
     ext.time_seconds = core.time_seconds;
-    ext.state.x_dot = core.state.x_dot; 
-    ext.state.y_dot = core.state.y_dot; 
-    ext.state.z_dot = core.state.z_dot; 
-    ext.state.x = core.state.x; 
-    ext.state.y = core.state.y; 
-    ext.state.z = core.state.z; 
-    ext.state.roll_dot = core.state.roll_dot; 
-    ext.state.pitch_dot = core.state.pitch_dot; 
-    ext.state.yaw_dot = core.state.yaw_dot; 
-    ext.state.roll = core.state.roll; 
-    ext.state.pitch = core.state.pitch; 
-    ext.state.yaw = core.state.yaw; 
+    ext.state        = _convertCoreToExt_fullState(core.state);
 
     ext.err.xErr = core.errors.x;
     ext.err.yErr = core.errors.y;
@@ -163,6 +171,44 @@ static ext_snapshotData _convertCoreToExt_snapshotParams(core_snapshotData_t& co
     ext.err.yawErr = core.errors.yaw;
 
     return ext;
+}
+
+static ext_plantSnapshotData _convertCoreToExt_plantSnapshotParams(core_plantSnapshotData_t& core)
+{
+    ext_plantSnapshotData ext = {};
+
+    ext.time_seconds = core.time_seconds;
+    /* float carries the sequence exactly up to 2^24 samples */
+    ext.sequence     = (ext_coord_t)core.sequence;
+    ext.state        = _convertCoreToExt_fullState(core.state);
+
+    ext.isAttached     = core.isAttached;
+    ext.isReadyToStart = core.isReadyToStart;
+
+    return ext;
+}
+
+// Snapshot the recorder state (model + plant) into the wire struct. Flags cross
+// as ext_coord_t (0.0/1.0) so the char[] modelName can share the struct.
+// modelName is a "model + plant" summary of whoever is active.
+static ext_recordStatus _recordStatus(void)
+{
+    ext_recordStatus out = {};
+    cds_record::IRecorder* m = cds_record::activeModelRecorder();
+    cds_record::IRecorder* p = cds_record::activePlantRecorder();
+
+    out.active      = (m || p) ? 1 : 0;
+    out.enabled     = ((m && m->enabled()) || (p && p->enabled())) ? 1 : 0;
+    out.droppedRows = static_cast<ext_coord_t>((m ? m->dropped() : 0) +
+                                               (p ? p->dropped() : 0));
+
+    // "Model + Plant" summary (either side may be absent), truncated to fit.
+    out.modelName[0] = '\0';
+    std::snprintf(out.modelName, sizeof(out.modelName), "%s%s%s",
+                  m ? m->name() : "",
+                  (m && p) ? " + " : "",
+                  p ? p->name() : "");
+    return out;
 }
 
 /* ext functions */
@@ -180,7 +226,7 @@ bool ext_initRocket_FFLQR01(ext_initRocketParams params)
     RETURN_IF_TRUE(ret);
 
     // Rocket initialization
-    ret = core_rocketFfLqr01_init(rPar);
+    ret = core_modelInitRocketFfLqr01(rPar);
     RETURN_IF_TRUE(ret);
 
     // Trajectory initialization
@@ -203,7 +249,7 @@ bool ext_initQuadRotor_FFLQR01(ext_initQuadRotorParams params)
     RETURN_IF_TRUE(ret);
 
     // QuadRotor initialization
-    ret = core_quadRotorFfLqr01_init(rPar);
+    ret = core_modelInitQuadRotorFfLqr01(rPar);
     RETURN_IF_TRUE(ret);
 
     // Trajectory initialization
@@ -226,7 +272,7 @@ bool ext_initQuadRotor_MPC01(ext_initQuadRotorParams params)
     RETURN_IF_TRUE(ret);
 
     // QuadRotor MPC initialization
-    ret = core_quadRotorMPC01_init(rPar);
+    ret = core_modelInitQuadRotorMpc01(rPar);
     RETURN_IF_TRUE(ret);
 
     // Trajectory initialization
@@ -249,7 +295,7 @@ bool ext_initRocket_MPC01(ext_initRocketParams params)
     RETURN_IF_TRUE(ret);
 
     // Rocket MPC initialization
-    ret = core_rocketMPC01_init(rPar);
+    ret = core_modelInitRocketMpc01(rPar);
     RETURN_IF_TRUE(ret);
 
     // Trajectory initialization
@@ -293,7 +339,7 @@ bool ext_trajectory_remove_last_item(void)
 ext_trajectoryPoint ext_trajectory_get_point(ext_coord_t t)
 {
     Vec3 p = {};
-    if(core_getTrajectoryPoint(t, p))
+    if(core_trajectoryGetPoint(t, p))
     {
         // Err
         return {};
@@ -307,13 +353,13 @@ bool ext_setSystemParams(ext_systemParams params)
     // Struct conversion
     core_systemParams_t corePar = _convertExtToCore_systemParams(params);
 
-    return core_setSystemParams(corePar);
+    return core_systemSetParams(corePar);
 }
 
 ext_snapshotData ext_getSnapshot(void)
 {
     core_snapshotData_t corePar = {};
-    bool ret = core_getSnapshot(corePar);
+    bool ret = core_systemGetSnapshot(corePar);
 
     ext_snapshotData extPar = _convertCoreToExt_snapshotParams(corePar);
     extPar.isError = ret;
@@ -325,28 +371,9 @@ ext_snapshotData ext_getSnapshot(void)
 ext_plantSnapshotData ext_getPlantSnapshot(void)
 {
     core_plantSnapshotData_t corePar = {};
-    bool ret = core_getPlantSnapshot(corePar);
+    bool ret = core_plantGetSnapshot(corePar);
 
-    ext_plantSnapshotData extPar = {};
-    extPar.time_seconds = corePar.time_seconds;
-    /* float carries the sequence exactly up to 2^24 samples */
-    extPar.sequence = (ext_coord_t)corePar.sequence;
-
-    extPar.state.x_dot = corePar.state.x_dot;
-    extPar.state.y_dot = corePar.state.y_dot;
-    extPar.state.z_dot = corePar.state.z_dot;
-    extPar.state.x = corePar.state.x;
-    extPar.state.y = corePar.state.y;
-    extPar.state.z = corePar.state.z;
-    extPar.state.roll_dot = corePar.state.roll_dot;
-    extPar.state.pitch_dot = corePar.state.pitch_dot;
-    extPar.state.yaw_dot = corePar.state.yaw_dot;
-    extPar.state.roll = corePar.state.roll;
-    extPar.state.pitch = corePar.state.pitch;
-    extPar.state.yaw = corePar.state.yaw;
-
-    extPar.isAttached = corePar.isAttached;
-    extPar.isReadyToStart = corePar.isReadyToStart;
+    ext_plantSnapshotData extPar = _convertCoreToExt_plantSnapshotParams(corePar);
     extPar.isError = ret;
 
     return extPar;
@@ -354,22 +381,22 @@ ext_plantSnapshotData ext_getPlantSnapshot(void)
 
 bool ext_run(void)
 {
-    return core_run();
+    return core_systemRun();
 }
 
 bool ext_stop(void)
 {
-    return core_stop();
+    return core_systemStop();
 }
 
 bool ext_beginStaging(ext_coord_t safetyAltitude)
 {
-    return core_beginStaging(safetyAltitude);
+    return core_plantBeginStaging(safetyAltitude);
 }
 
 bool ext_stopStaging(void)
 {
-    return core_stopStaging();
+    return core_plantStopStaging();
 }
 
 // --------------------------------------------------------------------------- //
@@ -523,29 +550,6 @@ bool ext_setDiagFiles(ext_diagFiles params)
     cds_log::fileSink().setEnabled(params.logFile);
     cds_profile::registry().setRawLogging(params.profileRaw);
     return false;
-}
-
-// Snapshot the recorder state (model + plant) into the wire struct. Flags cross
-// as ext_coord_t (0.0/1.0) so the char[] modelName can share the struct.
-// modelName is a "model + plant" summary of whoever is active.
-static ext_recordStatus _recordStatus(void)
-{
-    ext_recordStatus out = {};
-    cds_record::IRecorder* m = cds_record::activeModelRecorder();
-    cds_record::IRecorder* p = cds_record::activePlantRecorder();
-
-    out.active      = (m || p) ? 1 : 0;
-    out.enabled     = ((m && m->enabled()) || (p && p->enabled())) ? 1 : 0;
-    out.droppedRows = static_cast<ext_coord_t>((m ? m->dropped() : 0) +
-                                               (p ? p->dropped() : 0));
-
-    // "Model + Plant" summary (either side may be absent), truncated to fit.
-    out.modelName[0] = '\0';
-    std::snprintf(out.modelName, sizeof(out.modelName), "%s%s%s",
-                  m ? m->name() : "",
-                  (m && p) ? " + " : "",
-                  p ? p->name() : "");
-    return out;
 }
 
 ext_recordStatus ext_setRecording(ext_recordParams params)

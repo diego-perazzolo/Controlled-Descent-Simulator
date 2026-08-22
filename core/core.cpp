@@ -98,7 +98,7 @@ bool core_init()
     return false;
 }
 
-bool core_rocketFfLqr01_init(const core_rocketParams_t rPar)
+bool core_modelInitRocketFfLqr01(const core_rocketParams_t rPar)
 {
     // Configure the model. The SystemManager always 
     // receives a fully-initialized model
@@ -112,7 +112,7 @@ bool core_rocketFfLqr01_init(const core_rocketParams_t rPar)
     return _ctx.SM.InitModel(std::move(model));
 }
 
-bool core_quadRotorFfLqr01_init(const core_quadRotorParams_t rPar)
+bool core_modelInitQuadRotorFfLqr01(const core_quadRotorParams_t rPar)
 {
     // Configure the model. The SystemManager always 
     // receives a fully-initialized model
@@ -126,7 +126,7 @@ bool core_quadRotorFfLqr01_init(const core_quadRotorParams_t rPar)
     return _ctx.SM.InitModel(std::move(model));
 }
 
-bool core_quadRotorMPC01_init(const core_quadRotorParams_t rPar)
+bool core_modelInitQuadRotorMpc01(const core_quadRotorParams_t rPar)
 {
     // Configure the model. The SystemManager always
     // receives a fully-initialized model
@@ -140,7 +140,7 @@ bool core_quadRotorMPC01_init(const core_quadRotorParams_t rPar)
     return _ctx.SM.InitModel(std::move(model));
 }
 
-bool core_rocketMPC01_init(const core_rocketParams_t rPar)
+bool core_modelInitRocketMpc01(const core_rocketParams_t rPar)
 {
     // Configure the model. The SystemManager always
     // receives a fully-initialized model
@@ -177,7 +177,7 @@ bool core_trajectoryRemoveLastItem(void)
                                   { return tM.RemoveLastItem();});
 }
 
-bool core_getTrajectoryPoint(core_coord_t time, Vec3 &point)
+bool core_trajectoryGetPoint(core_coord_t time, Vec3 &point)
 {
     Reference_t ref;
     if (_ctx.SM.ExecuteOnTrajectoryManager([time, &ref](const TrajectoryManager &tM)
@@ -194,7 +194,7 @@ bool core_getTrajectoryPoint(core_coord_t time, Vec3 &point)
     return false;
 }
 
-bool core_setSystemParams(const core_systemParams_t &par)
+bool core_systemSetParams(const core_systemParams_t &par)
 {
     SystemManager::userForces_t uF = {par.user_fX, par.user_fY, par.user_fZ};
 
@@ -204,7 +204,7 @@ bool core_setSystemParams(const core_systemParams_t &par)
     return ret;
 }
 
-bool core_getSnapshot(core_snapshotData_t &par)
+bool core_systemGetSnapshot(core_snapshotData_t &par)
 {
     CDS_PROFILE(profile, "Get system snapshot");
     return _ctx.SM.ExecuteOnModel([&par](BaseModel &model)
@@ -229,7 +229,7 @@ bool core_setControllerParam(int id, double value)
                                   { return model.SetControllerParam(id, value); });
 }
 
-bool core_getPlantSnapshot(core_plantSnapshotData_t &par)
+bool core_plantGetSnapshot(core_plantSnapshotData_t &par)
 {
     CDS_PROFILE(profile, "Get plant snapshot");
     par.isAttached = false;
@@ -257,22 +257,22 @@ bool core_getPlantSnapshot(core_plantSnapshotData_t &par)
     });
 }
 
-bool core_run(void)
+bool core_systemRun(void)
 {
     return _ctx.SM.Run();
 }
 
-bool core_stop(void)
+bool core_systemStop(void)
 {
     return _ctx.SM.Stop();
 }
 
-bool core_beginStaging(core_coord_t safetyAltitude)
+bool core_plantBeginStaging(core_coord_t safetyAltitude)
 {
     return _ctx.SM.BeginStaging(safetyAltitude);
 }
 
-bool core_stopStaging(void)
+bool core_plantStopStaging(void)
 {
     return _ctx.SM.StopStaging();
 }

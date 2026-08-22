@@ -37,16 +37,17 @@
 // Initializes the simulation core, returns true on error
 bool core_init(void);
 
-// Set rocket FFLQR01 parameters, returns true on error
-bool core_rocketFfLqr01_init(const core_rocketParams_t rPar);
+// Initialize the rocket FF-LQR01 model with its parameters, returns true on error
+bool core_modelInitRocketFfLqr01(const core_rocketParams_t rPar);
 
-// Set quadRotor FFLQR01 parameters, returns true on error
-bool core_quadRotorFfLqr01_init(const core_quadRotorParams_t rPar);
+// Initialize the quadRotor FF-LQR01 model with its parameters, returns true on error
+bool core_modelInitQuadRotorFfLqr01(const core_quadRotorParams_t rPar);
 
-bool core_quadRotorMPC01_init(const core_quadRotorParams_t rPar);
+// Initialize the quadRotor MPC01 (nonlinear MPC) model with its parameters, returns true on error
+bool core_modelInitQuadRotorMpc01(const core_quadRotorParams_t rPar);
 
-// Set rocket MPC01 (nonlinear MPC) parameters, returns true on error
-bool core_rocketMPC01_init(const core_rocketParams_t rPar);
+// Initialize the rocket MPC01 (nonlinear MPC) model with its parameters, returns true on error
+bool core_modelInitRocketMpc01(const core_rocketParams_t rPar);
 
 // Set trajectory initial parameters, returns true on error
 bool core_trajectoryInit(void);
@@ -61,31 +62,31 @@ bool core_trajectoryAppendPoint(const core_trajectoryPointParams_t tPar);
 bool core_trajectoryRemoveLastItem(void);
 
 // Get Trajectory point at a certain time instant, returns true on error
-bool core_getTrajectoryPoint(core_coord_t time, Vec3& point);
+bool core_trajectoryGetPoint(core_coord_t time, Vec3& point);
 
 // Set systems parameters (timestep, user forces). Returns true on error 
-bool core_setSystemParams(const core_systemParams_t& par);
+bool core_systemSetParams(const core_systemParams_t& par);
 
 // Get system snapshot (time, state, tracking errors). Returns true on error
-bool core_getSnapshot(core_snapshotData_t& par);
+bool core_systemGetSnapshot(core_snapshotData_t& par);
 
 // Get plant snapshot (last sample: plant time, sequence, state). Returns
 // true on error (no plant attached, or no sample published yet — the
 // isAttached field tells which)
-bool core_getPlantSnapshot(core_plantSnapshotData_t& par);
+bool core_plantGetSnapshot(core_plantSnapshotData_t& par);
 
 // Run simulation / plant ticking. Returns true on error
-bool core_run(void);
+bool core_systemRun(void);
 
 // Stop simulation / plant ticking. Returns true on error
-bool core_stop(void);
+bool core_systemStop(void);
 
 // Auto-stage the plant to (trajectory vertical range + safetyAltitude).
 // Returns true on error
-bool core_beginStaging(core_coord_t safetyAltitude);
+bool core_plantBeginStaging(core_coord_t safetyAltitude);
 
 // Abort auto-staging (hold in place). Returns true on error
-bool core_stopStaging(void);
+bool core_plantStopStaging(void);
 
 // Get the active controller's parameter manifest (a TSV listing of the exposed
 // parameters) into `buf` (capacity `n`). Returns true on error.

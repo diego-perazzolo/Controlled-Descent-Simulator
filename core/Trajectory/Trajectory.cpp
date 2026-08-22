@@ -23,8 +23,10 @@
 // THE SOFTWARE.
 //
 // =============================================================================
-// File        : <filename.cpp>
-// Description : <brief description of this file>
+// File        : Trajectory.cpp
+// Description : Implementation of the shared (non-virtual) Trajectory base:
+//               the start/end-time accessors common to every sub-trajectory
+//               item.
 // Author      : Diego Perazzolo
 // Created     : 2026
 // =============================================================================

@@ -23,8 +23,11 @@
 // THE SOFTWARE.
 //
 // =============================================================================
-// File        : <filename.cpp>
-// Description : <brief description of this file>
+// File        : TrajectoryManager.hpp
+// Description : Ordered list of trajectory items (Poly4, Point, ...): appends
+//               and removes items, samples the concatenated reference at a
+//               time instant, and reports the overall vertical range (used to
+//               size the plant staging altitude).
 // Author      : Diego Perazzolo
 // Created     : 2026
 // =============================================================================

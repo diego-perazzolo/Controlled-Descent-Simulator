@@ -23,8 +23,12 @@
 // THE SOFTWARE.
 //
 // =============================================================================
-// File        : <filename.cpp>
-// Description : <brief description of this file>
+// File        : Trajectory.hpp
+// Description : Abstract base class for a single trajectory item (a
+//               sub-trajectory): the reference-sampling interface
+//               (GetReference at a time instant) and the parametric
+//               getters/setters, plus the cached start/end times shared by
+//               every item (Poly4, Point, ...).
 // Author      : Diego Perazzolo
 // Created     : 2026
 // =============================================================================
