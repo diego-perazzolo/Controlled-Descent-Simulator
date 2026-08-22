@@ -168,7 +168,7 @@ def run_tests(s):
     print(f"trajectory point OK ({x:.2f}, {y:.2f}, {z:.2f})")
 
     # system params: 10 ms tick period, no user forces
-    p = rpc(s, header(MSG["SET_SYSTEM_PARAMS"]) + struct.pack("<4f", 0.01, 0, 0, 0))
+    p = rpc(s, header(MSG["SET_SYSTEM_PARAMS"]) + struct.pack("<5f", 0.01, 1.0, 0, 0, 0))
     assert struct.unpack("<BBB", p)[2] == 0, "set system params failed"
     print("set system params OK")
 
@@ -211,6 +211,22 @@ def run_tests(s):
     assert t_plant > 0, f"plant time not advancing: {t_plant}"
     print(f"plant snapshot OK (seq={seq_run:.0f}, plantTime={t_plant:.3f}s)")
 
+    # the tick period is locked while a plant mission is running (core-side
+    # guard, not only the frontend): a period CHANGE is rejected, a no-op is not
+    p = rpc(s, header(MSG["SET_SYSTEM_PARAMS"]) + struct.pack("<5f", 0.02, 1.0, 0, 0, 0))
+    assert struct.unpack("<BBB", p)[2] == 1, "period change while running+plant should be rejected"
+    p = rpc(s, header(MSG["SET_SYSTEM_PARAMS"]) + struct.pack("<5f", 0.01, 1.0, 0, 0, 0))
+    assert struct.unpack("<BBB", p)[2] == 0, "same-period refresh while running should be allowed"
+    print("tick period locked while plant mission running OK")
+
+    # the sim rate is locked whenever a plant is attached (core-side guard): a
+    # rate CHANGE is rejected, a no-op (same rate) is allowed.
+    p = rpc(s, header(MSG["SET_SYSTEM_PARAMS"]) + struct.pack("<5f", 0.01, 2.0, 0, 0, 0))
+    assert struct.unpack("<BBB", p)[2] == 1, "rate change with a plant attached should be rejected"
+    p = rpc(s, header(MSG["SET_SYSTEM_PARAMS"]) + struct.pack("<5f", 0.01, 1.0, 0, 0, 0))
+    assert struct.unpack("<BBB", p)[2] == 0, "same-rate refresh should be allowed"
+    print("sim rate locked while a plant is attached OK")
+
     # stop: simulated time must freeze
     p = rpc(s, header(MSG["STOP"]))
     assert struct.unpack("<BBB", p)[2] == 0, "stop failed"
@@ -219,6 +235,13 @@ def run_tests(s):
     t2 = struct.unpack("<BB17fB", rpc(s, header(MSG["GET_SNAPSHOT"])))[2]
     assert t1 == t2, f"time still advancing after stop: {t1} -> {t2}"
     print(f"stop OK (t frozen at {t2:.3f}s)")
+
+    # with the mission stopped the period is settable again (the setup path),
+    # even though the loopback plant is still attached
+    p = rpc(s, header(MSG["SET_SYSTEM_PARAMS"]) + struct.pack("<5f", 0.02, 1.0, 0, 0, 0))
+    assert struct.unpack("<BBB", p)[2] == 0, "period change while stopped should be allowed"
+    rpc(s, header(MSG["SET_SYSTEM_PARAMS"]) + struct.pack("<5f", 0.01, 1.0, 0, 0, 0))  # restore
+    print("tick period settable while stopped OK")
 
     # plant after stop: STOP ends the mission, not the link. The plant stays
     # connected (two-phase lifecycle: link lives from attach to detach), so a
@@ -332,7 +355,10 @@ def run_tests(s):
 def main():
     server = None
     if len(sys.argv) > 1:
-        server = subprocess.Popen([os.path.abspath(sys.argv[1]), str(PORT)])
+        # launch WITH an explicit loopback plant — the plant-path assertions
+        # (snapshot, freshness, tick-period lock) need one; with no plant arg the
+        # server now runs plant-less on purpose.
+        server = subprocess.Popen([os.path.abspath(sys.argv[1]), str(PORT), "loopback"])
     try:
         s = ws_connect()
         print(f"handshake OK (protocol version 0x{VERSION:02X})")

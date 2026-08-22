@@ -201,6 +201,7 @@ RocketMPC::RocketMPC()
     m_rF1 = 0.02; m_rT1 = 0.20; m_rT2 = 0.20; m_rT3 = 0.20;   // per-input control weights
     m_dtMpc = 0.02;      // MPC prediction / control step [s]
     m_maxIters = 12;     // iLQR iterations per solve (warm-started)
+    m_horizon = 40;      // active prediction horizon N (runtime-tunable, 1..MAX_HORIZON)
     BuildParamTable();
 
     // Offset-free disturbance observer: OFF by default (opt-in). Gain synthesised
@@ -363,8 +364,8 @@ bool RocketMPC::PerformIntegration(const core_stepParams_t& params)
         if (!m_seeded) { for (auto& u : m_warmStart) u = uref; }
 
         // sample the reference over the horizon (preview)
-        std::array<StageRef, RocketMPC::HORIZON + 1> refs;
-        for (std::size_t k = 0; k <= RocketMPC::HORIZON; ++k)
+        std::array<StageRef, RocketMPC::MAX_HORIZON + 1> refs;
+        for (std::size_t k = 0; k <= m_horizon; ++k)
         {
             Reference_t r;
             if (m_trajectoryManagerPtr->GetReference(m_time + k * m_dtMpc, r))
@@ -412,13 +413,13 @@ bool RocketMPC::PerformIntegration(const core_stepParams_t& params)
         auto jac   = [&](const V12& x, const V4& u, double fx[NX][NX], double fu[NX][NU]){ dynamics->Jacobians(x, u, fx, fu); };
         auto proj  = [](V12&){ /* Euler: no state projection */ };
         auto scost = [&](const V12& x, const V4& u, std::size_t k){ return rocketStageCost(x, u, refs[k], uref, W); };
-        auto tcost = [&](const V12& x){ return rocketTermCost(x, refs[RocketMPC::HORIZON], W); };
+        auto tcost = [&](const V12& x){ return rocketTermCost(x, refs[m_horizon], W); };
 
         V4 u0;
         {
             CDS_PROFILE(profile, "MPC solve");
-            control::solve<NX, NU, RocketMPC::HORIZON>(
-                x0, fdyn, jac, proj, scost, tcost, lo, hi, m_dtMpc, m_maxIters, m_warmStart, u0);
+            control::solve<NX, NU, RocketMPC::MAX_HORIZON>(
+                x0, fdyn, jac, proj, scost, tcost, lo, hi, m_dtMpc, m_maxIters, m_horizon, m_warmStart, u0);
         }
 
         m_lastU0        = u0;
@@ -509,17 +510,23 @@ bool RocketMPC::GetCurrentTimeSeconds(core_coord_t& currentTimeSeconds)
 // The state weights are the per-block Gauss-Newton cost weights; the control
 // weights are per-input (F1/T1/T2/T3) because the rocket's actuators are
 // heterogeneous. dt_mpc is the control step (also the horizon spacing); max_iters
-// caps the iLQR iterations per solve. The horizon N is compile-time (fixed
-// buffers) and exposed read-only. No gain to re-synthesise: the MPC re-solves
+// caps the iLQR iterations per solve. The horizon N is runtime-tunable (buffers
+// fixed at MAX_HORIZON). No gain to re-synthesise: the MPC re-solves
 // from scratch every control step.
 // Per-axis group names for the position sensor bank (x/y/z).
 static const char* const SENSOR_GROUPS[3] = { "Sensor x", "Sensor y", "Sensor z" };
 
 void RocketMPC::BuildParamTable()
 {
-    // Model bucket: the (compile-time, read-only) prediction horizon.
+    // Model bucket: the runtime-tunable prediction horizon.
     m_modelParams.clear();
-    m_modelParams.add("solver", "horizon N", false, []{ return static_cast<double>(RocketMPC::HORIZON); });
+    // Active prediction horizon N (runtime-tunable up to the fixed buffer
+    // capacity). A change re-seeds the warm start on the next solve.
+    m_modelParams.add("solver", "horizon N", true,
+        [this]{ return static_cast<double>(m_horizon); },
+        [this](double v){ const int n = static_cast<int>(v + 0.5);
+                          if (n < 1 || n > static_cast<int>(RocketMPC::MAX_HORIZON)) return true;
+                          m_horizon = static_cast<std::size_t>(n); m_seeded = false; return false; });
 
     // Controller bucket: cost weights + solver knobs.
     m_controllerParams.clear();

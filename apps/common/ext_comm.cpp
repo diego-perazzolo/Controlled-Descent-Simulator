@@ -131,6 +131,7 @@ static core_systemParams_t _convertExtToCore_systemParams(ext_systemParams& ext)
 {
     core_systemParams_t coreParam = {
         .timestep_seconds = ext.timestep_seconds,
+        .rate = ext.rate,
         .user_fX = ext.user_forces.fX,
         .user_fY = ext.user_forces.fY,
         .user_fZ = ext.user_forces.fZ,

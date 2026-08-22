@@ -188,7 +188,12 @@ typedef struct
 {
     // Timestep of simulation / plant loop
     core_coord_t timestep_seconds;
-    
+
+    // Simulation speed multiplier (sim-time per wall-time) for the pure-sim
+    // (plant-less) fixed-step tick: 1.0 = real-time, 2.0 = twice as fast, etc.
+    // Ignored while a plant is attached (the plant paces real-time).
+    core_coord_t rate;
+
     // User forces
     core_coord_t user_fX;
     core_coord_t user_fY;

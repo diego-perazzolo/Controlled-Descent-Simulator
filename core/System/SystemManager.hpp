@@ -59,6 +59,7 @@ namespace CDS
         typedef struct
         {
             sm_coord_t timestep_seconds;
+            sm_coord_t rate;              // sim-speed multiplier (plant-less pure sim); 1.0 = real-time
         } systemManagerParams_t;
 
         SystemManager(void);

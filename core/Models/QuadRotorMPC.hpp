@@ -34,7 +34,7 @@
 //               and integrates the plant by the measured wall-clock step.
 //               Controller knobs (cost weights, control step, iterations) are
 //               runtime-tunable through the controller-parameter interface; the
-//               horizon N is compile-time (fixed buffers) and exposed read-only.
+//               horizon N is runtime-tunable (fixed buffers sized to MAX_HORIZON).
 //               Derived in modeling/notebooks/dynamics_quadRotor_MPC01.ipynb.
 // Author      : Diego Perazzolo
 // Created     : 2026
@@ -80,7 +80,7 @@ namespace CDS
         //   [r(3), q(4, quaternion), v(3), omega(3, body rates)]
         static constexpr std::size_t STATE_DIM = 13;
         static constexpr std::size_t INPUT_DIM = 4;    // [T1, T2, T3, T4] rotor thrusts
-        static constexpr std::size_t HORIZON   = 40;   // MPC prediction horizon (compile-time)
+        static constexpr std::size_t MAX_HORIZON = 256; // fixed buffer capacity (max prediction horizon)
 
         using StateVec    = std::array<double, STATE_DIM>;
         using InputVec    = std::array<double, INPUT_DIM>;
@@ -112,11 +112,13 @@ namespace CDS
         double             m_time;
 
         // Runtime-tunable controller knobs (Gauss-Newton cost weights per block,
-        // the control step DT_MPC, and the iLQR iteration cap). Defaulted in the
-        // constructor to the values tuned in the notebook. HORIZON is compile-time.
+        // the control step DT_MPC, the iLQR iteration cap, and the active
+        // prediction horizon N <= MAX_HORIZON). Defaulted in the constructor to
+        // the values tuned in the notebook.
         double             m_wp, m_wq, m_wv, m_ww, m_wu, m_wterm;
         double             m_dtMpc;
         int                m_maxIters;
+        std::size_t        m_horizon;   // active horizon N (1..MAX_HORIZON)
         param::ParamTable<> m_modelParams;       // structural knobs (horizon)
         param::ParamTable<> m_controllerParams;  // cost weights + solver
         param::ParamTable<> m_observerParams;    // observer covariances + enable
@@ -124,7 +126,7 @@ namespace CDS
 
         // Warm-start command sequence: the previous solve, kept and shifted so the
         // next tick starts a few iterations away from the answer.
-        std::array<InputVec, HORIZON> m_warmStart;
+        std::array<InputVec, MAX_HORIZON> m_warmStart;
         bool               m_seeded;
 
         // The MPC re-solves only at the control cadence (every DT_MPC of model

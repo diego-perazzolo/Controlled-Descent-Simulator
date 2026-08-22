@@ -1,4 +1,6 @@
-# Build artifacts (build/ = WASM, build-*/ = native server & alt configs)
+# Build artifacts: every CMake build dir lives under build/<name>, and the
+# compiled WASM delivery (simulator.js/.wasm) lands in build/ top-level.
+# build-*/ also ignored to catch any legacy top-level build dirs.
 build/
 build-*/
 

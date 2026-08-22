@@ -79,8 +79,11 @@ int main()
         if (!model.SetControllerParam(99, 1.0)) paramOk = false;   // bad id -> rejected
         model.SetControllerParam(0, 6.0);                          // restore the default weight
 
-        if (model.GetModelManifest(buf, sizeof buf) || rowsOf(buf) != 1) paramOk = false;  // horizon
-        if (!model.SetModelParam(0, 100.0)) paramOk = false;       // horizon is ro -> rejected
+        if (model.GetModelManifest(buf, sizeof buf) || rowsOf(buf) != 1) paramOk = false;  // horizon (rw)
+        if (model.SetModelParam(0, 60.0)) paramOk = false;         // horizon writable -> accepted
+        if (!model.SetModelParam(0, 0.0)) paramOk = false;         // horizon < 1 -> rejected
+        if (!model.SetModelParam(0, 9999.0)) paramOk = false;      // horizon > MAX_HORIZON -> rejected
+        model.SetModelParam(0, 40.0);                              // restore the default horizon
 
         if (model.GetObserverManifest(buf, sizeof buf) || rowsOf(buf) != 5) paramOk = false;
         if (model.GetSensorManifest(buf, sizeof buf)   || rowsOf(buf) != 9) paramOk = false;

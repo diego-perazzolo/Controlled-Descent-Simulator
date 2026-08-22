@@ -347,6 +347,11 @@
 <header>
     <h1>CDS</h1>
     <div id="simTime">0.000 <span>s</span></div>
+    <div id="rateBox" title="Simulation speed. Only in pure simulation (no plant attached); a plant forces real-time 1x.">
+        <span class="lbl">rate</span>
+        <input type="range" id="sldRate" min="0.25" max="8" step="0.05" value="1" disabled>
+        <span class="val" id="rateVal">1.0×</span>
+    </div>
     <div id="modelBox">
         <label for="modelSelect">model</label>
         <select id="modelSelect">

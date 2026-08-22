@@ -60,6 +60,7 @@ using Clock = std::chrono::steady_clock;
 
 static Clock::time_point _lastTime;
 static int _is_sys_init = 0;
+static double _tickAccumulator = 0.0; // pure-sim fixed-step accumulator (sim-seconds owed)
 static std::atomic<bool> _run_rt_thread{true};
 static std::atomic<bool> _run_drain_thread{true};
 
@@ -68,10 +69,12 @@ static const auto profile = cds_profile::registry().module("Main");
 
 extern bool g_core_tick(core_coord_t dt_seconds);                  // global function from core.cpp
 extern bool g_core_getTickPeriod(core_coord_t &tickPeriod_second); // global function from core.cpp
+extern bool g_core_getTickRate(core_coord_t &rate);                // global function from core.cpp
+extern bool g_core_isPlantAttached(void);                          // global function from core.cpp
 extern bool g_core_attachPlant(std::unique_ptr<CDS::BasePlant> plant); // global function from core.cpp
 
-/* Build the plant (default: loopback). Returns nullptr on unknown kind or on a
-   parameter error. */
+/* Build the plant of the requested kind ("loopback" / "sitl"). Returns nullptr
+   on unknown kind or on a parameter error. */
 static std::unique_ptr<CDS::BasePlant> _makePlant(const char *kind)
 {
     if (std::strcmp(kind, "loopback") == 0)
@@ -117,6 +120,7 @@ static void _tick_generator(void)
         /* No model yet, or tick period not configured: idle without spinning,
            and re-anchor the time base on the next valid pass */
         _is_sys_init = 0;
+        _tickAccumulator = 0.0;
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
         return;
     }
@@ -126,6 +130,7 @@ static void _tick_generator(void)
     {
         _is_sys_init = 1;
         _lastTime = Clock::now();
+        _tickAccumulator = 0.0;
     }
 
     /* Elapsed measured as floating-point seconds: an integer duration_cast
@@ -159,17 +164,42 @@ static void _tick_generator(void)
     elapsed_seconds = FpSeconds(t1 - _lastTime).count();
     _lastTime = t1;
 
-    /* A stall (e.g. a model re-init holding the core lock, scheduler hiccup)
-       must not feed a huge dt into the integrator */
-    core_coord_t dt_seconds = static_cast<core_coord_t>(elapsed_seconds);
-    const core_coord_t dtMax_seconds = 3 * tickPeriodSeconds;
-    if (dt_seconds > dtMax_seconds)
+    /* dt policy. With a plant attached the exchange is real-time: one tick fed
+       the measured wall-clock elapsed (a stall — model re-init holding the core
+       lock, scheduler hiccup — is clamped so it can't feed a huge dt). With NO
+       plant it is a pure simulation: fixed-step sub-stepping, rate-scaled — the
+       step stays at the nominal period (smooth, deterministic) while the rate
+       multiplier sets how much sim-time to cover per wall-second (1.0 = real-
+       time, 2.0 = 2x). A per-wake cap avoids the "spiral of death" under load. */
+    if (g_core_isPlantAttached())
     {
-        dt_seconds = dtMax_seconds;
+        core_coord_t dt_seconds = static_cast<core_coord_t>(elapsed_seconds);
+        const core_coord_t dtMax_seconds = 3 * tickPeriodSeconds;
+        if (dt_seconds > dtMax_seconds) dt_seconds = dtMax_seconds;
+        g_core_tick(dt_seconds);
     }
+    else
+    {
+        core_coord_t rate = 1.0;
+        g_core_getTickRate(rate);
+        if (rate <= 0.0) rate = 1.0;
 
-    /* Actually tick the system */
-    g_core_tick(dt_seconds);
+        _tickAccumulator += elapsed_seconds * rate;
+        constexpr double MAX_BACKLOG_SECONDS = 0.25;      // clamp so a stall cannot burst
+        if (_tickAccumulator > MAX_BACKLOG_SECONDS) _tickAccumulator = MAX_BACKLOG_SECONDS;
+
+        constexpr double STEP_BUDGET_SECONDS = 0.008;     // wall time to spend sub-stepping per wake
+        constexpr int    MAX_STEPS = 2000;                // hard fallback cap
+        const auto subStart = Clock::now();
+        int steps = 0;
+        while (_tickAccumulator >= tickPeriodSeconds && steps < MAX_STEPS)
+        {
+            g_core_tick(tickPeriodSeconds);
+            _tickAccumulator -= tickPeriodSeconds;
+            ++steps;
+            if (FpSeconds(Clock::now() - subStart).count() >= STEP_BUDGET_SECONDS) break;
+        }
+    }
     CDS_PROFILE(profile, "Ticking");
 
     /* Publish the profiler aggregates for readers (frontend / file dump):
@@ -298,8 +328,10 @@ int main(int argc, char **argv)
         port = (uint16_t)atoi(argv[1]);
     }
 
-    /* optional second arg selects the plant: "loopback" (default) or "sitl" */
-    const char *plantKind = (argc > 2) ? argv[2] : "loopback";
+    /* optional second arg selects the plant: "loopback" or "sitl". With NO
+       second arg no plant is attached — the server runs a pure simulation
+       (deterministic fixed-step tick; see _tick_generator). */
+    const char *plantKind = (argc > 2) ? argv[2] : nullptr;
 
     /* Logger sinks: console always, the recent-lines UI buffer, and the file
        sink. The file sink is toggled from the frontend; its path comes from
@@ -355,13 +387,22 @@ int main(int argc, char **argv)
 
     WsServer server(port, server_dispatch);
 
-    auto plant = _makePlant(plantKind);
-
-    if (!plant || g_core_attachPlant(std::move(plant)))
+    /* Attach a plant only if one was requested on the command line; with none,
+       run plant-less (a pure, deterministic simulation). */
+    if (plantKind != nullptr)
     {
-        // Unknown/misconfigured plant, or attach failed
-        CDS_LOG_ERROR(logger, "Cannot create plant {}", plantKind);
-        return shutdown(1);
+        auto plant = _makePlant(plantKind);
+        if (!plant || g_core_attachPlant(std::move(plant)))
+        {
+            // Unknown/misconfigured plant, or attach failed
+            CDS_LOG_ERROR(logger, "Cannot create plant {}", plantKind);
+            return shutdown(1);
+        }
+        CDS_LOG_INFO(logger, "Plant attached: {}", plantKind);
+    }
+    else
+    {
+        CDS_LOG_INFO(logger, "No plant requested: running plant-less (pure simulation)");
     }
 
     if (server.Run())

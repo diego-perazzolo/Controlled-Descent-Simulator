@@ -213,6 +213,7 @@ COMM = [
            doc="struct of the argument of setSystemParams",
            fields=[
                F("timestep_seconds"),
+               F("rate", doc="sim-speed multiplier (plant-less pure sim); 1.0 = real-time"),
                F("user_forces", type="ext_userForce"),
            ]),
 
@@ -253,7 +254,7 @@ COMM = [
     Struct("ext_moduleList", file="comm",
         doc="struct listing registered modules, one 'index\\tname\\tvalue' record\n"
             "per newline; `value` is the log level (getLogModules) or the enabled\n"
-            "flag 0/1 (getProfileModules). Fixed char buffer: text on the POD wire",
+            "flag 0/1 (getProfilerModules). Fixed char buffer: text on the POD wire",
         fields=[
             F("list", type="char", count=1200),
             F("count", pre="number of modules listed in `list`"),

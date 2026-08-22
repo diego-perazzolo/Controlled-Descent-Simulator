@@ -55,6 +55,7 @@ typedef struct
 typedef struct
 {
     ext_coord_t timestep_seconds;
+    ext_coord_t rate; // sim-speed multiplier (plant-less pure sim); 1.0 = real-time
     ext_userForce user_forces;
 } ext_systemParams;
 
@@ -97,7 +98,7 @@ typedef struct
 
 /* struct listing registered modules, one 'index\tname\tvalue' record
 per newline; `value` is the log level (getLogModules) or the enabled
-flag 0/1 (getProfileModules). Fixed char buffer: text on the POD wire */
+flag 0/1 (getProfilerModules). Fixed char buffer: text on the POD wire */
 typedef struct
 {
     char list[1200];

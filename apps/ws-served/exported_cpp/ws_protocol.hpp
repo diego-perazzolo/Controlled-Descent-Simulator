@@ -50,7 +50,7 @@ constexpr uint16_t WS_DEFAULT_PORT = 9002;
    carry different bytes, and both sides refuse to talk: a stale
    simulator.wasm against a newer cds_server fails loudly instead
    of corrupting the parsing. */
-constexpr uint8_t WS_PROTOCOL_VERSION = 0xAD;
+constexpr uint8_t WS_PROTOCOL_VERSION = 0x2F;
 
 /* Message types: request and matching response carry the same type id */
 enum MsgType : uint8_t
@@ -398,7 +398,7 @@ static_assert(sizeof(reqTrajGetPoint_t)           ==  6, "wire layout drift"); /
 static_assert(sizeof(reqTrajAppendPoly4_t)        == 86, "wire layout drift"); // 2 + 21f
 static_assert(sizeof(reqTrajAppendPoint_t)        == 22, "wire layout drift"); // 2 + 5f
 static_assert(sizeof(reqTrajRemoveLast_t)         ==  2, "wire layout drift");
-static_assert(sizeof(reqSetSystemParams_t)        == 18, "wire layout drift"); // 2 + 4f
+static_assert(sizeof(reqSetSystemParams_t)        == 22, "wire layout drift"); // 2 + 5f
 static_assert(sizeof(reqGetSnapshot_t)            ==  2, "wire layout drift");
 static_assert(sizeof(reqRun_t)                    ==  2, "wire layout drift");
 static_assert(sizeof(reqStop_t)                   ==  2, "wire layout drift");

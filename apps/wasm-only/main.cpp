@@ -46,9 +46,12 @@ static const auto profile = cds_profile::registry().module("Main");
 
 static Clock::time_point _lastTime;
 static int _is_sys_init = 0;
+static double _tickAccumulator = 0.0; // pure-sim fixed-step accumulator (sim-seconds owed)
 
 extern bool g_core_tick(core_coord_t dt_seconds); // global function from core.cpp
 extern bool g_core_getTickPeriod(core_coord_t& tickPeriod_second); // global function from core.cpp
+extern bool g_core_getTickRate(core_coord_t& rate); // global function from core.cpp
+extern bool g_core_isPlantAttached(void); // global function from core.cpp
 
 /* tick the system at rate 1/tick_period_ms, unless ticking system takes too much (> 1/tick_period_ms) */
 static void _tick_generator(void)
@@ -59,6 +62,7 @@ static void _tick_generator(void)
         /* No model yet, or tick period not configured: re-anchor the time
            base on the next valid pass */
         _is_sys_init = 0;
+        _tickAccumulator = 0.0;
         return;
     }
 
@@ -67,6 +71,7 @@ static void _tick_generator(void)
     {
         _is_sys_init = 1;
         _lastTime = Clock::now();
+        _tickAccumulator = 0.0;
     }
 
     /* Elapsed measured as floating-point seconds: an integer duration_cast
@@ -77,28 +82,64 @@ static void _tick_generator(void)
     auto t1 = Clock::now();
     double elapsed_seconds = FpSeconds(t1 - _lastTime).count();
 
-    if (elapsed_seconds >= tickPeriodSeconds)
+    if (g_core_isPlantAttached())
     {
-        _lastTime = t1;
-
-        /* A stall (e.g. the browser tab left in background) must not feed a huge dt
-           into the integrator */
-        core_coord_t dt_seconds = static_cast<core_coord_t>(elapsed_seconds);
-        const core_coord_t dtMax_seconds = 3 * tickPeriodSeconds;
-        if (dt_seconds > dtMax_seconds)
+        /* Real-time: the plant paces wall time. One tick per elapsed period, fed
+           the measured wall-clock elapsed (a stall — e.g. the browser tab
+           backgrounded — is clamped so it can't feed a huge dt). */
+        if (elapsed_seconds >= tickPeriodSeconds)
         {
-            dt_seconds = dtMax_seconds;
+            _lastTime = t1;
+            core_coord_t dt_seconds = static_cast<core_coord_t>(elapsed_seconds);
+            const core_coord_t dtMax_seconds = 3 * tickPeriodSeconds;
+            if (dt_seconds > dtMax_seconds) dt_seconds = dtMax_seconds;
+
+            CDS_PROFILE(profile, "Ticking");
+            g_core_tick(dt_seconds);
+            /* Single-threaded build: publish the profiler aggregates (writer side)
+               and pump them into the UI cache (reader side) on this same thread */
+            cds_profile::registry().publish();
+            cds_profile::registry().pump();
         }
+    }
+    else
+    {
+        /* Pure simulation: fixed-step sub-stepping, rate-scaled. dt stays at the
+           nominal period (smooth, deterministic); the rate multiplier sets how
+           much sim-time to cover per wall-second (1.0 = real-time, 2.0 = 2x).
+           Two guards keep it responsive with an expensive model (e.g. the MPC)
+           on this single render thread: the backlog is clamped so a stall cannot
+           burst, and the sub-stepping is bounded by a wall-time budget (but always
+           advances at least one step) — a model too slow for the requested rate
+           simply runs below it instead of freezing the frame. */
+        _lastTime = t1;
+        core_coord_t rate = 1.0;
+        g_core_getTickRate(rate);
+        if (rate <= 0.0) rate = 1.0;
 
-        CDS_PROFILE(profile, "Ticking");
-        /* Actually tick the system */
-        g_core_tick(dt_seconds);
+        _tickAccumulator += elapsed_seconds * rate;
+        constexpr double MAX_BACKLOG_SECONDS = 0.25;
+        if (_tickAccumulator > MAX_BACKLOG_SECONDS) _tickAccumulator = MAX_BACKLOG_SECONDS;
 
-        /* Single-threaded build: publish the profiler aggregates (writer side)
-           and pump them into the UI cache (reader side) right after the tick,
-           on this same thread */
-        cds_profile::registry().publish();
-        cds_profile::registry().pump();
+        constexpr double STEP_BUDGET_SECONDS = 0.008; // wall time to spend sub-stepping per frame
+        constexpr int    MAX_STEPS = 2000;            // hard fallback cap
+        const auto subStart = Clock::now();
+        int steps = 0;
+        {
+            CDS_PROFILE(profile, "Ticking");
+            while (_tickAccumulator >= tickPeriodSeconds && steps < MAX_STEPS)
+            {
+                g_core_tick(tickPeriodSeconds);
+                _tickAccumulator -= tickPeriodSeconds;
+                ++steps;
+                if (FpSeconds(Clock::now() - subStart).count() >= STEP_BUDGET_SECONDS) break;
+            }
+        }
+        if (steps > 0)
+        {
+            cds_profile::registry().publish();
+            cds_profile::registry().pump();
+        }
     }
 
     /* Drain the log queue at a fixed point outside the tick's critical work.

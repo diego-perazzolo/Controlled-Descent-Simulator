@@ -78,6 +78,27 @@ bool g_core_getTickPeriod(core_coord_t &tickPeriod_second)
     return ret;
 }
 
+/* Get the simulation speed multiplier (plant-less pure sim; 1.0 = real-time).
+   For the tick generator to scale how much sim-time it advances per wall-second.
+   Returns true on error */
+bool g_core_getTickRate(core_coord_t &rate)
+{
+    SystemManager::systemManagerParams_t params;
+    bool ret = _ctx.SM.GetParameters(params);
+    rate = params.rate;
+
+    return ret;
+}
+
+/* True while a plant is attached. Non-locking (a plain pointer read), for the
+   tick generator to pick its dt policy: wall-clock (real-time, paced by the
+   plant) when attached, fixed nominal step (deterministic pure simulation) when
+   not. */
+bool g_core_isPlantAttached(void)
+{
+    return _ctx.SM.IsPlantOk();
+}
+
 /* Attach new plant to the System Manager */
 bool g_core_attachPlant(std::unique_ptr<BasePlant> plant)
 {
@@ -198,7 +219,7 @@ bool core_systemSetParams(const core_systemParams_t &par)
 {
     SystemManager::userForces_t uF = {par.user_fX, par.user_fY, par.user_fZ};
 
-    bool ret = _ctx.SM.SetParameters({.timestep_seconds = par.timestep_seconds});
+    bool ret = _ctx.SM.SetParameters({.timestep_seconds = par.timestep_seconds, .rate = par.rate});
     ret |= _ctx.SM.SetUserForces(uF);
 
     return ret;

@@ -232,8 +232,8 @@ The full annotated tree is in [docs/build.md](docs/build.md#repository-structure
 The in-browser (WASM-only) app, no server required:
 
 ```bash
-emcmake cmake -S apps/wasm-only -B build-wasm-only -DCMAKE_BUILD_TYPE=Release
-cmake --build build-wasm-only
+emcmake cmake -S apps/wasm-only -B build/wasm-only -DCMAKE_BUILD_TYPE=Release
+cmake --build build/wasm-only
 python3 tools/serve.py 8080
 ```
 

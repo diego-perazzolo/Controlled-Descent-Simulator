@@ -138,6 +138,7 @@ EMSCRIPTEN_BINDINGS(simulator) {
 
     value_object<ext_systemParams>("ext_systemParams")
         .field("timestep_seconds", &ext_systemParams::timestep_seconds)
+        .field("rate",             &ext_systemParams::rate)
         .field("user_forces",      &ext_systemParams::user_forces);
 
     value_object<ext_snapshotData>("ext_snapshotData")

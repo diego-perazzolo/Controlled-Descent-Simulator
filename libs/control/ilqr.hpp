@@ -31,7 +31,10 @@
 //               post-step projection (e.g. quaternion renorm), a per-stage cost
 //               returning its Gauss-Newton gradient/Hessian, a terminal cost,
 //               and per-input actuator bounds. Fixed compile-time dimensions
-//               (NX,NU) and horizon N; no heap, dense fixed-size linear algebra,
+//               (NX,NU) and a horizon *capacity* CAP that sizes the buffers; the
+//               active horizon N is a run-time choice (1 <= N <= CAP), so the
+//               prediction length is tunable without recompiling. No heap, dense
+//               fixed-size linear algebra,
 //               Cholesky up to NU x NU. Discrete-time Jacobians A = dF/dx,
 //               B = dF/du are built at run time by RK4 sensitivity propagation,
 //               reusing libs/integrate/rk4.hpp for the nominal rollout. The
@@ -59,7 +62,8 @@ namespace CDS { namespace control {
 // caller supplies the dynamics, its Jacobians, an (empty) projection, the
 // per-stage and terminal costs, and owns the warm-start sequence:
 //
-//   constexpr std::size_t NX = 2, NU = 1, N = 20;
+//   constexpr std::size_t NX = 2, NU = 1, CAP = 64;   // buffer capacity
+//   const std::size_t N = 20;                          // active horizon (<= CAP)
 //   using State = std::array<double, NX>;
 //   using Input = std::array<double, NU>;
 //
@@ -85,7 +89,7 @@ namespace CDS { namespace control {
 //       return c;
 //   };
 //
-//   std::array<Input, N> warm{};                        // warm start, owned by the caller
+//   std::array<Input, CAP> warm{};                      // warm start, owned by the caller
 //   State x{{ 5.0, 0.0 }};                              // start 5 m off, at rest
 //   // Actuator saturation -- the defining feature of this solver. The box is a
 //   // hard constraint honoured *inside* the optimisation (not a post-clip): here
@@ -93,8 +97,8 @@ namespace CDS { namespace control {
 //   const Input lo{{-0.5}}, hi{{0.5}};
 //   for (int step = 0; step < 120; ++step) {            // receding horizon
 //       Input u0;
-//       CDS::control::solve<NX,NU,N>(x, f, jac, project, stage, terminal,
-//                                    lo, hi, /*dt=*/0.05, /*maxIters=*/10, warm, u0);
+//       CDS::control::solve<NX,NU,CAP>(x, f, jac, project, stage, terminal,
+//                                      lo, hi, /*dt=*/0.05, /*maxIters=*/10, N, warm, u0);
 //       // u0 is guaranteed within [lo, hi]; apply it and advance the plant.
 //       x = CDS::integrate::rk4_step<NX>(x, 0.05, [&](const State& s){ return f(s, u0); });
 //   }
@@ -282,17 +286,19 @@ void sensitivity(Dyn&& f, Jac&& jac, const std::array<double, NX>& x, const std:
 //    project(state&)        -> in-place post-step projection (e.g. quaternion
 //                              renorm); pass a no-op if none is needed.
 //    stageCost(x,u,k)       -> StageCost<NX,NU> at stage k in [0, N).
-//    termCost(x)            -> TerminalCost<NX> at the horizon end.
-//  Bounds lo,hi are absolute per-input actuator limits.
+//    termCost(x)            -> TerminalCost<NX> at the horizon end (index N).
+//  Bounds lo,hi are absolute per-input actuator limits. CAP sizes the fixed
+//  buffers; N is the active horizon (1 <= N <= CAP) — the warmStart array is
+//  CAP-sized but only [0, N) is used. An out-of-range N is a no-op.
 // -----------------------------------------------------------------------------
-template <std::size_t NX, std::size_t NU, std::size_t N,
+template <std::size_t NX, std::size_t NU, std::size_t CAP,
           class Dyn, class Jac, class Project, class StageCostFn, class TermCostFn>
 void solve(const std::array<double, NX>& x0,
            Dyn&& f, Jac&& jac, Project&& project,
            StageCostFn&& stageCost, TermCostFn&& termCost,
            const std::array<double, NU>& lo, const std::array<double, NU>& hi,
-           double dt, int maxIters,
-           std::array<std::array<double, NU>, N>& warmStart,
+           double dt, int maxIters, std::size_t N,
+           std::array<std::array<double, NU>, CAP>& warmStart,
            std::array<double, NU>& u0)
 {
     using State = std::array<double, NX>;
@@ -301,6 +307,10 @@ void solve(const std::array<double, NX>& x0,
     using Mxu   = std::array<Input, NX>;   // NX rows x NU cols
     using Mux   = std::array<State, NU>;   // NU rows x NX cols
 
+    // The buffers are fixed at capacity CAP; the active horizon N is a runtime
+    // choice that must fit (1 <= N <= CAP). An out-of-range N is a no-op.
+    if (N == 0 || N > CAP) return;
+
     // one discrete step: RK4 + caller projection
     auto Fd = [&](const State& x, const Input& u)
     {
@@ -308,7 +318,7 @@ void solve(const std::array<double, NX>& x0,
         project(xn);
         return xn;
     };
-    auto trajCost = [&](const std::array<State, N + 1>& xs, const std::array<Input, N>& us)
+    auto trajCost = [&](const std::array<State, CAP + 1>& xs, const std::array<Input, CAP>& us)
     {
         double J = 0.0;
         for (std::size_t k = 0; k < N; ++k) J += stageCost(xs[k], us[k], k).val;
@@ -316,12 +326,12 @@ void solve(const std::array<double, NX>& x0,
         return J;
     };
 
-    std::array<Input, N>    us = warmStart;
-    std::array<State, N + 1> xs; xs[0] = x0;
+    std::array<Input, CAP>    us = warmStart;
+    std::array<State, CAP + 1> xs; xs[0] = x0;
     for (std::size_t k = 0; k < N; ++k) xs[k + 1] = Fd(xs[k], us[k]);
     double J = trajCost(xs, us);
 
-    std::array<Input, N> kff; std::array<Mux, N> K; double mu = 1e-3;
+    std::array<Input, CAP> kff; std::array<Mux, CAP> K; double mu = 1e-3;
 
     for (int iter = 0; iter < maxIters; ++iter)
     {
@@ -374,7 +384,7 @@ void solve(const std::array<double, NX>& x0,
         bool accepted = false;
         for (double a : alphas)
         {
-            std::array<State, N + 1> xn; std::array<Input, N> un; xn[0] = xs[0];
+            std::array<State, CAP + 1> xn; std::array<Input, CAP> un; xn[0] = xs[0];
             for (std::size_t k = 0; k < N; ++k)
             {
                 Input du;

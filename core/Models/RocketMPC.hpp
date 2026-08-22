@@ -39,7 +39,7 @@
 //               allocation), with a per-input actuator box. Controller knobs
 //               (cost weights, control step, iterations) are runtime-tunable
 //               through the controller-parameter interface; the horizon N is
-//               compile-time (fixed buffers) and exposed read-only.
+//               runtime-tunable (fixed buffers sized to MAX_HORIZON).
 //               Derived in modeling/notebooks/model/dynamics_rocket_MPC01.ipynb.
 // Author      : Diego Perazzolo
 // Created     : 2026
@@ -85,7 +85,7 @@ namespace CDS
         //   [r(3), euler(3: alpha,beta,psi), v(3), euler_rate(3)]
         static constexpr std::size_t STATE_DIM = 12;
         static constexpr std::size_t INPUT_DIM = 4;    // [F1, T1, T2, T3] wrench
-        static constexpr std::size_t HORIZON   = 40;   // MPC prediction horizon (compile-time)
+        static constexpr std::size_t MAX_HORIZON = 256; // fixed buffer capacity (max prediction horizon)
 
         using StateVec    = std::array<double, STATE_DIM>;
         using InputVec    = std::array<double, INPUT_DIM>;
@@ -120,11 +120,13 @@ namespace CDS
         // cost is a per-input weight (the rocket's actuators are heterogeneous --
         // thrust ~1e2 N vs torques ~1e0 N.m -- so a single scalar would let the
         // thrust dominate). w_term scales the terminal state cost; dt_mpc is the
-        // control step; max_iters caps the iLQR iterations. HORIZON is compile-time.
+        // control step; max_iters caps the iLQR iterations; m_horizon is the
+        // active prediction horizon N <= MAX_HORIZON (runtime-tunable).
         // Defaulted in the constructor to the values tuned in the notebook.
         double             m_wp, m_wq, m_wv, m_ww, m_wterm;
         double             m_rF1, m_rT1, m_rT2, m_rT3;
         double             m_dtMpc;
+        std::size_t        m_horizon;   // active horizon N (1..MAX_HORIZON)
         int                m_maxIters;
         param::ParamTable<> m_modelParams;       // structural knobs (horizon)
         param::ParamTable<> m_controllerParams;  // cost weights + solver
@@ -133,7 +135,7 @@ namespace CDS
 
         // Warm-start command sequence: the previous solve, kept and shifted so the
         // next tick starts a few iterations away from the answer.
-        std::array<InputVec, HORIZON> m_warmStart;
+        std::array<InputVec, MAX_HORIZON> m_warmStart;
         bool               m_seeded;
 
         // The MPC re-solves only at the control cadence (every DT_MPC of model

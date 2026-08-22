@@ -135,12 +135,14 @@ than the QuadRotor because its heavy mass makes the disturbance weakly observed.
 
 ## Configuration
 
-Both modules ride the existing **controller-parameter manifest** — no new wire
-protocol. The observer and sensor knobs appear as extra manifest groups
-(`Observer`, `Sensor x/y/z`) alongside the controller tuning, and are set through
-the same `SetControllerParam` command (see [api.md](api.md)). In the frontend they
-render in the **Params** view under an *Estimator & sensors* section: the enable
-flags as checkboxes, the rest as numeric fields.
+Each module exposes its knobs through its own **per-domain parameter manifest** —
+the observer's covariances + enable via the `observer` domain (groups `Observer`),
+the sensor's per-axis bias / noise / enable via the `sensor` domain (groups
+`Sensor x/y/z`) — read with `<domain>GetManifest` and set with `<domain>SetParam`
+(see [api.md](api.md)). The frontend concatenates the four domain manifests (model
+/ controller / observer / sensor) into the **Params** view, rendering the observer
+and sensor rows under an *Estimator & sensors* section: the enable flags as
+checkboxes, the rest as numeric fields.
 
 ---
 

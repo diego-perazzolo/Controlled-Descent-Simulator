@@ -31,7 +31,9 @@ bool ext_initQuadRotor_FFLQR01(ext_initQuadRotorParams params); /* JS: ext_quadR
    QuadRotor params/limits (rotor inertia is unused), returns true on error */
 bool ext_initQuadRotor_MPC01(ext_initQuadRotorParams params);   /* JS: ext_quadRotorMpcInit */
 
-/* Set system parameters (tick period, user forces), returns true on error */
+/* Set system parameters (tick period, sim-speed rate, user forces), returns
+   true on error. The tick period is rejected while a plant mission runs, and the
+   rate whenever a plant is attached (a plant paces real-time). */
 bool ext_setSystemParams(ext_systemParams params);
 
 /* Get a snapshot of the simulation: elapsed time, state, tracking errors */
@@ -166,7 +168,7 @@ ext_userForce                  { fX, fY, fZ }
 ext_fullState                  { x, y, z, x_dot, y_dot, z_dot,
                                 roll, pitch, yaw, roll_dot, pitch_dot, yaw_dot }
 ext_setpointError              { xErr, yErr, zErr, yawErr }
-ext_systemParams               { timestep_seconds, user_forces (ext_userForce) }
+ext_systemParams               { timestep_seconds, rate, user_forces (ext_userForce) }
 ext_snapshotData               { time_seconds, state (ext_fullState),
                                 err (ext_setpointError), isError (bool) }
 ext_plantSnapshotData          { time_seconds, sequence, state (ext_fullState),
@@ -228,7 +230,7 @@ import createSimulator from '../build/simulator.js';
 
 const sim = await createSimulator();
 sim.ext_rocketInit({ rocketPar: {...}, rocketActuatorLimits: {...} });
-sim.ext_setSystemParams({ timestep_seconds: 0.01, user_forces: { fX: 0, fY: 0, fZ: 0 } });
+sim.ext_setSystemParams({ timestep_seconds: 0.01, rate: 1.0, user_forces: { fX: 0, fY: 0, fZ: 0 } });
 
 // with a SITL plant attached: auto-stage before the mission, then poll
 // readiness from the plant snapshot

@@ -119,6 +119,7 @@ let lastFpsTs  = performance.now();
 let fpsCounter = 0;
 let fpsDisplay = 0;
 let timestep_s = DEFAULT_TIMESTEP_S;
+let simRate = 1.0;   // simulation speed multiplier (pure sim only; 1.0 = real-time)
 let currentModel = MODEL_ROCKET;   // 'rocket' | 'rocket_mpc' | 'quadrotor' | 'quadrotor_mpc'
 let plantAvailable = false;        // plant attached AND publishing fresh samples
 
@@ -181,6 +182,9 @@ const ui = {
     q_kThrust: $('q_kThrust'), q_kTorque: $('q_kTorque'), q_dist: $('q_dist'), q_motI: $('q_motI'),
     q_motMax: $('q_motMax'), q_motMin: $('q_motMin'),
     p_dt:    $('p_dt'),
+    rateBox: $('rateBox'),
+    sldRate: $('sldRate'),
+    rateVal: $('rateVal'),
 };
 
 // =============================================================================
@@ -194,6 +198,7 @@ const userForce = { fX: 0, fY: 0, fZ: 0 };
 function sendSystemParams() {
     return sim.ext_setSystemParams({
         timestep_seconds: timestep_s,
+        rate: simRate,
         user_forces: { fX: userForce.fX, fY: userForce.fY, fZ: userForce.fZ },
     });
 }
@@ -327,6 +332,32 @@ function readTimestep() {
     return v;
 }
 
+// The live tick-period slider is usable only when its "edit" box is checked, a
+// model exists, and no plant is attached — a plant paces the tick, so the period
+// is locked (the core enforces this too, not just this control). Kept in sync
+// with the current period.
+// The live simulation-speed (rate) slider is usable once a model exists and no
+// plant is attached — a plant forces real-time (the core enforces this too). The
+// timestep/granularity itself stays at the model's value (params-form p_dt);
+// only the playback speed changes here.
+function refreshRateControl() {
+    // A plant paces real-time: the speed control is meaningless, so remove it
+    // from the bar entirely (the core enforces the lock regardless).
+    ui.rateBox.style.display = plantAvailable ? 'none' : '';
+    ui.sldRate.disabled      = !sim;
+    ui.sldRate.value         = String(simRate);
+    ui.rateVal.textContent   = `${simRate.toFixed(2)}×`;
+}
+
+ui.sldRate.addEventListener('input', () => {
+    const v = parseFloat(ui.sldRate.value);
+    if (!isFinite(v) || v <= 0) return;
+    simRate = v;
+    ui.rateVal.textContent = `${simRate.toFixed(2)}×`;
+    if (sim && sendSystemParams()) setError('Rate change rejected (a plant is attached).');
+    else                          setError('');
+});
+
 const fmt  = (v, d = 4) => v.toFixed(d);
 const fmtI = v => Math.round(v).toString();
 
@@ -347,6 +378,7 @@ function initBackend(params) {
     else if (currentModel === MODEL_ROCKET_MPC)    err = sim.ext_rocketMpcInit(params);
     else                                           err = sim.ext_rocketInit(params);
     if (err) return err;
+    refreshRateControl();    // enable the live sim-speed control for the new model
     return sendSystemParams();
 }
 
@@ -1466,6 +1498,7 @@ function setPlantAvailable(avail) {
         refreshStartEnabled();
     }
     applySourceToggles();
+    refreshRateControl();   // lock/unlock the live sim-speed slider with the plant
 }
 
 ui.chkViewTraj.addEventListener('change',  applySourceToggles);
@@ -1517,7 +1550,7 @@ const diagnostics = (() => {
     let lastStatsPoll = 0;
 
     // Per-scope time series for the profiler sparklines, accumulated client-side
-    // from successive getProfileTable snapshots (no extra ext traffic). Keyed by
+    // from successive getProfilerTable snapshots (no extra ext traffic). Keyed by
     // "module\tscope"; ~1 min of history at the stats cadence.
     const TREND_LEN = 120;
     const trends = new Map();

@@ -30,16 +30,20 @@ If necessary configure the Emscripten environment with:
 source pathToEmSDK/emsdk_env.sh
 ```
 
-> Each browser app has its **own build directory** (separate CMake caches, no
-> conflicts), but the compiled module always lands in `build/` — the delivery
-> point imported by the frontend. Whichever app was built last owns `build/`:
-> switching app is just one `cmake --build`, no reconfigure, no deleting.
+> Every CMake build directory lives under `build/` (e.g. `build/wasm-only`,
+> `build/ws-client`, `build/server`, `build/mpc-model-test`) —
+> one folder, all gitignored. Each browser app keeps its **own** build dir
+> (separate CMake caches, no conflicts), but the compiled module always lands in
+> `build/` top-level (`build/simulator.js`) — the delivery point imported by the
+> frontend, coexisting with the build dirs. Whichever browser app was built last
+> owns that delivery: switching app is just one `cmake --build`, no reconfigure,
+> no deleting.
 
 ## wasm-only (full browser)
 
 ```bash
-emcmake cmake -S apps/wasm-only -B build-wasm-only -DCMAKE_BUILD_TYPE=Debug   # or Release
-cmake --build build-wasm-only
+emcmake cmake -S apps/wasm-only -B build/wasm-only -DCMAKE_BUILD_TYPE=Debug   # or Release
+cmake --build build/wasm-only
 ```
 
 Then serve the repo root and open the frontend:
@@ -56,24 +60,27 @@ python3 tools/serve.py 8080
 built is the one the frontend runs):
 
 ```bash
-emcmake cmake -S apps/ws-served/client -B build-ws-client -DCMAKE_BUILD_TYPE=Debug
-cmake --build build-ws-client
+emcmake cmake -S apps/ws-served/client -B build/ws-client -DCMAKE_BUILD_TYPE=Debug
+cmake --build build/ws-client
 ```
 
 **2. Build and run the native core server** (no emsdk needed — plain CMake):
 
 ```bash
-cmake -S apps/ws-served/server -B build-server -DCMAKE_BUILD_TYPE=Release
-cmake --build build-server
-./build-server/cds_server          # listens on ws://0.0.0.0:9002 (port as argv[1])
+cmake -S apps/ws-served/server -B build/server -DCMAKE_BUILD_TYPE=Release
+cmake --build build/server
+./build/server/cds_server          # listens on ws://0.0.0.0:9002 (port as argv[1])
 ```
 
-The websocket server attaches a plant, selected by an optional second argument —
-`loopback` (default) or `sitl`, whilst the first argument is the communication port:
+The websocket server optionally attaches a plant, selected by a second argument —
+`loopback` or `sitl` — whilst the first argument is the communication port. With
+**no** second argument no plant is attached: the server runs a pure, deterministic
+simulation (fixed-step tick — a plant would make the tick wall-clock real-time):
 
 ```bash
-./build-server/cds_server 9002 loopback   # default: the echo test double
-./build-server/cds_server 9002 sitl       # ArduPilot SITL over MAVLink/UDP
+./build/server/cds_server 9002            # no plant: pure deterministic simulation
+./build/server/cds_server 9002 loopback   # the echo test double
+./build/server/cds_server 9002 sitl       # ArduPilot SITL over MAVLink/UDP
 ```
 
 **3. Serve the frontend with COOP/COEP headers** (required: the proxy uses
@@ -87,7 +94,7 @@ The server URL defaults to `ws://localhost:9002` and can be overridden with
 the `?ws=` query parameter, e.g. `http://localhost:8080/frontend/?ws=ws://192.168.1.10:9002`.
 A quick end-to-end check is available at `http://localhost:8080/apps/ws-served/test/test_ws_e2e.html`.
 
-To go back to the fully in-browser app: `cmake --build build-wasm-only`.
+To go back to the fully in-browser app: `cmake --build build/wasm-only`.
 
 ## Running against ArduPilot SITL
 
@@ -97,7 +104,7 @@ selected — it listens, GCS-style, on `0.0.0.0:14550` and learns the vehicle
 from the first valid datagram:
 
 ```bash
-./build-server/cds_server 9002 sitl
+./build/server/cds_server 9002 sitl
 ```
 
 Point the SITL's MAVLink output at that port. With the ArduPilot dev tools
@@ -145,17 +152,17 @@ Standalone native tests (no browser, no emsdk). From the repo root:
 
 ```bash
 # generic iLQR solver — self-contained (double integrator, no core/quaternions)
-cmake -S libs/control/test -B build-ilqr-test -DCMAKE_BUILD_TYPE=Release && cmake --build build-ilqr-test
-./build-ilqr-test/ilqr_test
+cmake -S libs/control/test -B build/ilqr-test -DCMAKE_BUILD_TYPE=Release && cmake --build build/ilqr-test
+./build/ilqr-test/ilqr_test
 
 # QuadRotor MPC — the model + solver end to end (Poly4 tracking + gust rejection)
-cmake -S core/Models/test -B build-mpc-model-test -DCMAKE_BUILD_TYPE=Release && cmake --build build-mpc-model-test
-./build-mpc-model-test/mpc_model_test
+cmake -S core/Models/test -B build/mpc-model-test -DCMAKE_BUILD_TYPE=Release && cmake --build build/mpc-model-test
+./build/mpc-model-test/mpc_model_test
 
 # solver C++<->Python conformance (ctypes, no numpy): certifies the C++ result is a
 # constrained optimum (box-projected KKT residual ~0) on a synthetic benchmark
-cmake -S libs/control/bind -B build-ilqr-bind -DCMAKE_BUILD_TYPE=Release && cmake --build build-ilqr-bind
-python3 libs/control/bind/ilqr_conformance.py build-ilqr-bind
+cmake -S libs/control/bind -B build/ilqr-bind -DCMAKE_BUILD_TYPE=Release && cmake --build build/ilqr-bind
+python3 libs/control/bind/ilqr_conformance.py build/ilqr-bind
 ```
 
 ## Diagnostics: logging, profiling, recording
@@ -192,7 +199,7 @@ propagate to core, plants and the app):
 
 ```bash
 # example: keep only Warn/Error logs, remove profiler and recorder entirely
-cmake -S apps/ws-served/server -B build-server -DCMAKE_BUILD_TYPE=Release \
+cmake -S apps/ws-served/server -B build/server -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_CXX_FLAGS="-DCDS_LOG_COMPILE_LEVEL=3 -DCDS_PROFILE_ENABLED=0 -DCDS_RECORD_ENABLED=0"
 ```
 
@@ -210,11 +217,11 @@ uploads a report artifact. See [benchmark.md](benchmark.md) for the results and
 discussion.
 
 ```bash
-cmake -S bench -B build-bench -DCMAKE_BUILD_TYPE=Release && cmake --build build-bench
-./build-bench/perf_bench        # diagnostics per-call cost (features in)
-./build-bench/perf_bench_off    # same, features compiled out (~0)
-./build-bench/model_bench       # per-model integration cost
-python3 bench/report.py build-bench > benchmark-report.md   # full report (gitignored)
+cmake -S bench -B build/bench -DCMAKE_BUILD_TYPE=Release && cmake --build build/bench
+./build/bench/perf_bench        # diagnostics per-call cost (features in)
+./build/bench/perf_bench_off    # same, features compiled out (~0)
+./build/bench/model_bench       # per-model integration cost
+python3 bench/report.py build/bench > benchmark-report.md   # full report (gitignored)
 ```
 
 ## GitHub Pages

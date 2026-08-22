@@ -24,49 +24,49 @@ jobs:
 
       - name: Build native core server
         run: |
-          cmake -S apps/ws-served/server -B build-server -DCMAKE_BUILD_TYPE=Release
-          cmake --build build-server
+          cmake -S apps/ws-served/server -B build/server -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/server
 
       - name: Plant machinery tests (native)
         run: |
-          cmake -S plants/test -B build-plants-test -DCMAKE_BUILD_TYPE=Release
-          cmake --build build-plants-test
-          ./build-plants-test/driver
-          ./build-plants-test/sitl_driver
+          cmake -S plants/test -B build/plants-test -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/plants-test
+          ./build/plants-test/driver
+          ./build/plants-test/sitl_driver
 
       - name: Control solver + MPC model tests (native)
         run: |
-          cmake -S libs/control/test -B build-ilqr-test -DCMAKE_BUILD_TYPE=Release
-          cmake --build build-ilqr-test
-          ./build-ilqr-test/ilqr_test
-          ./build-ilqr-test/lqr_test
-          cmake -S core/Models/test -B build-mpc-model-test -DCMAKE_BUILD_TYPE=Release
-          cmake --build build-mpc-model-test
-          ./build-mpc-model-test/mpc_model_test
-          ./build-mpc-model-test/rocket_mpc_model_test
-          ./build-mpc-model-test/lqr_model_test
+          cmake -S libs/control/test -B build/ilqr-test -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/ilqr-test
+          ./build/ilqr-test/ilqr_test
+          ./build/ilqr-test/lqr_test
+          cmake -S core/Models/test -B build/mpc-model-test -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/mpc-model-test
+          ./build/mpc-model-test/mpc_model_test
+          ./build/mpc-model-test/rocket_mpc_model_test
+          ./build/mpc-model-test/lqr_model_test
 
       - name: Logger + profiler + recorder tests (native)
         run: |
-          cmake -S libs/log/test -B build-log-test -DCMAKE_BUILD_TYPE=Release
-          cmake --build build-log-test
-          ./build-log-test/log_test
-          cmake -S libs/profile/test -B build-profile-test -DCMAKE_BUILD_TYPE=Release
-          cmake --build build-profile-test
-          ./build-profile-test/profile_test
-          cmake -S libs/record/test -B build-record-test -DCMAKE_BUILD_TYPE=Release
-          cmake --build build-record-test
-          ./build-record-test/record_test
+          cmake -S libs/log/test -B build/log-test -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/log-test
+          ./build/log-test/log_test
+          cmake -S libs/profile/test -B build/profile-test -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/profile-test
+          ./build/profile-test/profile_test
+          cmake -S libs/record/test -B build/record-test -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/record-test
+          ./build/record-test/record_test
 
       - name: Solver C++/Python conformance certificate
         run: |
-          cmake -S libs/control/bind -B build-ilqr-bind -DCMAKE_BUILD_TYPE=Release
-          cmake --build build-ilqr-bind
-          python3 libs/control/bind/ilqr_conformance.py build-ilqr-bind
-          python3 libs/control/bind/lqr_conformance.py  build-ilqr-bind
+          cmake -S libs/control/bind -B build/ilqr-bind -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/ilqr-bind
+          python3 libs/control/bind/ilqr_conformance.py build/ilqr-bind
+          python3 libs/control/bind/lqr_conformance.py  build/ilqr-bind
 
       - name: Protocol end-to-end test
-        run: python3 apps/ws-served/test/test_protocol.py ./build-server/cds_server
+        run: python3 apps/ws-served/test/test_protocol.py ./build/server/cds_server
 
   build-wasm:
     runs-on: ubuntu-latest
@@ -80,13 +80,13 @@ jobs:
 
       - name: Build wasm-only app
         run: |
-          emcmake cmake -S apps/wasm-only -B build-wasm-only -DCMAKE_BUILD_TYPE=Release
-          cmake --build build-wasm-only
+          emcmake cmake -S apps/wasm-only -B build/wasm-only -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/wasm-only
 
       - name: Build ws-served client (WASM proxy)
         run: |
-          emcmake cmake -S apps/ws-served/client -B build-ws-client -DCMAKE_BUILD_TYPE=Release
-          cmake --build build-ws-client
+          emcmake cmake -S apps/ws-served/client -B build/ws-client -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/ws-client
 
   # Speed benchmarks. NOT a correctness gate (timings vary by runner); this job
   # only produces the benchmark report as a downloadable artifact. The committed
@@ -98,11 +98,11 @@ jobs:
 
       - name: Build benchmarks
         run: |
-          cmake -S bench -B build-bench -DCMAKE_BUILD_TYPE=Release
-          cmake --build build-bench
+          cmake -S bench -B build/bench -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/bench
 
       - name: Run benchmarks and assemble the report
-        run: python3 bench/report.py build-bench > benchmark-report.md
+        run: python3 bench/report.py build/bench > benchmark-report.md
 
       - name: Upload benchmark report
         uses: actions/upload-artifact@v4

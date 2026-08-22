@@ -149,7 +149,7 @@ void ilqr_bench_solve(const double* x0, double umax, int maxIters,
     Input lo, hi; lo.fill(-umax); hi.fill(umax);
     Input u0;
     control::solve<NX, NU, N>(x, benchF, benchJac, [](State&){}, benchStage, benchTerm,
-                              lo, hi, DT, maxIters, warm, u0);
+                              lo, hi, DT, maxIters, N, warm, u0);
 
     for (std::size_t a = 0; a < NU; ++a) u0_out[a] = u0[a];
     for (std::size_t k = 0; k < N; ++k) for (std::size_t a = 0; a < NU; ++a) warm_out[k*NU + a] = warm[k][a];

@@ -69,7 +69,7 @@ namespace CDS
 SystemManager::SystemManager(void) : m_pModel(nullptr),
                                      m_pPlant(nullptr),
                                      m_pTrajectoryManager(nullptr),
-                                     m_params({0}),
+                                     m_params({.timestep_seconds = 0.0, .rate = 1.0}),
                                      m_isRunning(false),
                                      m_userForces({0})
 {
@@ -438,6 +438,28 @@ bool SystemManager::Stop(void)
 bool SystemManager::SetParameters(const systemManagerParams_t &params)
 {
     lockGuard_t lock(m_mutex);
+
+    // The tick period is locked while a plant-in-the-loop mission is RUNNING:
+    // the real-time exchange with the plant is paced by it, so retiming it
+    // mid-run would desync the exchange. Enforced here (not only disabled in the
+    // frontend). The setup set (while stopped) is always allowed so the period
+    // can be configured before a run, and a no-op change (same period, e.g. a
+    // routine user-force refresh carrying the current period) never trips it.
+    if (m_pPlant != nullptr && m_isRunning &&
+        params.timestep_seconds != m_params.timestep_seconds)
+    {
+        CDS_LOG_WARN(logger, "Tick period change rejected: a plant mission is running");
+        return true;
+    }
+
+    // The simulation speed is locked whenever a plant is attached: the plant
+    // paces real-time, so a non-1x rate is meaningless. Enforced here (not only
+    // disabled in the frontend); a no-op (same rate) is always allowed.
+    if (m_pPlant != nullptr && params.rate != m_params.rate)
+    {
+        CDS_LOG_WARN(logger, "Rate change rejected: a plant is attached");
+        return true;
+    }
 
     m_params = params;
 
