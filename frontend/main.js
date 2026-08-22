@@ -1573,7 +1573,7 @@ const diagnostics = (() => {
     // profiler reset + server-side file toggles
     $('btnResetProfile').addEventListener('click', () => {
         if (!sim) return;
-        sim.ext_resetProfile();
+        sim.ext_resetProfiler();
         trends.clear();          // restart the sparkline history too
         refreshProfileStats();
     });
@@ -1679,7 +1679,7 @@ const diagnostics = (() => {
     }
 
     function refreshProfileModules() {
-        const list = rows(sim.ext_getProfileModules().list);
+        const list = rows(sim.ext_getProfilerModules().list);
         profEmpty.style.display = list.length ? 'none' : '';
         profTbody.innerHTML = list.map(([idx, name, enabled]) =>
             `<tr><td>${esc(name)}</td>` +
@@ -1688,7 +1688,7 @@ const diagnostics = (() => {
     }
 
     function refreshProfileStats() {
-        const list = rows(sim.ext_getProfileTable().table);
+        const list = rows(sim.ext_getProfilerTable().table);
         statsEmpty.style.display = list.length ? 'none' : '';
         statsTbody.innerHTML = list.map(([mod, scope, kind, count, mean, std, min, max, p50, p95, p99]) => {
             const key = mod + '\t' + scope;
@@ -1714,7 +1714,7 @@ const diagnostics = (() => {
     });
     profTable.addEventListener('change', (e) => {
         if (!sim || !e.target.classList.contains('en')) return;
-        sim.ext_setProfileEnabled({ module: Number(e.target.dataset.mod), enabled: e.target.checked });
+        sim.ext_setProfilerEnabled({ module: Number(e.target.dataset.mod), enabled: e.target.checked });
     });
 
     return {
@@ -1993,22 +1993,39 @@ ui.trajFileInput.addEventListener('change', (e) => {
 // Controller parameters (data-driven panel + JSON save / load)
 // =============================================================================
 //
-// The active controller describes its tunable and observed parameters through a
-// manifest -- one TSV record per parameter: id, group, label, flags, value. The
-// panel is built entirely from that manifest (no controller-specific UI code);
-// each writable field is committed one at a time via ext_setControllerParam. The
-// JSON file mirrors the trajectory's: a schema+version header, then the writable
-// parameters keyed by (group, label) so a file loads onto the matching controller.
+// The active model describes its tunable and observed parameters through four
+// per-domain manifests -- controller / model / observer / sensor -- each a TSV
+// listing (id, group, label, flags, value). The panel is built entirely from the
+// concatenation of those manifests (no model-specific UI code); each writable
+// field is committed one at a time through the matching domain's setter. The JSON
+// file mirrors the trajectory's: a schema+version header, then the writable
+// parameters keyed by (group, label) so a file loads onto the matching model.
 //
 const CTRL_FILE_SCHEMA  = 'cds-controller';
 const CTRL_FILE_VERSION = 1;
 
-let controllerManifest = [];   // [{ id, group, label, writable, value }]
+// The four parameter domains, in panel order. Each has a manifest getter and a
+// set-by-id setter; the ids are per-domain (each manifest starts at 0), so a row
+// is identified by (domain, id).
+const PARAM_DOMAINS = [
+    { key: 'controller', get: () => sim.ext_controllerGetManifest().text, set: (a) => sim.ext_controllerSetParam(a) },
+    { key: 'model',      get: () => sim.ext_modelGetManifest().text,      set: (a) => sim.ext_modelSetParam(a) },
+    { key: 'observer',   get: () => sim.ext_observerGetManifest().text,   set: (a) => sim.ext_observerSetParam(a) },
+    { key: 'sensor',     get: () => sim.ext_sensorGetManifest().text,     set: (a) => sim.ext_sensorSetParam(a) },
+];
 
-function parseControllerManifest(text) {
+// Commit one parameter to its domain's setter. Returns true on error/reject.
+function setParamByDomain(domain, id, value) {
+    const d = PARAM_DOMAINS.find(x => x.key === domain);
+    return d ? d.set({ id, value }) : true;   // true = error (bool-is-error)
+}
+
+let controllerManifest = [];   // [{ domain, id, group, label, writable, value }]
+
+function parseControllerManifest(text, domain) {
     return text.split('\n').filter(l => l.length).map(l => {
         const [id, group, label, flags, value] = l.split('\t');
-        return { id: Number(id), group, label, writable: flags === 'rw', value: Number(value) };
+        return { domain, id: Number(id), group, label, writable: flags === 'rw', value: Number(value) };
     });
 }
 
@@ -2017,14 +2034,18 @@ function parseControllerManifest(text) {
 function isBooleanParam(p) { return p.writable && /\(0\|1\)/.test(p.label); }
 function paramDisplayLabel(p) { return p.label.replace(/\s*\(0\|1\)\s*/, ''); }
 
-// The estimator/sensor knobs (appended to the same manifest) are demarcated into
-// their own section so they read as a sensor panel, not controller tuning.
+// The observer/sensor domains are demarcated into their own section so they read
+// as a sensor panel, not controller tuning.
 function isEstimatorGroup(g) { return g === 'Observer' || /^Sensor /.test(g); }
 
 function fetchControllerManifest() {
     if (!sim) return [];
-    try { return parseControllerManifest(sim.ext_getControllerManifest().text); }
-    catch { return []; }
+    const out = [];
+    for (const d of PARAM_DOMAINS) {
+        try { for (const row of parseControllerManifest(d.get(), d.key)) out.push(row); }
+        catch { /* a domain a model does not expose returns an empty manifest */ }
+    }
+    return out;
 }
 
 function renderControllerPanel() {
@@ -2064,6 +2085,7 @@ function renderControllerPanel() {
         const lab = document.createElement('label');
         const inp = document.createElement('input');
         inp.dataset.id = String(p.id);
+        inp.dataset.domain = p.domain;
         if (isBooleanParam(p)) {
             lab.textContent = paramDisplayLabel(p);
             inp.type = 'checkbox';
@@ -2099,10 +2121,10 @@ function syncControllerValues() {
     // Refresh values in place (reflect clamping and updated read-only rows)
     // without rebuilding the DOM, so the field the user just edited keeps focus.
     controllerManifest = fetchControllerManifest();
-    const byId = new Map(controllerManifest.map(p => [p.id, p.value]));
+    const byId = new Map(controllerManifest.map(p => [`${p.domain}:${p.id}`, p.value]));
     ui.ctrlParams.querySelectorAll('input[data-id]').forEach(inp => {
         if (document.activeElement === inp) return;
-        const v = byId.get(Number(inp.dataset.id));
+        const v = byId.get(`${inp.dataset.domain}:${Number(inp.dataset.id)}`);
         if (v === undefined) return;
         if (inp.dataset.bool === '1') inp.checked = v >= 0.5;
         else                          inp.value = String(v);
@@ -2111,10 +2133,11 @@ function syncControllerValues() {
 
 function onControllerInputChange(e) {
     const id = Number(e.target.dataset.id);
+    const domain = e.target.dataset.domain;
     const value = Number(e.target.value);
     const label = e.target.previousSibling ? e.target.previousSibling.textContent : `id ${id}`;
     if (!isFiniteNum(value)) { setError(`"${label}" must be a number.`); return; }
-    if (sim.ext_setControllerParam({ id, value })) {
+    if (setParamByDomain(domain, id, value)) {
         // Rejected: an invalid value (e.g. a negative weight) or the controller
         // could not re-synthesise its gain for these settings. The gain is kept.
         setError(`"${label}" = ${value} rejected — invalid value or the controller could not re-synthesise (gain unchanged). See the Diag log.`);
@@ -2128,9 +2151,10 @@ function onControllerInputChange(e) {
 // the checkbox to its prior state so the UI reflects what the backend accepted.
 function onControllerToggleChange(e) {
     const id = Number(e.target.dataset.id);
+    const domain = e.target.dataset.domain;
     const value = e.target.checked ? 1 : 0;
     const label = e.target.previousSibling ? e.target.previousSibling.textContent : `id ${id}`;
-    if (sim.ext_setControllerParam({ id, value })) {
+    if (setParamByDomain(domain, id, value)) {
         setError(`"${label}" toggle rejected. See the Diag log.`);
         e.target.checked = !e.target.checked;
     } else {
@@ -2183,12 +2207,12 @@ function snapshotControllerParams() {
 // matching by (group, label) so entries that don't fit are skipped rather than
 // failing the batch. Returns { applied, skipped, rejected }.
 function applyControllerParams(params) {
-    const idOf = new Map(controllerManifest.filter(p => p.writable).map(p => [`${p.group}\t${p.label}`, p.id]));
+    const rowOf = new Map(controllerManifest.filter(p => p.writable).map(p => [`${p.group}\t${p.label}`, p]));
     let applied = 0, skipped = 0, rejected = 0;
     for (const p of params) {
-        const id = idOf.get(`${p.group}\t${p.label}`);
-        if (id === undefined) { skipped++; continue; }
-        if (sim.ext_setControllerParam({ id, value: p.value })) rejected++; else applied++;
+        const row = rowOf.get(`${p.group}\t${p.label}`);
+        if (row === undefined) { skipped++; continue; }
+        if (setParamByDomain(row.domain, row.id, p.value)) rejected++; else applied++;
     }
     return { applied, skipped, rejected };
 }

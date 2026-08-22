@@ -211,6 +211,13 @@ static ext_recordStatus _recordStatus(void)
     return out;
 }
 
+// A parameter id crosses the wire as ext_coord_t (no int on the wire); round to
+// the nearest integer manifest id.
+static int _paramId(ext_coord_t id)
+{
+    return static_cast<int>(id + (id >= 0 ? 0.5f : -0.5f));
+}
+
 /* ext functions */
 
 bool ext_initRocket_FFLQR01(ext_initRocketParams params)
@@ -469,7 +476,7 @@ bool ext_setLogLevel(ext_logLevelParams params)
     return false;
 }
 
-ext_moduleList ext_getProfileModules(void)
+ext_moduleList ext_getProfilerModules(void)
 {
     ext_moduleList out = {};
     std::size_t off = 0;
@@ -490,7 +497,7 @@ ext_moduleList ext_getProfileModules(void)
     return out;
 }
 
-bool ext_setProfileEnabled(ext_profileEnableParams params)
+bool ext_setProfilerEnabled(ext_profilerEnableParams params)
 {
     const std::size_t m = static_cast<std::size_t>(params.module);
     if (m >= cds_profile::registry().moduleCount()) return true;
@@ -498,9 +505,9 @@ bool ext_setProfileEnabled(ext_profileEnableParams params)
     return false;
 }
 
-ext_profileTable ext_getProfileTable(void)
+ext_profilerTable ext_getProfilerTable(void)
 {
-    ext_profileTable out = {};
+    ext_profilerTable out = {};
     std::size_t off = 0;
     std::size_t count = 0;
 
@@ -538,7 +545,7 @@ ext_profileTable ext_getProfileTable(void)
     return out;
 }
 
-bool ext_resetProfile(void)
+bool ext_resetProfiler(void)
 {
     cds_profile::registry().resetAll();
     return false;
@@ -567,19 +574,53 @@ ext_recordStatus ext_getRecordStatus(void)
     return _recordStatus();
 }
 
-// ---- controller parameters (interactive tuning of the active controller) ----
+// ---- tunable parameters (interactive tuning), split by domain: model /
+//      controller / observer / sensor ----
 
-ext_controllerManifest ext_getControllerManifest(void)
+ext_paramManifest ext_modelGetManifest(void)
 {
-    ext_controllerManifest out = {};   // empty text if no model / no exposed params
-    core_getControllerManifest(out.text, sizeof(out.text));
+    ext_paramManifest out = {};   // empty text if no model / no exposed params
+    core_modelGetManifest(out.text, sizeof(out.text));
     return out;
 }
 
-bool ext_setControllerParam(ext_controllerParamSet params)
+bool ext_modelSetParam(ext_paramSet params)
 {
-    // id crosses the wire as ext_coord_t (no int on the wire); round to the
-    // nearest integer manifest id.
-    const int id = static_cast<int>(params.id + (params.id >= 0 ? 0.5f : -0.5f));
-    return core_setControllerParam(id, params.value);
+    return core_modelSetParam(_paramId(params.id), params.value);
+}
+
+ext_paramManifest ext_controllerGetManifest(void)
+{
+    ext_paramManifest out = {};
+    core_controllerGetManifest(out.text, sizeof(out.text));
+    return out;
+}
+
+bool ext_controllerSetParam(ext_paramSet params)
+{
+    return core_controllerSetParam(_paramId(params.id), params.value);
+}
+
+ext_paramManifest ext_observerGetManifest(void)
+{
+    ext_paramManifest out = {};
+    core_observerGetManifest(out.text, sizeof(out.text));
+    return out;
+}
+
+bool ext_observerSetParam(ext_paramSet params)
+{
+    return core_observerSetParam(_paramId(params.id), params.value);
+}
+
+ext_paramManifest ext_sensorGetManifest(void)
+{
+    ext_paramManifest out = {};
+    core_sensorGetManifest(out.text, sizeof(out.text));
+    return out;
+}
+
+bool ext_sensorSetParam(ext_paramSet params)
+{
+    return core_sensorSetParam(_paramId(params.id), params.value);
 }

@@ -259,10 +259,11 @@ COMM = [
             F("count", pre="number of modules listed in `list`"),
         ]),
 
-    Struct("ext_profileTable", file="comm",
+    Struct("ext_profilerTable", file="comm",
         doc="struct of the profiler stats table, one record per newline:\n"
-            "'module\\tscope\\tcount\\tmean_us\\tmin_us\\tmax_us\\tstd_us'. Fixed char\n"
-            "buffer: text on the POD wire",
+            "'module\\tscope\\tkind\\tcount\\tmean\\tstd\\tmin\\tmax\\tp50\\tp95\\tp99'\n"
+            "(kind = 'us' for timed scopes, 'val' for value scopes; timings in us).\n"
+            "Fixed char buffer: text on the POD wire",
         fields=[
             F("table", type="char", count=3600),
             F("count", pre="number of scope records in `table`"),
@@ -276,7 +277,7 @@ COMM = [
             F("module"), F("level"), F("sampleN"),
         ]),
 
-    Struct("ext_profileEnableParams", file="comm",
+    Struct("ext_profilerEnableParams", file="comm",
         doc="request: enable or disable profiling for a module (module as its index)",
         fields=[
             F("module"),
@@ -284,8 +285,8 @@ COMM = [
         ]),
 
     Struct("ext_diagFiles", file="comm",
-        doc="request: toggle the server-side diagnostics files (no-op on wasm,\n"
-            "which has no real filesystem). logFile: mirror the log to a file;\n"
+        doc="request: toggle the server-side diagnostics files (a no-op when the\n"
+            "running build has no filesystem). logFile: mirror the log to a file;\n"
             "profileRaw: stream every raw profiler sample to a CSV for analysis",
         fields=[
             F("logFile", type="bool"),
@@ -295,7 +296,7 @@ COMM = [
     Struct("ext_recordParams", file="comm",
         doc="request: toggle the server-side per-tick data recorder — a lossless\n"
             "wide-CSV black box of the active model's state/input/reference/error\n"
-            "(no-op on wasm, which has no real filesystem)",
+            "(a no-op when the running build has no filesystem)",
         fields=[
             F("enabled", type="bool"),
         ]),
@@ -313,19 +314,21 @@ COMM = [
             F("droppedRows", pre="rows lost to a full ring since the run began"),
         ]),
 
-    Struct("ext_controllerManifest", file="comm",
-        doc="response: the active controller's exposed parameters, one record per\n"
-            "newline: 'id\\tgroup\\tlabel\\tflags\\tvalue' (flags = 'rw' | 'ro').\n"
-            "Fixed char buffer: text on the POD wire (empty if no tunable params)",
+    Struct("ext_paramManifest", file="comm",
+        doc="response: a domain parameter manifest (model / controller / observer /\n"
+            "sensor), one record per newline: 'id\\tgroup\\tlabel\\tflags\\tvalue'\n"
+            "(flags = 'rw' | 'ro'). Fixed char buffer: text on the POD wire (empty\n"
+            "if the domain has no exposed parameters)",
         fields=[
             F("text", type="char", count=2048),
         ]),
 
-    Struct("ext_controllerParamSet", file="comm",
-        doc="request: set one controller parameter by its manifest id. id is\n"
-            "carried as ext_coord_t (exact up to 2^24) since the wire has no int",
+    Struct("ext_paramSet", file="comm",
+        doc="request: set one parameter by its manifest id, within a domain (model\n"
+            "/ controller / observer / sensor). id is carried as ext_coord_t (exact\n"
+            "up to 2^24) since the wire has no int",
         fields=[
-            F("id",    pre="parameter id = its row index in the manifest"),
+            F("id",    pre="parameter id = its row index in the domain manifest"),
             F("value", pre="new value for the parameter"),
         ]),
 ]
@@ -410,19 +413,19 @@ COMMANDS = [
         req="ext_logLevelParams", resp="bool",
         doc="Set a log module's runtime level, returns true on error"),
 
-    Cmd(18, "GetProfileModules", "ext_getProfileModules", "ext_getProfileModules",
+    Cmd(18, "GetProfilerModules", "ext_getProfilerModules", "ext_getProfilerModules",
         req=None, resp="ext_moduleList",
         doc="List the registered profiler modules with their enabled flag"),
 
-    Cmd(19, "SetProfileEnabled", "ext_setProfileEnabled", "ext_setProfileEnabled",
-        req="ext_profileEnableParams", resp="bool",
+    Cmd(19, "SetProfilerEnabled", "ext_setProfilerEnabled", "ext_setProfilerEnabled",
+        req="ext_profilerEnableParams", resp="bool",
         doc="Enable or disable profiling for a module, returns true on error"),
 
-    Cmd(20, "GetProfileTable", "ext_getProfileTable", "ext_getProfileTable",
-        req=None, resp="ext_profileTable",
+    Cmd(20, "GetProfilerTable", "ext_getProfilerTable", "ext_getProfilerTable",
+        req=None, resp="ext_profilerTable",
         doc="Get the profiler stats table from the latest published snapshot"),
 
-    Cmd(21, "ResetProfile", "ext_resetProfile", "ext_resetProfile",
+    Cmd(21, "ResetProfiler", "ext_resetProfiler", "ext_resetProfiler",
         req=None, resp="bool",
         doc="Reset all profiler statistics (clears cold-start outliers), returns true on error"),
 
@@ -441,21 +444,46 @@ COMMANDS = [
         req=None, resp="ext_recordStatus",
         doc="Get the data recorder status (active model, enabled flag, dropped rows)"),
 
-    # ---- controller parameters (interactive tuning of the active controller) ----
+    # ---- additional model inits (kept here to preserve command-id contiguity) ----
 
-    Cmd(25, "GetControllerManifest", "ext_getControllerManifest", "ext_getControllerManifest",
-        req=None, resp="ext_controllerManifest",
-        doc="Get the active controller's parameter manifest (TSV listing)"),
-
-    Cmd(26, "SetControllerParam", "ext_setControllerParam", "ext_setControllerParam",
-        req="ext_controllerParamSet", resp="bool",
-        doc="Set one controller parameter by its manifest id; returns true on error",
-        log="set controller param"),
-
-    # ---- additional model inits (appended to keep command ids contiguous) ----
-
-    Cmd(27, "InitRocketMPC", "ext_initRocket_MPC01", "ext_rocketMpcInit",
+    Cmd(25, "InitRocketMPC", "ext_initRocket_MPC01", "ext_rocketMpcInit",
         req="ext_initRocketParams", resp="bool",
         doc="Initialize Rocket model: MPC_01 (nonlinear MPC), returns true on error",
         log="init rocket mpc"),
+
+    # ---- tunable parameters (interactive tuning), split by domain:
+    #      model / controller / observer / sensor. All share the manifest / set
+    #      structs; a domain a model does not expose returns an empty manifest ----
+
+    Cmd(26, "ModelGetManifest", "ext_modelGetManifest", "ext_modelGetManifest",
+        req=None, resp="ext_paramManifest",
+        doc="Get the model parameter manifest (structural knobs, e.g. MPC horizon; TSV listing)"),
+    Cmd(27, "ModelSetParam", "ext_modelSetParam", "ext_modelSetParam",
+        req="ext_paramSet", resp="bool",
+        doc="Set one model parameter by its manifest id; returns true on error",
+        log="set model param"),
+
+    Cmd(28, "ControllerGetManifest", "ext_controllerGetManifest", "ext_controllerGetManifest",
+        req=None, resp="ext_paramManifest",
+        doc="Get the controller parameter manifest (cost weights / solver; TSV listing)"),
+    Cmd(29, "ControllerSetParam", "ext_controllerSetParam", "ext_controllerSetParam",
+        req="ext_paramSet", resp="bool",
+        doc="Set one controller parameter by its manifest id; returns true on error",
+        log="set controller param"),
+
+    Cmd(30, "ObserverGetManifest", "ext_observerGetManifest", "ext_observerGetManifest",
+        req=None, resp="ext_paramManifest",
+        doc="Get the observer parameter manifest (estimator covariances + enable; TSV listing)"),
+    Cmd(31, "ObserverSetParam", "ext_observerSetParam", "ext_observerSetParam",
+        req="ext_paramSet", resp="bool",
+        doc="Set one observer parameter by its manifest id; returns true on error",
+        log="set observer param"),
+
+    Cmd(32, "SensorGetManifest", "ext_sensorGetManifest", "ext_sensorGetManifest",
+        req=None, resp="ext_paramManifest",
+        doc="Get the sensor parameter manifest (per-axis bias / noise / enable; TSV listing)"),
+    Cmd(33, "SensorSetParam", "ext_sensorSetParam", "ext_sensorSetParam",
+        req="ext_paramSet", resp="bool",
+        doc="Set one sensor parameter by its manifest id; returns true on error",
+        log="set sensor param"),
 ]

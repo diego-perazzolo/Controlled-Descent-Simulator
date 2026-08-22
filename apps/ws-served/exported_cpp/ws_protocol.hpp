@@ -50,7 +50,7 @@ constexpr uint16_t WS_DEFAULT_PORT = 9002;
    carry different bytes, and both sides refuse to talk: a stale
    simulator.wasm against a newer cds_server fails loudly instead
    of corrupting the parsing. */
-constexpr uint8_t WS_PROTOCOL_VERSION = 0xD1;
+constexpr uint8_t WS_PROTOCOL_VERSION = 0xAD;
 
 /* Message types: request and matching response carry the same type id */
 enum MsgType : uint8_t
@@ -72,16 +72,22 @@ enum MsgType : uint8_t
     WS_MSG_GET_LOG_BATCH           = 15, // -> respGetLogBatch_t
     WS_MSG_GET_LOG_MODULES         = 16, // -> respGetLogModules_t
     WS_MSG_SET_LOG_LEVEL           = 17, // -> respBool_t
-    WS_MSG_GET_PROFILE_MODULES     = 18, // -> respGetProfileModules_t
-    WS_MSG_SET_PROFILE_ENABLED     = 19, // -> respBool_t
-    WS_MSG_GET_PROFILE_TABLE       = 20, // -> respGetProfileTable_t
-    WS_MSG_RESET_PROFILE           = 21, // -> respBool_t
+    WS_MSG_GET_PROFILER_MODULES    = 18, // -> respGetProfilerModules_t
+    WS_MSG_SET_PROFILER_ENABLED    = 19, // -> respBool_t
+    WS_MSG_GET_PROFILER_TABLE      = 20, // -> respGetProfilerTable_t
+    WS_MSG_RESET_PROFILER          = 21, // -> respBool_t
     WS_MSG_SET_DIAG_FILES          = 22, // -> respBool_t
     WS_MSG_SET_RECORDING           = 23, // -> respSetRecording_t
     WS_MSG_GET_RECORD_STATUS       = 24, // -> respGetRecordStatus_t
-    WS_MSG_GET_CONTROLLER_MANIFEST = 25, // -> respGetControllerManifest_t
-    WS_MSG_SET_CONTROLLER_PARAM    = 26, // -> respBool_t
-    WS_MSG_INIT_ROCKET_MPC         = 27, // -> respBool_t
+    WS_MSG_INIT_ROCKET_MPC         = 25, // -> respBool_t
+    WS_MSG_MODEL_GET_MANIFEST      = 26, // -> respModelGetManifest_t
+    WS_MSG_MODEL_SET_PARAM         = 27, // -> respBool_t
+    WS_MSG_CONTROLLER_GET_MANIFEST = 28, // -> respControllerGetManifest_t
+    WS_MSG_CONTROLLER_SET_PARAM    = 29, // -> respBool_t
+    WS_MSG_OBSERVER_GET_MANIFEST   = 30, // -> respObserverGetManifest_t
+    WS_MSG_OBSERVER_SET_PARAM      = 31, // -> respBool_t
+    WS_MSG_SENSOR_GET_MANIFEST     = 32, // -> respSensorGetManifest_t
+    WS_MSG_SENSOR_SET_PARAM        = 33, // -> respBool_t
 };
 
 #pragma pack(push, 1)
@@ -192,24 +198,24 @@ typedef struct
 typedef struct
 {
     header_t h;
-} reqGetProfileModules_t;
+} reqGetProfilerModules_t;
 
 typedef struct
 {
     header_t h;
     ext_coord_t module;
     uint8_t enabled;
-} reqSetProfileEnabled_t;
+} reqSetProfilerEnabled_t;
 
 typedef struct
 {
     header_t h;
-} reqGetProfileTable_t;
+} reqGetProfilerTable_t;
 
 typedef struct
 {
     header_t h;
-} reqResetProfile_t;
+} reqResetProfiler_t;
 
 typedef struct
 {
@@ -232,19 +238,52 @@ typedef struct
 typedef struct
 {
     header_t h;
-} reqGetControllerManifest_t;
-
-typedef struct
-{
-    header_t h;
-    ext_controllerParamSet p;
-} reqSetControllerParam_t;
-
-typedef struct
-{
-    header_t h;
     ext_initRocketParams p;
 } reqInitRocketMPC_t;
+
+typedef struct
+{
+    header_t h;
+} reqModelGetManifest_t;
+
+typedef struct
+{
+    header_t h;
+    ext_paramSet p;
+} reqModelSetParam_t;
+
+typedef struct
+{
+    header_t h;
+} reqControllerGetManifest_t;
+
+typedef struct
+{
+    header_t h;
+    ext_paramSet p;
+} reqControllerSetParam_t;
+
+typedef struct
+{
+    header_t h;
+} reqObserverGetManifest_t;
+
+typedef struct
+{
+    header_t h;
+    ext_paramSet p;
+} reqObserverSetParam_t;
+
+typedef struct
+{
+    header_t h;
+} reqSensorGetManifest_t;
+
+typedef struct
+{
+    header_t h;
+    ext_paramSet p;
+} reqSensorSetParam_t;
 
 /* ------------------------------ responses ------------------------------- */
 
@@ -297,13 +336,13 @@ typedef struct
 {
     header_t h;
     ext_moduleList p;
-} respGetProfileModules_t;
+} respGetProfilerModules_t;
 
 typedef struct
 {
     header_t h;
-    ext_profileTable p;
-} respGetProfileTable_t;
+    ext_profilerTable p;
+} respGetProfilerTable_t;
 
 typedef struct
 {
@@ -320,8 +359,26 @@ typedef struct
 typedef struct
 {
     header_t h;
-    ext_controllerManifest p;
-} respGetControllerManifest_t;
+    ext_paramManifest p;
+} respModelGetManifest_t;
+
+typedef struct
+{
+    header_t h;
+    ext_paramManifest p;
+} respControllerGetManifest_t;
+
+typedef struct
+{
+    header_t h;
+    ext_paramManifest p;
+} respObserverGetManifest_t;
+
+typedef struct
+{
+    header_t h;
+    ext_paramManifest p;
+} respSensorGetManifest_t;
 
 #pragma pack(pop)
 
@@ -352,27 +409,36 @@ static_assert(sizeof(reqInitQuadRotorMPC_t)       == 50, "wire layout drift"); /
 static_assert(sizeof(reqGetLogBatch_t)            ==  2, "wire layout drift");
 static_assert(sizeof(reqGetLogModules_t)          ==  2, "wire layout drift");
 static_assert(sizeof(reqSetLogLevel_t)            == 14, "wire layout drift"); // 2 + 3f
-static_assert(sizeof(reqGetProfileModules_t)      ==  2, "wire layout drift");
-static_assert(sizeof(reqSetProfileEnabled_t)      ==  7, "wire layout drift"); // 2 + 1f + u8
-static_assert(sizeof(reqGetProfileTable_t)        ==  2, "wire layout drift");
-static_assert(sizeof(reqResetProfile_t)           ==  2, "wire layout drift");
+static_assert(sizeof(reqGetProfilerModules_t)     ==  2, "wire layout drift");
+static_assert(sizeof(reqSetProfilerEnabled_t)     ==  7, "wire layout drift"); // 2 + 1f + u8
+static_assert(sizeof(reqGetProfilerTable_t)       ==  2, "wire layout drift");
+static_assert(sizeof(reqResetProfiler_t)          ==  2, "wire layout drift");
 static_assert(sizeof(reqSetDiagFiles_t)           ==  4, "wire layout drift"); // 2 + u8 + u8
 static_assert(sizeof(reqSetRecording_t)           ==  3, "wire layout drift"); // 2 + u8
 static_assert(sizeof(reqGetRecordStatus_t)        ==  2, "wire layout drift");
-static_assert(sizeof(reqGetControllerManifest_t)  ==  2, "wire layout drift");
-static_assert(sizeof(reqSetControllerParam_t)     == 10, "wire layout drift"); // 2 + 2f
 static_assert(sizeof(reqInitRocketMPC_t)          == 58, "wire layout drift"); // 2 + 14f
+static_assert(sizeof(reqModelGetManifest_t)       ==  2, "wire layout drift");
+static_assert(sizeof(reqModelSetParam_t)          == 10, "wire layout drift"); // 2 + 2f
+static_assert(sizeof(reqControllerGetManifest_t)  ==  2, "wire layout drift");
+static_assert(sizeof(reqControllerSetParam_t)     == 10, "wire layout drift"); // 2 + 2f
+static_assert(sizeof(reqObserverGetManifest_t)    ==  2, "wire layout drift");
+static_assert(sizeof(reqObserverSetParam_t)       == 10, "wire layout drift"); // 2 + 2f
+static_assert(sizeof(reqSensorGetManifest_t)      ==  2, "wire layout drift");
+static_assert(sizeof(reqSensorSetParam_t)         == 10, "wire layout drift"); // 2 + 2f
 static_assert(sizeof(respBool_t)                  ==  3, "wire layout drift"); // 2 + u8
 static_assert(sizeof(respTrajGetPoint_t)          == 14, "wire layout drift"); // 2 + 1f + 1f + 1f
 static_assert(sizeof(respGetSnapshot_t)           == 71, "wire layout drift"); // 2 + 1f + 12f + 4f + u8
 static_assert(sizeof(respGetPlantSnapshot_t)      == 61, "wire layout drift"); // 2 + 1f + 1f + 12f + u8 + u8 + u8
 static_assert(sizeof(respGetLogBatch_t)           == 3810, "wire layout drift"); // 2 + 3800b + 1f + 1f
 static_assert(sizeof(respGetLogModules_t)         == 1206, "wire layout drift"); // 2 + 1200b + 1f
-static_assert(sizeof(respGetProfileModules_t)     == 1206, "wire layout drift"); // 2 + 1200b + 1f
-static_assert(sizeof(respGetProfileTable_t)       == 3606, "wire layout drift"); // 2 + 3600b + 1f
+static_assert(sizeof(respGetProfilerModules_t)    == 1206, "wire layout drift"); // 2 + 1200b + 1f
+static_assert(sizeof(respGetProfilerTable_t)      == 3606, "wire layout drift"); // 2 + 3600b + 1f
 static_assert(sizeof(respSetRecording_t)          == 78, "wire layout drift"); // 2 + 64b + 1f + 1f + 1f
 static_assert(sizeof(respGetRecordStatus_t)       == 78, "wire layout drift"); // 2 + 64b + 1f + 1f + 1f
-static_assert(sizeof(respGetControllerManifest_t) == 2050, "wire layout drift"); // 2 + 2048b
+static_assert(sizeof(respModelGetManifest_t)      == 2050, "wire layout drift"); // 2 + 2048b
+static_assert(sizeof(respControllerGetManifest_t) == 2050, "wire layout drift"); // 2 + 2048b
+static_assert(sizeof(respObserverGetManifest_t)   == 2050, "wire layout drift"); // 2 + 2048b
+static_assert(sizeof(respSensorGetManifest_t)     == 2050, "wire layout drift"); // 2 + 2048b
 
 static_assert(sizeof(reqTrajAppendPoly4_t) < WS_MAX_MSG_SIZE, "wire msg too big");
 static_assert(sizeof(respGetLogBatch_t) < WS_MAX_MSG_SIZE, "wire msg too big");

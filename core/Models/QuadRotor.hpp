@@ -35,7 +35,7 @@
 
 #include "BaseModel.hpp"
 #include "lqr_tuner.hpp"
-#include "controller_params.hpp"
+#include "param_table.hpp"                 // libs/param    -- tunable-parameter registry
 #include "trans_disturbance_observer.hpp"  // libs/estimate -- state estimate that feeds the LQR
 #include "sensor_model.hpp"                // libs/sensor   -- position measurement corruptor
 
@@ -63,9 +63,15 @@ namespace CDS
         void   GetGain(double K[4][16]) const;
         double GetGainBridgeError() const;   // max|runtime gain - baked K_default| at default weights
 
-        // Controller-parameter interface (Q/R diagonal weights).
+        // Tunable-parameter interface, split by domain: controller (Q/R diagonal
+        // weights), observer (covariances + enable) and sensor (per-axis bias /
+        // noise / enable). This model has no structural (model) knobs.
         bool GetControllerManifest(char* buf, std::size_t n) override;
         bool SetControllerParam(int id, double value) override;
+        bool GetObserverManifest(char* buf, std::size_t n) override;
+        bool SetObserverParam(int id, double value) override;
+        bool GetSensorManifest(char* buf, std::size_t n) override;
+        bool SetSensorParam(int id, double value) override;
 
         // Augmented runtime state (13 physical + 4 integrators):
         //   [r(3), q(4, quaternion), v(3), omega(3, body rates), IntX, IntY, IntZ, IntPsi]
@@ -93,7 +99,7 @@ namespace CDS
 
         private:
         bool RecomputeGain();          // (re)synthesise the LQR gain and install it (true on error)
-        void BuildParamTable();        // register the exposed Q/R weights
+        void BuildParamTable();        // register the exposed knobs into the tables
         void BuildObserver();          // read Bd from the model and synthesise the estimator gain
 
         void*              m_modelPtr;
@@ -105,7 +111,9 @@ namespace CDS
 
         // Runtime LQR gain manager: tunable weights + synthesised gain (libs/control).
         control::LqrGainTuner<16, 4> m_lqr;
-        control::ParamTable<>        m_params;   // exposed controller parameters (Q/R diagonal)
+        param::ParamTable<>          m_controllerParams;  // LQR Q/R diagonal weights
+        param::ParamTable<>          m_observerParams;    // observer covariances + enable
+        param::ParamTable<>          m_sensorParams;      // per-axis position sensor knobs
 
         // ---- State estimator + sensor bank (opt-in, OFF by default) ----------
         // The translational observer supplies a filtered position/velocity to the

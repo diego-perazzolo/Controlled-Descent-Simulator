@@ -65,20 +65,26 @@ int main()
     if (tm.AppendPoly4(poly) || tm.AppendPoint(hold)) { printf("trajectory build failed\n"); return 1; }
     if (model.SetTrajectoryManager(&tm)) { printf("SetTrajectoryManager failed\n"); return 1; }
 
-    // Controller-parameter interface: 4 state weights + 4 per-input control
-    // weights + terminal + dt_mpc + max_iters (rw) + horizon (ro) = 12 rows; a
-    // weight is settable, the horizon is not, a bad id fails.
+    // Tunable-parameter interface, split by domain: controller (4 state weights +
+    // 4 per-input control weights + terminal + dt_mpc + max_iters = 11 rw rows),
+    // model (horizon, ro), observer (enable + 4 covariances = 5) and sensor (3
+    // axes x enable/bias/noise = 9).
     bool paramOk = true;
     {
         char buf[2048] = {0};
-        if (model.GetControllerManifest(buf, sizeof buf)) paramOk = false;
-        int rows = 0; for (const char* q = buf; *q; ++q) if (*q == '\n') ++rows;
-        if (rows != 26) paramOk = false;   // 12 controller + 14 estimator (observer enable+4 cov + 3-axis sensor)
-        if (model.SetControllerParam(0, 8.0)) paramOk = false;    // id 0 = Q/position (rw)
-        if (!model.SetControllerParam(11, 100.0)) paramOk = false; // id 11 = solver/horizon (ro) -> rejected
+        auto rowsOf = [&](const char* b){ int r = 0; for (const char* q = b; *q; ++q) if (*q == '\n') ++r; return r; };
+
+        if (model.GetControllerManifest(buf, sizeof buf) || rowsOf(buf) != 11) paramOk = false;
+        if (model.SetControllerParam(0, 8.0)) paramOk = false;     // id 0 = Q/position (rw)
         if (!model.SetControllerParam(99, 1.0)) paramOk = false;   // bad id -> rejected
         model.SetControllerParam(0, 6.0);                          // restore the default weight
-        printf("controller manifest = %d rows, set/reject checks = %s\n", rows, paramOk ? "ok" : "FAIL");
+
+        if (model.GetModelManifest(buf, sizeof buf) || rowsOf(buf) != 1) paramOk = false;  // horizon
+        if (!model.SetModelParam(0, 100.0)) paramOk = false;       // horizon is ro -> rejected
+
+        if (model.GetObserverManifest(buf, sizeof buf) || rowsOf(buf) != 5) paramOk = false;
+        if (model.GetSensorManifest(buf, sizeof buf)   || rowsOf(buf) != 9) paramOk = false;
+        printf("param manifests (controller/model/observer/sensor) checks = %s\n", paramOk ? "ok" : "FAIL");
     }
 
     const double dt  = 0.01;

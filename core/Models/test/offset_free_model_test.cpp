@@ -52,7 +52,7 @@ namespace
 {
     // Find a manifest row id by its group + label (the TSV is
     // "id\tgroup\tlabel\tflags\tvalue\n"). Returns -1 if not present. Used to
-    // drive the ext-facing path: enabling the observer through SetControllerParam
+    // drive the ext-facing path: enabling the observer through SetObserverParam
     // rather than the direct C++ setter.
     int manifestId(const char* tsv, const char* group, const char* label)
     {
@@ -217,9 +217,9 @@ int main()
     }
 
     // ---- ext-facing path: enable the observer THROUGH the manifest ----------
-    // Proves the increment-5 wiring: the observer/sensor knobs ride the existing
-    // controller-manifest ext channel, so toggling "Observer/enable" by id has
-    // the same offset-free effect as the direct setter.
+    // Proves the wiring: the observer knobs ride the observer-manifest ext
+    // channel, so toggling "Observer/enable" by id has the same offset-free
+    // effect as the direct setter.
     {
         QuadRotorMPC model;
         core_quadRotorParams_t p{ .m = 2.4, .Ix = 0.025, .Iy = 0.025, .Iz = 0.045,
@@ -233,9 +233,9 @@ int main()
         model.SetTrajectoryManager(&tm);
 
         char buf[2048] = {0};
-        model.GetControllerManifest(buf, sizeof buf);
+        model.GetObserverManifest(buf, sizeof buf);
         const int id = manifestId(buf, "Observer", "enable (0|1)");
-        bool viaManifest = (id >= 0) && !model.SetControllerParam(id, 1.0) && model.IsObserverEnabled();
+        bool viaManifest = (id >= 0) && !model.SetObserverParam(id, 1.0) && model.IsObserverEnabled();
 
         double tailSum = 0.0; core_state_t st{};
         for (int t = 0; t < 1200; ++t)
@@ -307,9 +307,9 @@ int main()
             model.SetTrajectoryManager(&tm);
             model.SetObserverEnabled(true);
             for (std::size_t a = 0; a < 3; ++a) model.PositionSensor().SetNoiseStd(a, 1.0);
-            char buf[2048] = {0}; model.GetControllerManifest(buf, sizeof buf);
+            char buf[2048] = {0}; model.GetObserverManifest(buf, sizeof buf);
             const int id = manifestId(buf, "Observer", "measurement noise");
-            if (id >= 0) model.SetControllerParam(id, rPos);
+            if (id >= 0) model.SetObserverParam(id, rPos);
             double s = 0.0; core_state_t st{};
             for (int t = 0; t < 1200; ++t) {
                 core_stepParams_t sp{ .timestep = 0.01, .user_fX = 0.0, .user_fY = 0.0, .user_fZ = 0.0 };

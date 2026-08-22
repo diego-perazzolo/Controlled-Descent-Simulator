@@ -44,7 +44,7 @@
 #include <array>
 
 #include "BaseModel.hpp"
-#include "controller_params.hpp"
+#include "param_table.hpp"                 // libs/param    -- tunable-parameter registry
 #include "trans_disturbance_observer.hpp"  // libs/estimate -- reusable offset-free observer
 #include "sensor_model.hpp"                // libs/sensor   -- position measurement corruptor
 
@@ -64,9 +64,17 @@ namespace CDS
         virtual bool GetTrackingErrors(core_trackingErrors_t& tErrors) override;
         virtual bool GetCurrentTimeSeconds(core_coord_t& currentTimeSeconds) override;
 
-        // Controller-parameter interface (cost weights, control step, iterations).
+        // Tunable-parameter interface, split by domain: model (horizon),
+        // controller (cost weights, control step, iterations), observer
+        // (covariances + enable) and sensor (per-axis bias / noise / enable).
+        bool GetModelManifest(char* buf, std::size_t n) override;
+        bool SetModelParam(int id, double value) override;
         bool GetControllerManifest(char* buf, std::size_t n) override;
         bool SetControllerParam(int id, double value) override;
+        bool GetObserverManifest(char* buf, std::size_t n) override;
+        bool SetObserverParam(int id, double value) override;
+        bool GetSensorManifest(char* buf, std::size_t n) override;
+        bool SetSensorParam(int id, double value) override;
 
         // Physical runtime state (no LQR integrators):
         //   [r(3), q(4, quaternion), v(3), omega(3, body rates)]
@@ -94,7 +102,7 @@ namespace CDS
         sensor::SensorModel<POS_DIM>& PositionSensor() { return m_posSensor; }
 
         private:
-        void BuildParamTable();        // register the exposed MPC knobs
+        void BuildParamTable();        // register the exposed knobs into the 4 tables
 
         void*              m_modelPtr;
         StateVec           m_state;
@@ -109,7 +117,10 @@ namespace CDS
         double             m_wp, m_wq, m_wv, m_ww, m_wu, m_wterm;
         double             m_dtMpc;
         int                m_maxIters;
-        control::ParamTable<> m_params;
+        param::ParamTable<> m_modelParams;       // structural knobs (horizon)
+        param::ParamTable<> m_controllerParams;  // cost weights + solver
+        param::ParamTable<> m_observerParams;    // observer covariances + enable
+        param::ParamTable<> m_sensorParams;      // per-axis position sensor knobs
 
         // Warm-start command sequence: the previous solve, kept and shifted so the
         // next tick starts a few iterations away from the answer.

@@ -217,16 +217,52 @@ bool core_systemGetSnapshot(core_snapshotData_t &par)
                                 });
 }
 
-bool core_getControllerManifest(char *buf, std::size_t n)
+bool core_modelGetManifest(char *buf, std::size_t n)
+{
+    return _ctx.SM.ExecuteOnModel([&](BaseModel &model)
+                                  { return model.GetModelManifest(buf, n); });
+}
+
+bool core_modelSetParam(int id, double value)
+{
+    return _ctx.SM.ExecuteOnModel([&](BaseModel &model)
+                                  { return model.SetModelParam(id, value); });
+}
+
+bool core_controllerGetManifest(char *buf, std::size_t n)
 {
     return _ctx.SM.ExecuteOnModel([&](BaseModel &model)
                                   { return model.GetControllerManifest(buf, n); });
 }
 
-bool core_setControllerParam(int id, double value)
+bool core_controllerSetParam(int id, double value)
 {
     return _ctx.SM.ExecuteOnModel([&](BaseModel &model)
                                   { return model.SetControllerParam(id, value); });
+}
+
+bool core_observerGetManifest(char *buf, std::size_t n)
+{
+    return _ctx.SM.ExecuteOnModel([&](BaseModel &model)
+                                  { return model.GetObserverManifest(buf, n); });
+}
+
+bool core_observerSetParam(int id, double value)
+{
+    return _ctx.SM.ExecuteOnModel([&](BaseModel &model)
+                                  { return model.SetObserverParam(id, value); });
+}
+
+bool core_sensorGetManifest(char *buf, std::size_t n)
+{
+    return _ctx.SM.ExecuteOnModel([&](BaseModel &model)
+                                  { return model.GetSensorManifest(buf, n); });
+}
+
+bool core_sensorSetParam(int id, double value)
+{
+    return _ctx.SM.ExecuteOnModel([&](BaseModel &model)
+                                  { return model.SetSensorParam(id, value); });
 }
 
 bool core_plantGetSnapshot(core_plantSnapshotData_t &par)

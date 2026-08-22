@@ -113,6 +113,7 @@ clang++ -std=c++20 -fsyntax-only \
   -Icore -Icore/System -Icore/Plant -Icore/Models -Icore/Trajectory \
   -Iapps/common/exported_cpp -Iapps/ws-served/exported_cpp \
   -Iapps/ws-served/server -Ilibs/ws -Ilibs/sync -Ilibs/integrate -Ilibs/control \
+  -Ilibs/param -Ilibs/estimate -Ilibs/sensor \
   -Ilibs/log -Ilibs/profile -Ilibs/record \
   -Imodeling/notebooks/exported_cpp/ROCKET_FF_LQR_01 \
   -Imodeling/notebooks/exported_cpp/QUADROTOR_FF_LQR_01 \

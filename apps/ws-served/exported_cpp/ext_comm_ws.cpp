@@ -362,12 +362,12 @@ bool ext_setLogLevel(ext_logLevelParams params)
     return resp.isError != 0;
 }
 
-ext_moduleList ext_getProfileModules(void)
+ext_moduleList ext_getProfilerModules(void)
 {
-    reqGetProfileModules_t req = {};
-    respGetProfileModules_t resp = {};
+    reqGetProfilerModules_t req = {};
+    respGetProfilerModules_t resp = {};
 
-    req.h.type = WS_MSG_GET_PROFILE_MODULES;
+    req.h.type = WS_MSG_GET_PROFILER_MODULES;
 
     if(_rpc(req, resp))
     {
@@ -378,12 +378,12 @@ ext_moduleList ext_getProfileModules(void)
     return resp.p;
 }
 
-bool ext_setProfileEnabled(ext_profileEnableParams params)
+bool ext_setProfilerEnabled(ext_profilerEnableParams params)
 {
-    reqSetProfileEnabled_t req = {};
+    reqSetProfilerEnabled_t req = {};
     respBool_t resp = {};
 
-    req.h.type = WS_MSG_SET_PROFILE_ENABLED;
+    req.h.type = WS_MSG_SET_PROFILER_ENABLED;
     req.module = params.module;
     req.enabled = params.enabled ? 1 : 0;
 
@@ -395,12 +395,12 @@ bool ext_setProfileEnabled(ext_profileEnableParams params)
     return resp.isError != 0;
 }
 
-ext_profileTable ext_getProfileTable(void)
+ext_profilerTable ext_getProfilerTable(void)
 {
-    reqGetProfileTable_t req = {};
-    respGetProfileTable_t resp = {};
+    reqGetProfilerTable_t req = {};
+    respGetProfilerTable_t resp = {};
 
-    req.h.type = WS_MSG_GET_PROFILE_TABLE;
+    req.h.type = WS_MSG_GET_PROFILER_TABLE;
 
     if(_rpc(req, resp))
     {
@@ -411,12 +411,12 @@ ext_profileTable ext_getProfileTable(void)
     return resp.p;
 }
 
-bool ext_resetProfile(void)
+bool ext_resetProfiler(void)
 {
-    reqResetProfile_t req = {};
+    reqResetProfiler_t req = {};
     respBool_t resp = {};
 
-    req.h.type = WS_MSG_RESET_PROFILE;
+    req.h.type = WS_MSG_RESET_PROFILER;
 
     if(_rpc(req, resp))
     {
@@ -476,28 +476,12 @@ ext_recordStatus ext_getRecordStatus(void)
     return resp.p;
 }
 
-ext_controllerManifest ext_getControllerManifest(void)
+bool ext_initRocket_MPC01(ext_initRocketParams params)
 {
-    reqGetControllerManifest_t req = {};
-    respGetControllerManifest_t resp = {};
-
-    req.h.type = WS_MSG_GET_CONTROLLER_MANIFEST;
-
-    if(_rpc(req, resp))
-    {
-        // Err
-        return {};
-    }
-
-    return resp.p;
-}
-
-bool ext_setControllerParam(ext_controllerParamSet params)
-{
-    reqSetControllerParam_t req = {};
+    reqInitRocketMPC_t req = {};
     respBool_t resp = {};
 
-    req.h.type = WS_MSG_SET_CONTROLLER_PARAM;
+    req.h.type = WS_MSG_INIT_ROCKET_MPC;
     req.p = params;
 
     if(_rpc(req, resp))
@@ -508,12 +492,124 @@ bool ext_setControllerParam(ext_controllerParamSet params)
     return resp.isError != 0;
 }
 
-bool ext_initRocket_MPC01(ext_initRocketParams params)
+ext_paramManifest ext_modelGetManifest(void)
 {
-    reqInitRocketMPC_t req = {};
+    reqModelGetManifest_t req = {};
+    respModelGetManifest_t resp = {};
+
+    req.h.type = WS_MSG_MODEL_GET_MANIFEST;
+
+    if(_rpc(req, resp))
+    {
+        // Err
+        return {};
+    }
+
+    return resp.p;
+}
+
+bool ext_modelSetParam(ext_paramSet params)
+{
+    reqModelSetParam_t req = {};
     respBool_t resp = {};
 
-    req.h.type = WS_MSG_INIT_ROCKET_MPC;
+    req.h.type = WS_MSG_MODEL_SET_PARAM;
+    req.p = params;
+
+    if(_rpc(req, resp))
+    {
+        return true;
+    }
+
+    return resp.isError != 0;
+}
+
+ext_paramManifest ext_controllerGetManifest(void)
+{
+    reqControllerGetManifest_t req = {};
+    respControllerGetManifest_t resp = {};
+
+    req.h.type = WS_MSG_CONTROLLER_GET_MANIFEST;
+
+    if(_rpc(req, resp))
+    {
+        // Err
+        return {};
+    }
+
+    return resp.p;
+}
+
+bool ext_controllerSetParam(ext_paramSet params)
+{
+    reqControllerSetParam_t req = {};
+    respBool_t resp = {};
+
+    req.h.type = WS_MSG_CONTROLLER_SET_PARAM;
+    req.p = params;
+
+    if(_rpc(req, resp))
+    {
+        return true;
+    }
+
+    return resp.isError != 0;
+}
+
+ext_paramManifest ext_observerGetManifest(void)
+{
+    reqObserverGetManifest_t req = {};
+    respObserverGetManifest_t resp = {};
+
+    req.h.type = WS_MSG_OBSERVER_GET_MANIFEST;
+
+    if(_rpc(req, resp))
+    {
+        // Err
+        return {};
+    }
+
+    return resp.p;
+}
+
+bool ext_observerSetParam(ext_paramSet params)
+{
+    reqObserverSetParam_t req = {};
+    respBool_t resp = {};
+
+    req.h.type = WS_MSG_OBSERVER_SET_PARAM;
+    req.p = params;
+
+    if(_rpc(req, resp))
+    {
+        return true;
+    }
+
+    return resp.isError != 0;
+}
+
+ext_paramManifest ext_sensorGetManifest(void)
+{
+    reqSensorGetManifest_t req = {};
+    respSensorGetManifest_t resp = {};
+
+    req.h.type = WS_MSG_SENSOR_GET_MANIFEST;
+
+    if(_rpc(req, resp))
+    {
+        // Err
+        return {};
+    }
+
+    return resp.p;
+}
+
+bool ext_sensorSetParam(ext_paramSet params)
+{
+    reqSensorSetParam_t req = {};
+    respBool_t resp = {};
+
+    req.h.type = WS_MSG_SENSOR_SET_PARAM;
     req.p = params;
 
     if(_rpc(req, resp))

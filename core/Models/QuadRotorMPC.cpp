@@ -51,7 +51,8 @@
 #include "log.hpp"
 #include "profile.hpp"
 #include "Recorder.hpp"
-#include "estimator_params.hpp"
+#include "observer_params.hpp"   // libs/estimate -- observer knobs registration
+#include "sensor_params.hpp"     // libs/sensor   -- sensor knobs registration + measuredThrough
 
 
 // State indexes (match CDS::Dynamics::QUADROTOR_MPC_01::StateName)
@@ -537,45 +538,57 @@ bool QuadRotorMPC::GetCurrentTimeSeconds(core_coord_t& currentTimeSeconds)
 // step (also the horizon spacing); max_iters caps the iLQR iterations per solve.
 // The horizon N is compile-time (fixed buffers) and exposed read-only. No gain to
 // re-synthesise: the MPC re-solves from scratch every control step.
+// Per-axis group names for the position sensor bank (x/y/z).
+static const char* const SENSOR_GROUPS[3] = { "Sensor x", "Sensor y", "Sensor z" };
+
 void QuadRotorMPC::BuildParamTable()
 {
-    m_params.clear();
+    // Model bucket: the (compile-time, read-only) prediction horizon.
+    m_modelParams.clear();
+    m_modelParams.add("solver", "horizon N", false, [this]{ return static_cast<double>(QuadRotorMPC::HORIZON); });
+
+    // Controller bucket: cost weights + solver knobs.
+    m_controllerParams.clear();
     // State-error cost weights (the MPC's analogue of the LQR Q, one scalar per
     // state block rather than a full diagonal).
-    m_params.add("Q (state cost)", "position", true, [this]{ return m_wp; },
+    m_controllerParams.add("Q (state cost)", "position", true, [this]{ return m_wp; },
                  [this](double v){ if (v < 0.0) return true; m_wp = v; return false; });
-    m_params.add("Q (state cost)", "attitude", true, [this]{ return m_wq; },
+    m_controllerParams.add("Q (state cost)", "attitude", true, [this]{ return m_wq; },
                  [this](double v){ if (v < 0.0) return true; m_wq = v; return false; });
-    m_params.add("Q (state cost)", "velocity", true, [this]{ return m_wv; },
+    m_controllerParams.add("Q (state cost)", "velocity", true, [this]{ return m_wv; },
                  [this](double v){ if (v < 0.0) return true; m_wv = v; return false; });
-    m_params.add("Q (state cost)", "body rate", true, [this]{ return m_ww; },
+    m_controllerParams.add("Q (state cost)", "body rate", true, [this]{ return m_ww; },
                  [this](double v){ if (v < 0.0) return true; m_ww = v; return false; });
     // Control-effort cost weight (the analogue of the LQR R).
-    m_params.add("R (control cost)", "thrust", true, [this]{ return m_wu; },
+    m_controllerParams.add("R (control cost)", "thrust", true, [this]{ return m_wu; },
                  [this](double v){ if (v <= 0.0) return true; m_wu = v; return false; });
-    // Solver knobs: terminal-cost weight, control step, iteration cap, and the
-    // (compile-time, read-only) prediction horizon.
-    m_params.add("solver", "terminal weight", true, [this]{ return m_wterm; },
+    // Solver knobs: terminal-cost weight, control step, iteration cap.
+    m_controllerParams.add("solver", "terminal weight", true, [this]{ return m_wterm; },
                  [this](double v){ if (v < 0.0) return true; m_wterm = v; return false; });
-    m_params.add("solver", "dt_mpc [s]", true, [this]{ return m_dtMpc; },
+    m_controllerParams.add("solver", "dt_mpc [s]", true, [this]{ return m_dtMpc; },
                  [this](double v){ if (v <= 0.0) return true; m_dtMpc = v; return false; });
-    m_params.add("solver", "max iters", true, [this]{ return static_cast<double>(m_maxIters); },
+    m_controllerParams.add("solver", "max iters", true, [this]{ return static_cast<double>(m_maxIters); },
                  [this](double v){ const int n = static_cast<int>(v + 0.5); if (n < 1) return true; m_maxIters = n; return false; });
-    m_params.add("solver", "horizon N", false, [this]{ return static_cast<double>(QuadRotorMPC::HORIZON); });
 
-    // Observer covariances + per-axis position sensor knobs (ride the same
-    // manifest; a covariance change re-synthesises the gain).
-    appendEstimatorParams(m_params, m_obsEnabled, m_posSensor,
-                          m_obsQpos, m_obsQvel, m_obsQdist, m_obsRpos,
-                          [this]{ BuildObserver(); });
+    // Observer bucket: covariances + enable (a covariance change re-synthesises
+    // the gain off the tick path).
+    m_observerParams.clear();
+    estimate::appendObserverParams(m_observerParams, m_obsEnabled,
+                                   m_obsQpos, m_obsQvel, m_obsQdist, m_obsRpos,
+                                   [this]{ BuildObserver(); });
+
+    // Sensor bucket: per-axis position-sensor knobs.
+    m_sensorParams.clear();
+    sensor::appendSensorParams(m_sensorParams, m_posSensor, SENSOR_GROUPS);
 }
 
-bool QuadRotorMPC::GetControllerManifest(char* buf, std::size_t n)
-{
-    m_params.buildManifest(buf, n);
-    return false;
-}
-
-bool QuadRotorMPC::SetControllerParam(int id, double value) { return m_params.set(id, value); }
+bool QuadRotorMPC::GetModelManifest(char* buf, std::size_t n)      { m_modelParams.buildManifest(buf, n); return false; }
+bool QuadRotorMPC::SetModelParam(int id, double value)            { return m_modelParams.set(id, value); }
+bool QuadRotorMPC::GetControllerManifest(char* buf, std::size_t n){ m_controllerParams.buildManifest(buf, n); return false; }
+bool QuadRotorMPC::SetControllerParam(int id, double value)      { return m_controllerParams.set(id, value); }
+bool QuadRotorMPC::GetObserverManifest(char* buf, std::size_t n)  { m_observerParams.buildManifest(buf, n); return false; }
+bool QuadRotorMPC::SetObserverParam(int id, double value)        { return m_observerParams.set(id, value); }
+bool QuadRotorMPC::GetSensorManifest(char* buf, std::size_t n)    { m_sensorParams.buildManifest(buf, n); return false; }
+bool QuadRotorMPC::SetSensorParam(int id, double value)          { return m_sensorParams.set(id, value); }
 
 } // namespace CDS

@@ -88,10 +88,17 @@ bool core_plantBeginStaging(core_coord_t safetyAltitude);
 // Abort auto-staging (hold in place). Returns true on error
 bool core_plantStopStaging(void);
 
-// Get the active controller's parameter manifest (a TSV listing of the exposed
-// parameters) into `buf` (capacity `n`). Returns true on error.
-bool core_getControllerManifest(char* buf, std::size_t n);
-
-// Set one controller parameter, identified by its manifest id, to `value`.
-// Returns true on error (no model, bad id, read-only or rejected value).
-bool core_setControllerParam(int id, double value);
+// Tunable-parameter interface, split by domain (model / controller / observer /
+// sensor). Each core_<domain>GetManifest writes that domain's parameter manifest
+// (a TSV listing of the exposed parameters) into `buf` (capacity `n`); each
+// core_<domain>SetParam sets one parameter, identified by its manifest id, to
+// `value`. All return true on error (no model, bad id, read-only or rejected
+// value); a domain a model does not expose yields an empty manifest.
+bool core_modelGetManifest(char* buf, std::size_t n);
+bool core_modelSetParam(int id, double value);
+bool core_controllerGetManifest(char* buf, std::size_t n);
+bool core_controllerSetParam(int id, double value);
+bool core_observerGetManifest(char* buf, std::size_t n);
+bool core_observerSetParam(int id, double value);
+bool core_sensorGetManifest(char* buf, std::size_t n);
+bool core_sensorSetParam(int id, double value);

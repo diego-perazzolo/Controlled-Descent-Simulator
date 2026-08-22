@@ -36,6 +36,7 @@ target_include_directories(cds_core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/Trajectory
     ${CMAKE_CURRENT_SOURCE_DIR}/../libs/integrate
     ${CMAKE_CURRENT_SOURCE_DIR}/../libs/control
+    ${CMAKE_CURRENT_SOURCE_DIR}/../libs/param
     ${CMAKE_CURRENT_SOURCE_DIR}/../libs/estimate
     ${CMAKE_CURRENT_SOURCE_DIR}/../libs/sensor
     ${CMAKE_CURRENT_SOURCE_DIR}/../libs/log

@@ -309,6 +309,18 @@ are described in [`models.md`](models.md).
 │   │   ├── ilqr.hpp                            # Generic control-limited iLQR/DDP solver (header-only)
 │   │   ├── test/ilqr_test.cpp                  # Self-contained solver acid test (double integrator)
 │   │   └── bind/                               # C-ABI shim + ilqr_conformance.py (C++↔Python KKT certificate)
+│   ├── param/                                  # Generic tunable-parameter registry (domain-agnostic)
+│   │   └── param_table.hpp                     # ParamTable: TSV manifest + set-by-id, shared by model/controller/observer/sensor
+│   ├── estimate/                               # Hand-written model-agnostic estimators (AGENTS.md rule 10)
+│   │   ├── observer.hpp                        # Generic dual-LQR observer (header-only)
+│   │   ├── trans_disturbance_observer.hpp      # Reusable offset-free translational disturbance observer
+│   │   ├── observer_params.hpp                 # Observer knobs → ParamTable (libs/param)
+│   │   ├── test/                               # Self-contained observer + TDO acid tests
+│   │   └── bind/                               # C-ABI shim + observer_conformance.py (C++↔Python certificate)
+│   ├── sensor/                                 # Measurement corruptor (per-channel noise/bias/enable)
+│   │   ├── sensor_model.hpp                    # Per-channel SensorModel (Gaussian noise + bias + dropout)
+│   │   ├── sensor_params.hpp                   # Sensor knobs → ParamTable (libs/param) + measuredThrough
+│   │   └── test/sensor_model_test.cpp          # Self-contained sensor acid test
 │   ├── log/                                    # Deferred-format logger (opt-in, runtime-levelled)
 │   │   ├── log.hpp / LogRing.hpp               # Registry + CDS_LOG_* macros; wait-free MPSC ring
 │   │   ├── LogSinks.hpp / LogUiSink.hpp        # Console/File sinks; recent-lines UI buffer

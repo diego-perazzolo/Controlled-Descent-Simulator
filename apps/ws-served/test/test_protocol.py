@@ -245,7 +245,7 @@ def run_tests(s):
     n_logmod = struct.unpack("<f", p[1202:1206])[0]
     print(f"get log modules OK (count={n_logmod:.0f})")
 
-    p = rpc(s, header(MSG["GET_PROFILE_MODULES"]))       # same shape as log modules
+    p = rpc(s, header(MSG["GET_PROFILER_MODULES"]))       # same shape as log modules
     assert len(p) == 1206, f"profile modules size {len(p)}"
     print("get profile modules OK")
 
@@ -255,7 +255,7 @@ def run_tests(s):
     dropped = struct.unpack("<f", p[3806:3810])[0]
     print(f"get log batch OK (count={n_lines:.0f}, dropped={dropped:.0f})")
 
-    p = rpc(s, header(MSG["GET_PROFILE_TABLE"]))        # header(2) + char[3600] + count
+    p = rpc(s, header(MSG["GET_PROFILER_TABLE"]))        # header(2) + char[3600] + count
     assert len(p) == 3606, f"profile table size {len(p)}"
     print("get profile table OK")
 
@@ -266,12 +266,12 @@ def run_tests(s):
     assert struct.unpack("<BBB", p)[2] == 1, "set log level should reject out-of-range module"
     print("set log level out-of-range rejected OK")
 
-    p = rpc(s, header(MSG["SET_PROFILE_ENABLED"]) + struct.pack("<fB", 999.0, 1))
+    p = rpc(s, header(MSG["SET_PROFILER_ENABLED"]) + struct.pack("<fB", 999.0, 1))
     assert struct.unpack("<BBB", p)[2] == 1, "set profile enabled should reject out-of-range module"
     print("set profile enabled out-of-range rejected OK")
 
     # reset profiler stats: always succeeds
-    p = rpc(s, header(MSG["RESET_PROFILE"]))
+    p = rpc(s, header(MSG["RESET_PROFILER"]))
     assert struct.unpack("<BBB", p)[2] == 0, "reset profile failed"
     print("reset profile OK")
 
@@ -307,7 +307,7 @@ def run_tests(s):
     # diagonal (16 Q + 4 R = 20 rows). Read the manifest, set a weight by id, and
     # confirm the change round-trips; a bad id must be rejected.
     def manifest():
-        p = rpc(s, header(MSG["GET_CONTROLLER_MANIFEST"]))
+        p = rpc(s, header(MSG["CONTROLLER_GET_MANIFEST"]))
         assert len(p) == 2050, f"manifest size {len(p)}"
         text = p[2:2050].split(b"\x00", 1)[0].decode("ascii", "replace")
         rows = [ln.split("\t") for ln in text.splitlines() if ln]
@@ -317,12 +317,12 @@ def run_tests(s):
     assert len(rows) == 20, f"expected 20 controller params, got {len(rows)}"
     assert rows[0][1] == "Q" and rows[0][3] == "rw", f"unexpected first row {rows[0]}"
     old = float(rows[0][4])
-    p = rpc(s, header(MSG["SET_CONTROLLER_PARAM"]) + struct.pack("<2f", 0.0, 5000.0))
+    p = rpc(s, header(MSG["CONTROLLER_SET_PARAM"]) + struct.pack("<2f", 0.0, 5000.0))
     assert struct.unpack("<BBB", p)[2] == 0, "set controller param (id 0) failed"
     assert abs(float(manifest()[0][4]) - 5000.0) < 1e-3, "controller param did not update"
-    p = rpc(s, header(MSG["SET_CONTROLLER_PARAM"]) + struct.pack("<2f", 999.0, 1.0))
+    p = rpc(s, header(MSG["CONTROLLER_SET_PARAM"]) + struct.pack("<2f", 999.0, 1.0))
     assert struct.unpack("<BBB", p)[2] == 1, "out-of-range controller id should be rejected"
-    rpc(s, header(MSG["SET_CONTROLLER_PARAM"]) + struct.pack("<2f", 0.0, old))  # restore
+    rpc(s, header(MSG["CONTROLLER_SET_PARAM"]) + struct.pack("<2f", 0.0, old))  # restore
     print(f"controller params OK (20 rows, set/round-trip/reject)")
 
     # close politely

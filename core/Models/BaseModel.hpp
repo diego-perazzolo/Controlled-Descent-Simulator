@@ -55,18 +55,32 @@ namespace CDS
         virtual bool GetTrackingErrors(core_trackingErrors_t& tErrors) = 0;
         virtual bool GetCurrentTimeSeconds(core_coord_t& currentTimeSeconds) = 0;
 
-        // Controller-parameter interface (interactive tuning; not on the tick
-        // path). GetControllerManifest writes a TSV listing of the exposed
+        // Tunable-parameter interface (interactive tuning; not on the tick
+        // path), split by domain: model (structural knobs, e.g. the MPC horizon),
+        // controller (cost weights / solver), observer (estimator covariances +
+        // enable) and sensor (per-axis bias / noise / enable). Each
+        // Get<Domain>Manifest writes a TSV listing of that domain's exposed
         // parameters (`id\tgroup\tlabel\tflags\tvalue\n` per line);
-        // SetControllerParam sets one parameter by its manifest id. The default
-        // is an empty manifest / no settable parameters -- a model with no
-        // exposed controller knobs need not override these. Returns true on error.
-        virtual bool GetControllerManifest(char* buf, std::size_t n)
+        // Set<Domain>Param sets one parameter by its manifest id. The defaults
+        // are an empty manifest / no settable parameters -- a model exposes only
+        // the domains it has. All return true on error.
+        virtual bool GetModelManifest(char* buf, std::size_t n)      { return emptyManifest(buf, n); }
+        virtual bool SetModelParam(int /*id*/, double /*value*/)      { return true; }
+        virtual bool GetControllerManifest(char* buf, std::size_t n) { return emptyManifest(buf, n); }
+        virtual bool SetControllerParam(int /*id*/, double /*value*/) { return true; }
+        virtual bool GetObserverManifest(char* buf, std::size_t n)   { return emptyManifest(buf, n); }
+        virtual bool SetObserverParam(int /*id*/, double /*value*/)   { return true; }
+        virtual bool GetSensorManifest(char* buf, std::size_t n)     { return emptyManifest(buf, n); }
+        virtual bool SetSensorParam(int /*id*/, double /*value*/)     { return true; }
+
+        protected:
+        // Write an empty (NUL-terminated) manifest into `buf`. Returns false (no
+        // error): the shared default for a domain a model does not expose.
+        static bool emptyManifest(char* buf, std::size_t n)
         {
             if (buf != nullptr && n > 0) buf[0] = '\0';
             return false;
         }
-        virtual bool SetControllerParam(int /*id*/, double /*value*/) { return true; }
         /* Private variables */
 
     };

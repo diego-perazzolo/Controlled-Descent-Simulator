@@ -262,46 +262,46 @@ std::vector<uint8_t> server_dispatch(const std::vector<uint8_t>& msg)
             return _respBool(h, ext_setLogLevel(req.p));
         }
 
-        case WS_MSG_GET_PROFILE_MODULES:
+        case WS_MSG_GET_PROFILER_MODULES:
         {
-            reqGetProfileModules_t req = {};
+            reqGetProfilerModules_t req = {};
             if(_parse(msg, req)) return _respBool(h, true);
 
-            respGetProfileModules_t resp = {};
+            respGetProfilerModules_t resp = {};
             resp.h = h;
-            resp.p = ext_getProfileModules();
+            resp.p = ext_getProfilerModules();
             return _serialize(resp);
         }
 
-        case WS_MSG_SET_PROFILE_ENABLED:
+        case WS_MSG_SET_PROFILER_ENABLED:
         {
-            reqSetProfileEnabled_t req = {};
+            reqSetProfilerEnabled_t req = {};
             if(_parse(msg, req)) return _respBool(h, true);
 
-            ext_profileEnableParams par = {};
+            ext_profilerEnableParams par = {};
             par.module = req.module;
             par.enabled = req.enabled != 0;
 
-            return _respBool(h, ext_setProfileEnabled(par));
+            return _respBool(h, ext_setProfilerEnabled(par));
         }
 
-        case WS_MSG_GET_PROFILE_TABLE:
+        case WS_MSG_GET_PROFILER_TABLE:
         {
-            reqGetProfileTable_t req = {};
+            reqGetProfilerTable_t req = {};
             if(_parse(msg, req)) return _respBool(h, true);
 
-            respGetProfileTable_t resp = {};
+            respGetProfilerTable_t resp = {};
             resp.h = h;
-            resp.p = ext_getProfileTable();
+            resp.p = ext_getProfilerTable();
             return _serialize(resp);
         }
 
-        case WS_MSG_RESET_PROFILE:
+        case WS_MSG_RESET_PROFILER:
         {
-            reqResetProfile_t req = {};
+            reqResetProfiler_t req = {};
             if(_parse(msg, req)) return _respBool(h, true);
 
-            return _respBool(h, ext_resetProfile());
+            return _respBool(h, ext_resetProfiler());
         }
 
         case WS_MSG_SET_DIAG_FILES:
@@ -342,26 +342,6 @@ std::vector<uint8_t> server_dispatch(const std::vector<uint8_t>& msg)
             return _serialize(resp);
         }
 
-        case WS_MSG_GET_CONTROLLER_MANIFEST:
-        {
-            reqGetControllerManifest_t req = {};
-            if(_parse(msg, req)) return _respBool(h, true);
-
-            respGetControllerManifest_t resp = {};
-            resp.h = h;
-            resp.p = ext_getControllerManifest();
-            return _serialize(resp);
-        }
-
-        case WS_MSG_SET_CONTROLLER_PARAM:
-        {
-            reqSetControllerParam_t req = {};
-            if(_parse(msg, req)) return _respBool(h, true);
-
-            printf("[cds-server] set controller param\n");
-            return _respBool(h, ext_setControllerParam(req.p));
-        }
-
         case WS_MSG_INIT_ROCKET_MPC:
         {
             reqInitRocketMPC_t req = {};
@@ -369,6 +349,86 @@ std::vector<uint8_t> server_dispatch(const std::vector<uint8_t>& msg)
 
             printf("[cds-server] init rocket mpc\n");
             return _respBool(h, ext_initRocket_MPC01(req.p));
+        }
+
+        case WS_MSG_MODEL_GET_MANIFEST:
+        {
+            reqModelGetManifest_t req = {};
+            if(_parse(msg, req)) return _respBool(h, true);
+
+            respModelGetManifest_t resp = {};
+            resp.h = h;
+            resp.p = ext_modelGetManifest();
+            return _serialize(resp);
+        }
+
+        case WS_MSG_MODEL_SET_PARAM:
+        {
+            reqModelSetParam_t req = {};
+            if(_parse(msg, req)) return _respBool(h, true);
+
+            printf("[cds-server] set model param\n");
+            return _respBool(h, ext_modelSetParam(req.p));
+        }
+
+        case WS_MSG_CONTROLLER_GET_MANIFEST:
+        {
+            reqControllerGetManifest_t req = {};
+            if(_parse(msg, req)) return _respBool(h, true);
+
+            respControllerGetManifest_t resp = {};
+            resp.h = h;
+            resp.p = ext_controllerGetManifest();
+            return _serialize(resp);
+        }
+
+        case WS_MSG_CONTROLLER_SET_PARAM:
+        {
+            reqControllerSetParam_t req = {};
+            if(_parse(msg, req)) return _respBool(h, true);
+
+            printf("[cds-server] set controller param\n");
+            return _respBool(h, ext_controllerSetParam(req.p));
+        }
+
+        case WS_MSG_OBSERVER_GET_MANIFEST:
+        {
+            reqObserverGetManifest_t req = {};
+            if(_parse(msg, req)) return _respBool(h, true);
+
+            respObserverGetManifest_t resp = {};
+            resp.h = h;
+            resp.p = ext_observerGetManifest();
+            return _serialize(resp);
+        }
+
+        case WS_MSG_OBSERVER_SET_PARAM:
+        {
+            reqObserverSetParam_t req = {};
+            if(_parse(msg, req)) return _respBool(h, true);
+
+            printf("[cds-server] set observer param\n");
+            return _respBool(h, ext_observerSetParam(req.p));
+        }
+
+        case WS_MSG_SENSOR_GET_MANIFEST:
+        {
+            reqSensorGetManifest_t req = {};
+            if(_parse(msg, req)) return _respBool(h, true);
+
+            respSensorGetManifest_t resp = {};
+            resp.h = h;
+            resp.p = ext_sensorGetManifest();
+            return _serialize(resp);
+        }
+
+        case WS_MSG_SENSOR_SET_PARAM:
+        {
+            reqSensorSetParam_t req = {};
+            if(_parse(msg, req)) return _respBool(h, true);
+
+            printf("[cds-server] set sensor param\n");
+            return _respBool(h, ext_sensorSetParam(req.p));
         }
 
         default:
