@@ -172,6 +172,30 @@ V12 integrateStep(const Model& model, const V12& x, const V4& u, const std::arra
     return integrate::rk4_step<NX>(x, dt, [&](const V12& s){ return model.Dynamics(s, u, uF); });
 }
 
+// ---- reference preview over the prediction horizon (one StageRef per stage) ----
+// Past the end of the trajectory the last sampled stage is held. Returns true
+// (error) when not even the first stage can be sampled: there is nothing to hold
+// then, and the caller must skip the solve rather than read an unset stage.
+bool sampleHorizon(TrajectoryManager& tm, double t0, double dtMpc, std::size_t horizon,
+                   std::array<StageRef, RocketMPC::MAX_HORIZON + 1>& refs)
+{
+    for (std::size_t k = 0; k <= horizon; ++k)
+    {
+        Reference_t r;
+        if (tm.GetReference(t0 + k * dtMpc, r))
+        {
+            if (k == 0) { return true; }     // no first stage to hold: nothing to solve from
+            refs[k] = refs[k - 1];           // beyond the trajectory: hold the last
+            continue;
+        }
+        refs[k].p   = {{r.pos[0], r.pos[1], r.pos[2]}};
+        refs[k].ang = {{0.0, 0.0, r.yaw}};   // upright attitude at the commanded heading
+        refs[k].v   = {{r.vel[0], r.vel[1], r.vel[2]}};
+        refs[k].w   = {{0.0, 0.0, 0.0}};
+    }
+    return false;
+}
+
 void initState(const Reference_t& ref, V12& s)
 {
     s.fill(0.0);
@@ -332,102 +356,15 @@ bool RocketMPC::PerformIntegration(const core_stepParams_t& params)
     auto dynamics = (Dynamics::ROCKET_MPC_01*) m_modelPtr;
     if (dynamics == nullptr || m_trajectoryManagerPtr == nullptr) { return true; }
 
-    // ---- current reference: drives the tracking errors, and is the base of the
-    //      horizon preview when we re-solve ----
+    /* Current reference: drives the tracking errors, and anchors the horizon
+       preview when the controller re-solves */
     Reference_t ref0;
     if (m_trajectoryManagerPtr->GetReference(m_time, ref0)) { return true; }
+    UpdateTrackingErrors(ref0);
 
-    // ---- tracking errors (position + heading) w.r.t. the current reference ----
-    m_trackingErr[0] = ref0.pos[0] - m_state[IDX_X];
-    m_trackingErr[1] = ref0.pos[1] - m_state[IDX_Y];
-    m_trackingErr[2] = ref0.pos[2] - m_state[IDX_Z];
-    m_trackingErr[3] = wrapPi(ref0.yaw - m_state[IDX_PSI]);
+    /* The solve runs at the control cadence only; in between, m_lastU0 is held */
+    if (!m_seeded || (m_time - m_lastSolveTime) >= m_dtMpc) { SolveMpc(); }
 
-    // ---- re-solve the MPC only at the control cadence (every DT_MPC of model
-    //      time); hold the last command as a zero-order hold in between. The
-    //      horizon already assumes a DT_MPC ZOH, so this is both faithful and
-    //      cheap: it keeps the expensive solve off most ticks, so a high tick
-    //      rate cannot monopolise the system lock (the sim degrades gracefully
-    //      instead of freezing). ----
-    if (!m_seeded || (m_time - m_lastSolveTime) >= m_dtMpc)
-    {
-        CDS_PROFILE(profile, "Total MPC execution");
-        const Weights W{m_wp, m_wq, m_wv, m_ww, m_wterm, m_rF1, m_rT1, m_rT2, m_rT3};
-        // hover command and per-input actuator box from the model params
-        using PN = Dynamics::ROCKET_MPC_01::ParamName;
-        const double mg = dynamics->GetParam(PN::Mass) * dynamics->GetParam(PN::Gravity);
-        const V4 uref{{mg, 0.0, 0.0, 0.0}};
-        const V4 lo{{dynamics->GetParam(PN::ThrustMin), dynamics->GetParam(PN::TorqueXMin),
-                     dynamics->GetParam(PN::TorqueYMin), dynamics->GetParam(PN::TorqueZMin)}};
-        const V4 hi{{dynamics->GetParam(PN::ThrustMax), dynamics->GetParam(PN::TorqueXMax),
-                     dynamics->GetParam(PN::TorqueYMax), dynamics->GetParam(PN::TorqueZMax)}};
-        if (!m_seeded) { for (auto& u : m_warmStart) u = uref; }
-
-        // sample the reference over the horizon (preview)
-        std::array<StageRef, RocketMPC::MAX_HORIZON + 1> refs;
-        for (std::size_t k = 0; k <= m_horizon; ++k)
-        {
-            Reference_t r;
-            if (m_trajectoryManagerPtr->GetReference(m_time + k * m_dtMpc, r))
-            {
-                refs[k] = refs[k - 1];           // beyond the trajectory: hold the last (defensive)
-                continue;
-            }
-            refs[k].p   = {{r.pos[0], r.pos[1], r.pos[2]}};
-            refs[k].ang = {{0.0, 0.0, r.yaw}};   // upright attitude at the commanded heading
-            refs[k].v   = {{r.vel[0], r.vel[1], r.vel[2]}};
-            refs[k].w   = {{0.0, 0.0, 0.0}};
-        }
-
-        // build the rocket closures and hand off to the generic iLQR. The MPC
-        // predicts the external force as the observer's disturbance estimate
-        // (predForce = d_hat, constant over the horizon) so the steady-state
-        // tracking error is driven to zero; with the observer off this is the
-        // former zero-force prediction, unchanged. The initial state likewise
-        // uses the observer's position/velocity estimate when active. Euler state
-        // needs no projection (no-op).
-        std::array<double,3> predForce{{0.0, 0.0, 0.0}};
-        V12 x0 = m_state;
-        if (m_obsEnabled)
-        {
-            if (m_obs.Seeded())
-            {
-                const auto rHat = m_obs.Position();
-                const auto vHat = m_obs.Velocity();
-                const auto dHat = m_obs.Disturbance();
-                x0[IDX_X]=rHat[0];  x0[IDX_Y]=rHat[1];  x0[IDX_Z]=rHat[2];
-                x0[IDX_VX]=vHat[0]; x0[IDX_VY]=vHat[1]; x0[IDX_VZ]=vHat[2];
-                predForce = {{dHat[0], dHat[1], dHat[2]}};
-            }
-        }
-        else
-        {
-            // No estimator: the controller reads the raw (sensor-corrupted)
-            // position measurement directly, so sensor noise/bias bite without
-            // any filtering. Identity sensor -> the true position, unchanged.
-            const auto yPos = measuredThrough(m_posSensor,
-                std::array<double,POS_DIM>{{ m_state[IDX_X], m_state[IDX_Y], m_state[IDX_Z] }});
-            x0[IDX_X]=yPos[0]; x0[IDX_Y]=yPos[1]; x0[IDX_Z]=yPos[2];
-        }
-        auto fdyn  = [&](const V12& x, const V4& u){ return dynamics->Dynamics(x, u, predForce); };
-        auto jac   = [&](const V12& x, const V4& u, double fx[NX][NX], double fu[NX][NU]){ dynamics->Jacobians(x, u, fx, fu); };
-        auto proj  = [](V12&){ /* Euler: no state projection */ };
-        auto scost = [&](const V12& x, const V4& u, std::size_t k){ return rocketStageCost(x, u, refs[k], uref, W); };
-        auto tcost = [&](const V12& x){ return rocketTermCost(x, refs[m_horizon], W); };
-
-        V4 u0;
-        {
-            CDS_PROFILE(profile, "MPC solve");
-            control::solve<NX, NU, RocketMPC::MAX_HORIZON>(
-                x0, fdyn, jac, proj, scost, tcost, lo, hi, m_dtMpc, m_maxIters, m_horizon, m_warmStart, u0);
-        }
-
-        m_lastU0        = u0;
-        m_lastSolveTime = m_time;
-        m_seeded        = true;
-    }
-
-    // ---- apply the held command (ZOH), integrate the plant by the measured step ----
     m_userForces[0] = params.user_fX;
     m_userForces[1] = params.user_fY;
     m_userForces[2] = params.user_fZ;
@@ -436,52 +373,137 @@ bool RocketMPC::PerformIntegration(const core_stepParams_t& params)
         m_state = integrateStep(*dynamics, m_state, m_lastU0, m_userForces, params.timestep);
     }
 
-    // ---- disturbance observer update (opt-in) -------------------------------
-    // Every tick at the measured dt off the fresh state: known input a_known is
-    // the model's force-free acceleration; position measured through the sensor
-    // bank; a dropped axis is handled as predict-only inside the helper.
-    if (m_obsEnabled)
-    {
-        if (!m_obs.Seeded())
-            m_obs.Seed({{ m_state[IDX_X],  m_state[IDX_Y],  m_state[IDX_Z]  }},
-                       {{ m_state[IDX_VX], m_state[IDX_VY], m_state[IDX_VZ] }});
-
-        const std::array<double,3> zeroF{{0.0, 0.0, 0.0}};
-        const V12 xdot = dynamics->Dynamics(m_state, m_lastU0, zeroF);
-        const std::array<double,POS_DIM> aKnown{{ xdot[IDX_VX], xdot[IDX_VY], xdot[IDX_VZ] }};
-
-        const std::array<double,POS_DIM> truthPos{{ m_state[IDX_X], m_state[IDX_Y], m_state[IDX_Z] }};
-        std::array<double,POS_DIM> yPos{};
-        std::array<bool,POS_DIM>   valid{};
-        m_posSensor.Apply(truthPos, yPos, valid);
-
-        m_obs.Step(aKnown, yPos, valid, params.timestep);
-    }
+    if (m_obsEnabled) { UpdateObserver(params.timestep); }
 
     m_time += params.timestep;
-
-    // Data recorder: one wide row per tick. Row alignment: the state is
-    // post-integration at t_sim; m_lastU0 is the MPC command held over the step
-    // (zero-order hold between re-solves); the reference (ref0) and tracking
-    // error are sampled at the step start (they lead the state by one dt).
-#if CDS_RECORD_ENABLED
-    {
-        const std::array<double, 31> row{{
-            m_time,
-            m_state[IDX_X], m_state[IDX_Y], m_state[IDX_Z],
-            m_state[IDX_ALPHA], m_state[IDX_BETA], m_state[IDX_PSI],
-            m_state[IDX_VX], m_state[IDX_VY], m_state[IDX_VZ],
-            m_state[IDX_DALPHA], m_state[IDX_DBETA], m_state[IDX_DPSI],
-            m_lastU0[0], m_lastU0[1], m_lastU0[2], m_lastU0[3],
-            ref0.pos[0], ref0.pos[1], ref0.pos[2], ref0.yaw, ref0.vel[0], ref0.vel[1], ref0.vel[2],
-            m_trackingErr[0], m_trackingErr[1], m_trackingErr[2], m_trackingErr[3],
-            m_userForces[0], m_userForces[1], m_userForces[2],
-        }};
-        recorder.record(row);
-    }
-#endif
+    RecordTick(ref0);
 
     return false;
+}
+
+void RocketMPC::UpdateTrackingErrors(const Reference_t& ref0)
+{
+    m_trackingErr[0] = ref0.pos[0] - m_state[IDX_X];
+    m_trackingErr[1] = ref0.pos[1] - m_state[IDX_Y];
+    m_trackingErr[2] = ref0.pos[2] - m_state[IDX_Z];
+    m_trackingErr[3] = wrapPi(ref0.yaw - m_state[IDX_PSI]);
+}
+
+void RocketMPC::SolveMpc(void)
+{
+    auto dynamics = (Dynamics::ROCKET_MPC_01*) m_modelPtr;
+
+    CDS_PROFILE(profile, "Total MPC execution");
+    const Weights W{m_wp, m_wq, m_wv, m_ww, m_wterm, m_rF1, m_rT1, m_rT2, m_rT3};
+
+    /* hover command and per-input actuator box from the model params */
+    using PN = Dynamics::ROCKET_MPC_01::ParamName;
+    const double mg = dynamics->GetParam(PN::Mass) * dynamics->GetParam(PN::Gravity);
+    const V4 uref{{mg, 0.0, 0.0, 0.0}};
+    const V4 lo{{dynamics->GetParam(PN::ThrustMin), dynamics->GetParam(PN::TorqueXMin),
+                 dynamics->GetParam(PN::TorqueYMin), dynamics->GetParam(PN::TorqueZMin)}};
+    const V4 hi{{dynamics->GetParam(PN::ThrustMax), dynamics->GetParam(PN::TorqueXMax),
+                 dynamics->GetParam(PN::TorqueYMax), dynamics->GetParam(PN::TorqueZMax)}};
+    if (!m_seeded) { for (auto& u : m_warmStart) u = uref; }
+
+    std::array<StageRef, RocketMPC::MAX_HORIZON + 1> refs;
+    if (sampleHorizon(*m_trajectoryManagerPtr, m_time, m_dtMpc, m_horizon, refs))
+    {
+        /* No reference at the horizon start: keep holding the last command */
+        return;
+    }
+
+    std::array<double, POS_DIM> predForce{{0.0, 0.0, 0.0}};
+    const V12 x0 = ControllerInitialState(predForce);
+
+    /* rocket-specific closures handed to the generic iLQR (Euler state: no
+       projection needed) */
+    auto fdyn  = [&](const V12& x, const V4& u){ return dynamics->Dynamics(x, u, predForce); };
+    auto jac   = [&](const V12& x, const V4& u, double fx[NX][NX], double fu[NX][NU]){ dynamics->Jacobians(x, u, fx, fu); };
+    auto proj  = [](V12&){ };
+    auto scost = [&](const V12& x, const V4& u, std::size_t k){ return rocketStageCost(x, u, refs[k], uref, W); };
+    auto tcost = [&](const V12& x){ return rocketTermCost(x, refs[m_horizon], W); };
+
+    V4 u0;
+    {
+        CDS_PROFILE(profile, "MPC solve");
+        control::solve<NX, NU, RocketMPC::MAX_HORIZON>(
+            x0, fdyn, jac, proj, scost, tcost, lo, hi, m_dtMpc, m_maxIters, m_horizon, m_warmStart, u0);
+    }
+
+    m_lastU0        = u0;
+    m_lastSolveTime = m_time;
+    m_seeded        = true;
+}
+
+RocketMPC::StateVec RocketMPC::ControllerInitialState(std::array<double, RocketMPC::POS_DIM>& predForce)
+{
+    StateVec x0 = m_state;
+    predForce = {{0.0, 0.0, 0.0}};
+
+    if (m_obsEnabled)
+    {
+        if (m_obs.Seeded())
+        {
+            const auto rHat = m_obs.Position();
+            const auto vHat = m_obs.Velocity();
+            const auto dHat = m_obs.Disturbance();
+            x0[IDX_X]=rHat[0];  x0[IDX_Y]=rHat[1];  x0[IDX_Z]=rHat[2];
+            x0[IDX_VX]=vHat[0]; x0[IDX_VY]=vHat[1]; x0[IDX_VZ]=vHat[2];
+            predForce = {{dHat[0], dHat[1], dHat[2]}};
+        }
+    }
+    else
+    {
+        /* No estimator: the raw (sensor-corrupted) position goes straight to the
+           controller, so noise and bias bite unfiltered. Identity sensor -> truth */
+        const auto yPos = measuredThrough(m_posSensor,
+            std::array<double,POS_DIM>{{ m_state[IDX_X], m_state[IDX_Y], m_state[IDX_Z] }});
+        x0[IDX_X]=yPos[0]; x0[IDX_Y]=yPos[1]; x0[IDX_Z]=yPos[2];
+    }
+
+    return x0;
+}
+
+void RocketMPC::UpdateObserver(core_coord_t dt)
+{
+    auto dynamics = (Dynamics::ROCKET_MPC_01*) m_modelPtr;
+
+    if (!m_obs.Seeded())
+        m_obs.Seed({{ m_state[IDX_X],  m_state[IDX_Y],  m_state[IDX_Z]  }},
+                   {{ m_state[IDX_VX], m_state[IDX_VY], m_state[IDX_VZ] }});
+
+    /* known force-free acceleration: exactly the MPC's prediction assumption */
+    const std::array<double,3> zeroF{{0.0, 0.0, 0.0}};
+    const V12 xdot = dynamics->Dynamics(m_state, m_lastU0, zeroF);
+    const std::array<double,POS_DIM> aKnown{{ xdot[IDX_VX], xdot[IDX_VY], xdot[IDX_VZ] }};
+
+    const std::array<double,POS_DIM> truthPos{{ m_state[IDX_X], m_state[IDX_Y], m_state[IDX_Z] }};
+    std::array<double,POS_DIM> yPos{};
+    std::array<bool,POS_DIM>   valid{};
+    m_posSensor.Apply(truthPos, yPos, valid);
+
+    m_obs.Step(aKnown, yPos, valid, dt);
+}
+
+void RocketMPC::RecordTick(const Reference_t& ref0)
+{
+#if CDS_RECORD_ENABLED
+    const std::array<double, 31> row{{
+        m_time,
+        m_state[IDX_X], m_state[IDX_Y], m_state[IDX_Z],
+        m_state[IDX_ALPHA], m_state[IDX_BETA], m_state[IDX_PSI],
+        m_state[IDX_VX], m_state[IDX_VY], m_state[IDX_VZ],
+        m_state[IDX_DALPHA], m_state[IDX_DBETA], m_state[IDX_DPSI],
+        m_lastU0[0], m_lastU0[1], m_lastU0[2], m_lastU0[3],
+        ref0.pos[0], ref0.pos[1], ref0.pos[2], ref0.yaw, ref0.vel[0], ref0.vel[1], ref0.vel[2],
+        m_trackingErr[0], m_trackingErr[1], m_trackingErr[2], m_trackingErr[3],
+        m_userForces[0], m_userForces[1], m_userForces[2],
+    }};
+    recorder.record(row);
+#else
+    (void) ref0;
+#endif
 }
 
 bool RocketMPC::GetState(core_state_t& state)

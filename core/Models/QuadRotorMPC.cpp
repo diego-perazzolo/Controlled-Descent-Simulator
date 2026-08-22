@@ -189,6 +189,31 @@ V13 integrateAndNormalize(const Model& model, const V13& x, const V4& u, const s
     return xn;
 }
 
+// ---- reference preview over the prediction horizon (one StageRef per stage) ----
+// Past the end of the trajectory the last sampled stage is held. Returns true
+// (error) when not even the first stage can be sampled: there is nothing to hold
+// then, and the caller must skip the solve rather than read an unset stage.
+bool sampleHorizon(TrajectoryManager& tm, double t0, double dtMpc, std::size_t horizon,
+                   std::array<StageRef, QuadRotorMPC::MAX_HORIZON + 1>& refs)
+{
+    for (std::size_t k = 0; k <= horizon; ++k)
+    {
+        Reference_t r;
+        if (tm.GetReference(t0 + k * dtMpc, r))
+        {
+            if (k == 0) { return true; }     // no first stage to hold: nothing to solve from
+            refs[k] = refs[k - 1];           // beyond the trajectory: hold the last
+            continue;
+        }
+        const double h = 0.5 * r.yaw;
+        refs[k].p = {{r.pos[0], r.pos[1], r.pos[2]}};
+        refs[k].q = {{std::cos(h), 0.0, 0.0, std::sin(h)}};   // level attitude at the commanded heading
+        refs[k].v = {{r.vel[0], r.vel[1], r.vel[2]}};
+        refs[k].w = {{0.0, 0.0, 0.0}};
+    }
+    return false;
+}
+
 void initState(const Reference_t& ref, V13& s)
 {
     s.fill(0.0);
@@ -343,106 +368,15 @@ bool QuadRotorMPC::PerformIntegration(const core_stepParams_t& params)
     auto dynamics = (Dynamics::QUADROTOR_MPC_01*) m_modelPtr;
     if (dynamics == nullptr || m_trajectoryManagerPtr == nullptr) { return true; }
 
-    // ---- current reference: drives the tracking errors, and is the base of the
-    //      horizon preview when we re-solve ----
+    /* Current reference: drives the tracking errors, and anchors the horizon
+       preview when the controller re-solves */
     Reference_t ref0;
     if (m_trajectoryManagerPtr->GetReference(m_time, ref0)) { return true; }
+    UpdateTrackingErrors(ref0);
 
-    // ---- tracking errors (position + heading) w.r.t. the current reference ----
-    m_trackingErr[0] = ref0.pos[0] - m_state[IDX_X];
-    m_trackingErr[1] = ref0.pos[1] - m_state[IDX_Y];
-    m_trackingErr[2] = ref0.pos[2] - m_state[IDX_Z];
-    const double qw=m_state[IDX_QW], qx=m_state[IDX_QX], qy=m_state[IDX_QY], qz=m_state[IDX_QZ];
-    const double yaw = std::atan2(2.0*(qw*qz + qx*qy), 1.0 - 2.0*(qy*qy + qz*qz));
-    double eyaw = ref0.yaw - yaw; eyaw = std::atan2(std::sin(eyaw), std::cos(eyaw));
-    m_trackingErr[3] = eyaw;
+    /* The solve runs at the control cadence only; in between, m_lastU0 is held */
+    if (!m_seeded || (m_time - m_lastSolveTime) >= m_dtMpc) { SolveMpc(); }
 
-    // ---- re-solve the MPC only at the control cadence (every DT_MPC of model
-    //      time); hold the last command as a zero-order hold in between. The
-    //      horizon already assumes a DT_MPC ZOH, so this is both faithful and
-    //      cheap: it keeps the expensive solve off most ticks, so a high tick
-    //      rate cannot monopolise the system lock (the sim degrades gracefully
-    //      instead of freezing). ----
-    if (!m_seeded || (m_time - m_lastSolveTime) >= m_dtMpc)
-    {
-        CDS_PROFILE(profile, "Total MPC execution");
-        const Weights W{m_wp, m_wq, m_wv, m_ww, m_wu, m_wterm};   // current cost weights
-        // hover command and actuator box from the model params
-        using PN = Dynamics::QUADROTOR_MPC_01::ParamName;
-        const double mg = dynamics->GetParam(PN::Mass) * dynamics->GetParam(PN::Gravity);
-        const double Th = mg / 4.0;
-        const V4 uref{{Th, Th, Th, Th}};
-        V4 lo, hi;
-        lo.fill(dynamics->GetParam(PN::ThrustMin));
-        hi.fill(dynamics->GetParam(PN::ThrustMax));
-        if (!m_seeded) { for (auto& u : m_warmStart) u = uref; }
-
-        // sample the reference over the horizon (preview)
-        std::array<StageRef, QuadRotorMPC::MAX_HORIZON + 1> refs;
-        for (std::size_t k = 0; k <= m_horizon; ++k)
-        {
-            Reference_t r;
-            if (m_trajectoryManagerPtr->GetReference(m_time + k * m_dtMpc, r))
-            {
-                refs[k] = refs[k - 1];           // beyond the trajectory: hold the last (defensive)
-                continue;
-            }
-            const double h = 0.5 * r.yaw;
-            refs[k].p = {{r.pos[0], r.pos[1], r.pos[2]}};
-            refs[k].q = {{std::cos(h), 0.0, 0.0, std::sin(h)}};   // level attitude at the commanded heading
-            refs[k].v = {{r.vel[0], r.vel[1], r.vel[2]}};
-            refs[k].w = {{0.0, 0.0, 0.0}};
-        }
-
-        // build the quad closures and hand off to the generic iLQR. The MPC
-        // predicts the external force as the observer's disturbance estimate
-        // (predForce = d_hat, constant over the horizon) so the steady-state
-        // tracking error is driven to zero; with the observer off this is the
-        // former zero-force prediction, unchanged. The initial state likewise
-        // uses the observer's position/velocity estimate when active, so a noisy
-        // or dropped position sensor degrades gracefully through x_hat.
-        std::array<double,3> predForce{{0.0, 0.0, 0.0}};
-        V13 x0 = m_state;
-        if (m_obsEnabled)
-        {
-            if (m_obs.Seeded())
-            {
-                const auto rHat = m_obs.Position();
-                const auto vHat = m_obs.Velocity();
-                const auto dHat = m_obs.Disturbance();
-                x0[IDX_X]=rHat[0];  x0[IDX_Y]=rHat[1];  x0[IDX_Z]=rHat[2];
-                x0[IDX_VX]=vHat[0]; x0[IDX_VY]=vHat[1]; x0[IDX_VZ]=vHat[2];
-                predForce = {{dHat[0], dHat[1], dHat[2]}};
-            }
-        }
-        else
-        {
-            // No estimator: the controller reads the raw (sensor-corrupted)
-            // position measurement directly, so sensor noise/bias bite without
-            // any filtering. Identity sensor -> the true position, unchanged.
-            const auto yPos = measuredThrough(m_posSensor,
-                std::array<double,POS_DIM>{{ m_state[IDX_X], m_state[IDX_Y], m_state[IDX_Z] }});
-            x0[IDX_X]=yPos[0]; x0[IDX_Y]=yPos[1]; x0[IDX_Z]=yPos[2];
-        }
-        auto fdyn  = [&](const V13& x, const V4& u){ return dynamics->Dynamics(x, u, predForce); };
-        auto jac   = [&](const V13& x, const V4& u, double fx[NX][NX], double fu[NX][NU]){ dynamics->Jacobians(x, u, fx, fu); };
-        auto proj  = [](V13& s){ normalizeQuat(s); };
-        auto scost = [&](const V13& x, const V4& u, std::size_t k){ return quadStageCost(x, u, refs[k], uref, W); };
-        auto tcost = [&](const V13& x){ return quadTermCost(x, refs[m_horizon], W); };
-
-        V4 u0;
-        {
-            CDS_PROFILE(profile, "MPC solve");
-            control::solve<NX, NU, QuadRotorMPC::MAX_HORIZON>(
-                x0, fdyn, jac, proj, scost, tcost, lo, hi, m_dtMpc, m_maxIters, m_horizon, m_warmStart, u0);
-        }
-
-        m_lastU0        = u0;
-        m_lastSolveTime = m_time;
-        m_seeded        = true;
-    }
-
-    // ---- apply the held command (ZOH), integrate the plant by the measured step ----
     m_userForces[0] = params.user_fX;
     m_userForces[1] = params.user_fY;
     m_userForces[2] = params.user_fZ;
@@ -451,58 +385,139 @@ bool QuadRotorMPC::PerformIntegration(const core_stepParams_t& params)
         m_state = integrateAndNormalize(*dynamics, m_state, m_lastU0, m_userForces, params.timestep);
     }
 
-    // ---- disturbance observer update (opt-in) -------------------------------
-    // Runs every tick at the measured dt off the fresh (post-integration) state.
-    // The known input a_known is the model's force-free acceleration (exactly
-    // the MPC's prediction assumption); the position measurement passes through
-    // the sensor bank (noise / bias / per-axis enable). A disabled or invalid
-    // channel is handled as predict-only by making its innovation zero.
-    if (m_obsEnabled)
-    {
-        if (!m_obs.Seeded())
-            m_obs.Seed({{ m_state[IDX_X],  m_state[IDX_Y],  m_state[IDX_Z]  }},
-                       {{ m_state[IDX_VX], m_state[IDX_VY], m_state[IDX_VZ] }});
-
-        // known force-free acceleration: v_dot from the model with zero external
-        // force (exactly the MPC's prediction assumption).
-        const std::array<double,3> zeroF{{0.0, 0.0, 0.0}};
-        const V13 xdot = dynamics->Dynamics(m_state, m_lastU0, zeroF);
-        const std::array<double,POS_DIM> aKnown{{ xdot[IDX_VX], xdot[IDX_VY], xdot[IDX_VZ] }};
-
-        // position measurement through the sensor bank (noise / bias / per-axis
-        // enable); the helper handles a dropped axis as predict-only.
-        const std::array<double,POS_DIM> truthPos{{ m_state[IDX_X], m_state[IDX_Y], m_state[IDX_Z] }};
-        std::array<double,POS_DIM> yPos{};
-        std::array<bool,POS_DIM>   valid{};
-        m_posSensor.Apply(truthPos, yPos, valid);
-
-        m_obs.Step(aKnown, yPos, valid, params.timestep);
-    }
+    if (m_obsEnabled) { UpdateObserver(params.timestep); }
 
     m_time += params.timestep;
-
-    // Data recorder: one wide row per tick. Row alignment: the state is
-    // post-integration at t_sim; m_lastU0 is the MPC command held over the step
-    // (zero-order hold between re-solves); the reference (ref0) and tracking
-    // error are sampled at the step start (they lead the state by one dt).
-#if CDS_RECORD_ENABLED
-    {
-        const std::array<double, 32> row{{
-            m_time,
-            m_state[IDX_X], m_state[IDX_Y], m_state[IDX_Z],
-            m_state[IDX_QW], m_state[IDX_QX], m_state[IDX_QY], m_state[IDX_QZ],
-            m_state[IDX_VX], m_state[IDX_VY], m_state[IDX_VZ],
-            m_state[IDX_WX], m_state[IDX_WY], m_state[IDX_WZ],
-            m_lastU0[0], m_lastU0[1], m_lastU0[2], m_lastU0[3],
-            ref0.pos[0], ref0.pos[1], ref0.pos[2], ref0.yaw, ref0.vel[0], ref0.vel[1], ref0.vel[2],
-            m_trackingErr[0], m_trackingErr[1], m_trackingErr[2], m_trackingErr[3],
-            m_userForces[0], m_userForces[1], m_userForces[2],
-        }};
-        recorder.record(row);
-    }
-#endif
+    RecordTick(ref0);
 
     return false;
+}
+
+void QuadRotorMPC::UpdateTrackingErrors(const Reference_t& ref0)
+{
+    m_trackingErr[0] = ref0.pos[0] - m_state[IDX_X];
+    m_trackingErr[1] = ref0.pos[1] - m_state[IDX_Y];
+    m_trackingErr[2] = ref0.pos[2] - m_state[IDX_Z];
+    const double qw=m_state[IDX_QW], qx=m_state[IDX_QX], qy=m_state[IDX_QY], qz=m_state[IDX_QZ];
+    const double yaw = std::atan2(2.0*(qw*qz + qx*qy), 1.0 - 2.0*(qy*qy + qz*qz));
+    double eyaw = ref0.yaw - yaw; eyaw = std::atan2(std::sin(eyaw), std::cos(eyaw));
+    m_trackingErr[3] = eyaw;
+}
+
+void QuadRotorMPC::SolveMpc(void)
+{
+    auto dynamics = (Dynamics::QUADROTOR_MPC_01*) m_modelPtr;
+
+    CDS_PROFILE(profile, "Total MPC execution");
+    const Weights W{m_wp, m_wq, m_wv, m_ww, m_wu, m_wterm};   // current cost weights
+
+    /* hover command and actuator box from the model params */
+    using PN = Dynamics::QUADROTOR_MPC_01::ParamName;
+    const double mg = dynamics->GetParam(PN::Mass) * dynamics->GetParam(PN::Gravity);
+    const double Th = mg / 4.0;
+    const V4 uref{{Th, Th, Th, Th}};
+    V4 lo, hi;
+    lo.fill(dynamics->GetParam(PN::ThrustMin));
+    hi.fill(dynamics->GetParam(PN::ThrustMax));
+    if (!m_seeded) { for (auto& u : m_warmStart) u = uref; }
+
+    std::array<StageRef, QuadRotorMPC::MAX_HORIZON + 1> refs;
+    if (sampleHorizon(*m_trajectoryManagerPtr, m_time, m_dtMpc, m_horizon, refs))
+    {
+        /* No reference at the horizon start: keep holding the last command */
+        return;
+    }
+
+    std::array<double, POS_DIM> predForce{{0.0, 0.0, 0.0}};
+    const V13 x0 = ControllerInitialState(predForce);
+
+    /* quad-specific closures handed to the generic iLQR */
+    auto fdyn  = [&](const V13& x, const V4& u){ return dynamics->Dynamics(x, u, predForce); };
+    auto jac   = [&](const V13& x, const V4& u, double fx[NX][NX], double fu[NX][NU]){ dynamics->Jacobians(x, u, fx, fu); };
+    auto proj  = [](V13& s){ normalizeQuat(s); };
+    auto scost = [&](const V13& x, const V4& u, std::size_t k){ return quadStageCost(x, u, refs[k], uref, W); };
+    auto tcost = [&](const V13& x){ return quadTermCost(x, refs[m_horizon], W); };
+
+    V4 u0;
+    {
+        CDS_PROFILE(profile, "MPC solve");
+        control::solve<NX, NU, QuadRotorMPC::MAX_HORIZON>(
+            x0, fdyn, jac, proj, scost, tcost, lo, hi, m_dtMpc, m_maxIters, m_horizon, m_warmStart, u0);
+    }
+
+    m_lastU0        = u0;
+    m_lastSolveTime = m_time;
+    m_seeded        = true;
+}
+
+QuadRotorMPC::StateVec QuadRotorMPC::ControllerInitialState(std::array<double, QuadRotorMPC::POS_DIM>& predForce)
+{
+    StateVec x0 = m_state;
+    predForce = {{0.0, 0.0, 0.0}};
+
+    if (m_obsEnabled)
+    {
+        if (m_obs.Seeded())
+        {
+            const auto rHat = m_obs.Position();
+            const auto vHat = m_obs.Velocity();
+            const auto dHat = m_obs.Disturbance();
+            x0[IDX_X]=rHat[0];  x0[IDX_Y]=rHat[1];  x0[IDX_Z]=rHat[2];
+            x0[IDX_VX]=vHat[0]; x0[IDX_VY]=vHat[1]; x0[IDX_VZ]=vHat[2];
+            predForce = {{dHat[0], dHat[1], dHat[2]}};
+        }
+    }
+    else
+    {
+        /* No estimator: the raw (sensor-corrupted) position goes straight to the
+           controller, so noise and bias bite unfiltered. Identity sensor -> truth */
+        const auto yPos = measuredThrough(m_posSensor,
+            std::array<double,POS_DIM>{{ m_state[IDX_X], m_state[IDX_Y], m_state[IDX_Z] }});
+        x0[IDX_X]=yPos[0]; x0[IDX_Y]=yPos[1]; x0[IDX_Z]=yPos[2];
+    }
+
+    return x0;
+}
+
+void QuadRotorMPC::UpdateObserver(core_coord_t dt)
+{
+    auto dynamics = (Dynamics::QUADROTOR_MPC_01*) m_modelPtr;
+
+    if (!m_obs.Seeded())
+        m_obs.Seed({{ m_state[IDX_X],  m_state[IDX_Y],  m_state[IDX_Z]  }},
+                   {{ m_state[IDX_VX], m_state[IDX_VY], m_state[IDX_VZ] }});
+
+    /* known force-free acceleration: exactly the MPC's prediction assumption */
+    const std::array<double,3> zeroF{{0.0, 0.0, 0.0}};
+    const V13 xdot = dynamics->Dynamics(m_state, m_lastU0, zeroF);
+    const std::array<double,POS_DIM> aKnown{{ xdot[IDX_VX], xdot[IDX_VY], xdot[IDX_VZ] }};
+
+    const std::array<double,POS_DIM> truthPos{{ m_state[IDX_X], m_state[IDX_Y], m_state[IDX_Z] }};
+    std::array<double,POS_DIM> yPos{};
+    std::array<bool,POS_DIM>   valid{};
+    m_posSensor.Apply(truthPos, yPos, valid);
+
+    m_obs.Step(aKnown, yPos, valid, dt);
+}
+
+void QuadRotorMPC::RecordTick(const Reference_t& ref0)
+{
+#if CDS_RECORD_ENABLED
+    const std::array<double, 32> row{{
+        m_time,
+        m_state[IDX_X], m_state[IDX_Y], m_state[IDX_Z],
+        m_state[IDX_QW], m_state[IDX_QX], m_state[IDX_QY], m_state[IDX_QZ],
+        m_state[IDX_VX], m_state[IDX_VY], m_state[IDX_VZ],
+        m_state[IDX_WX], m_state[IDX_WY], m_state[IDX_WZ],
+        m_lastU0[0], m_lastU0[1], m_lastU0[2], m_lastU0[3],
+        ref0.pos[0], ref0.pos[1], ref0.pos[2], ref0.yaw, ref0.vel[0], ref0.vel[1], ref0.vel[2],
+        m_trackingErr[0], m_trackingErr[1], m_trackingErr[2], m_trackingErr[3],
+        m_userForces[0], m_userForces[1], m_userForces[2],
+    }};
+    recorder.record(row);
+#else
+    (void) ref0;
+#endif
 }
 
 bool QuadRotorMPC::GetState(core_state_t& state)

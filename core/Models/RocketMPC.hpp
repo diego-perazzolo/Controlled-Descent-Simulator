@@ -108,6 +108,33 @@ namespace CDS
         private:
         void BuildParamTable();        // register the exposed knobs into the 4 tables
 
+        // ---- one tick, split by responsibility (driven by PerformIntegration) --
+
+        // Position and heading error of the current state w.r.t. `ref0`, kept for
+        // the frontend and the recorder.
+        void UpdateTrackingErrors(const Reference_t& ref0);
+
+        // Re-solve the MPC from the current state and publish the first command
+        // in m_lastU0. Called only at the control cadence: in between that
+        // command is held (ZOH), which is what the horizon itself assumes.
+        void SolveMpc(void);
+
+        // Initial state handed to the solver, and through `predForce` the external
+        // force it should predict over the horizon: x_hat / d_hat with the
+        // observer on (offset-free), the raw sensor position and a zero force with
+        // it off. Advances the sensor noise stream when the observer is off.
+        StateVec ControllerInitialState(std::array<double, POS_DIM>& predForce);
+
+        // Advance the disturbance observer by `dt` off the post-integration state:
+        // known input is the model's force-free acceleration, measurement is the
+        // position through the sensor bank (a dropped axis stays predict-only).
+        void UpdateObserver(core_coord_t dt);
+
+        // Append this tick's wide recorder row. The state is post-integration at
+        // t_sim and m_lastU0 the command held over the step, while `ref0` and the
+        // tracking error are sampled at the step start (they lead the state by dt).
+        void RecordTick(const Reference_t& ref0);
+
         void*              m_modelPtr;
         StateVec           m_state;
         TrajectoryManager* m_trajectoryManagerPtr;
