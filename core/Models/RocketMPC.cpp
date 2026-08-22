@@ -116,6 +116,11 @@ using M12x12 = std::array<V12, NR>;
 struct Weights { double wp, wq, wv, ww, wterm; double rF1, rT1, rT2, rT3; };
 struct StageRef { std::array<double,3> p; std::array<double,3> ang; std::array<double,3> v; std::array<double,3> w; };
 
+// As for the quadrotor, but the rocket flies descent trajectories hundreds of
+// metres tall, so the box that still counts as "a prediction of this vehicle" is
+// correspondingly larger. See SolveMpc().
+constexpr double STATE_SANITY_LIMIT = 2000.0;
+
 inline double wrapPi(double a) { return std::atan2(std::sin(a), std::cos(a)); }
 
 // ---- cost: residuals + Gauss-Newton Jacobian (SS4 of the notebook) ----
@@ -219,6 +224,7 @@ RocketMPC::RocketMPC()
     m_time = 0;
     m_seeded = false;
     m_lastSolveTime = 0;
+    m_lastSolveWarnTime = -1.0e30;   // nothing reported yet
 
     // Controller knobs default to the values tuned in the notebook.
     m_wp = 6.0; m_wq = 8.0; m_wv = 1.0; m_ww = 0.50; m_wterm = 20.0;
@@ -424,11 +430,43 @@ void RocketMPC::SolveMpc(void)
     auto scost = [&](const V12& x, const V4& u, std::size_t k){ return rocketStageCost(x, u, refs[k], uref, W); };
     auto tcost = [&](const V12& x){ return rocketTermCost(x, refs[m_horizon], W); };
 
-    V4 u0;
+    V4 u0{};
+    control::SolveReport report;
+    bool solveFailed = false;
     {
         CDS_PROFILE(profile, "MPC solve");
-        control::solve<NX, NU, RocketMPC::MAX_HORIZON>(
-            x0, fdyn, jac, proj, scost, tcost, lo, hi, m_dtMpc, m_maxIters, m_horizon, m_warmStart, u0);
+        solveFailed = control::solve<NX, NU, RocketMPC::MAX_HORIZON>(
+            x0, fdyn, jac, proj, scost, tcost, lo, hi, m_dtMpc, m_maxIters, m_horizon, m_warmStart, u0,
+            &report);
+    }
+
+    /* A refused solve leaves u0 and the warm start untouched, so the previous
+       command stays in force (ZOH) until the next cadence: a stale command beats
+       one the solver itself would not vouch for. */
+    if (solveFailed)
+    {
+        if (m_time - m_lastSolveWarnTime >= 1.0)
+        {
+            m_lastSolveWarnTime = m_time;
+            CDS_LOG_ERROR(logger, "MPC solve refused (horizon {}) at t = {} s: holding the previous command",
+                          static_cast<int>(m_horizon), std::round(m_time * 100.0) / 100.0);
+        }
+        m_lastSolveTime = m_time;
+        return;
+    }
+
+    /* Finite and in-box is not the same as trustworthy: over a horizon long
+       compared with the open-loop instability the predicted rollout can run away
+       while every number stays finite, and the command then optimises a
+       trajectory the vehicle will never fly. Report it -- the command is applied
+       anyway, since refusing every solve would freeze the controller. */
+    if (report.stateMax > STATE_SANITY_LIMIT && (m_time - m_lastSolveWarnTime >= 1.0))
+    {
+        m_lastSolveWarnTime = m_time;
+        CDS_LOG_WARN(logger, "MPC prediction is running away (horizon {}) at t = {} s: |state|max = {}, cost = {}. "
+                             "The horizon is long compared with the open-loop instability: shorten it",
+                     static_cast<int>(m_horizon), std::round(m_time * 100.0) / 100.0,
+                     static_cast<int>(report.stateMax), static_cast<int>(report.cost));
     }
 
     m_lastU0        = u0;

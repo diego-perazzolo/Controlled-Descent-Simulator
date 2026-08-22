@@ -172,6 +172,11 @@ namespace CDS
         InputVec           m_lastU0;
         double             m_lastSolveTime;
 
+        // Model time of the last solver complaint, so a solve that misbehaves on
+        // every cadence says so about once a simulated second instead of filling
+        // the log with one line per solve.
+        double             m_lastSolveWarnTime;
+
         // ---- Offset-free disturbance observer (opt-in, OFF by default) --------
         // Translational estimator [r(3), v(3), d(3)] that recovers the external
         // force disturbance so the MPC predicts predForce = d_hat and reaches

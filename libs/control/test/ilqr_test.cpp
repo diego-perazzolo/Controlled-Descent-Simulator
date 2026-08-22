@@ -104,7 +104,11 @@ double runClosedLoop(double umax, bool& boxOK, bool& finite)
     for (int step = 0; step < 240; ++step)
     {
         Input u0;
-        control::solve<NX, NU, N>(x, f, jac, noProj, stageCost, termCost, lo, hi, DT, 20, N, warm, u0);
+        if (control::solve<NX, NU, N>(x, f, jac, noProj, stageCost, termCost, lo, hi, DT, 20, N, warm, u0))
+        {
+            std::printf("solve refused at step %d\n", step);
+            return 1;
+        }
         for (std::size_t a = 0; a < NU; ++a)
         {
             if (u0[a] < lo[a] - 1e-9 || u0[a] > hi[a] + 1e-9) boxOK = false;

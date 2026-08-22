@@ -47,6 +47,14 @@
 // =============================================================================
 #pragma once
 
+#ifndef CDS_ILQR_DEBUG
+#define CDS_ILQR_DEBUG 0   // 1 = per-iteration solver trace on stdout
+#endif
+
+#if CDS_ILQR_DEBUG
+#include <cstdio>          // debug instrumentation only (CDS_ILQR_DEBUG=1)
+#endif
+
 #include <array>
 #include <cmath>
 #include <algorithm>
@@ -289,17 +297,44 @@ void sensitivity(Dyn&& f, Jac&& jac, const std::array<double, NX>& x, const std:
 //    termCost(x)            -> TerminalCost<NX> at the horizon end (index N).
 //  Bounds lo,hi are absolute per-input actuator limits. CAP sizes the fixed
 //  buffers; N is the active horizon (1 <= N <= CAP) — the warmStart array is
-//  CAP-sized but only [0, N) is used. An out-of-range N is a no-op.
+//  CAP-sized but only [0, N) is used.
+//
+//  Returns true on error (bool-is-error), meaning the result must NOT be
+//  applied: an out-of-range horizon, or a rollout / cost / command that came out
+//  non-finite. On error u0 and warmStart are left untouched, so the caller keeps
+//  whatever it was holding and the next solve restarts from the last good
+//  sequence -- an erroring solve must never poison the state it was given.
+//
+//  A false return is not a promise of optimality: it says the numbers are usable
+//  (finite, in-box). Over a horizon long compared with the plant's open-loop
+//  instability the warm-start rollout can leave the region where the
+//  linearisation means anything, and the solver then converges on a prediction
+//  that has little to do with the vehicle -- finite, in-box, and wrong. Judging
+//  that is the caller's business; see the report out-parameter.
 // -----------------------------------------------------------------------------
+// What one solve did, for callers that want to log or sanity-check it. `cost` is
+// the trajectory cost of the sequence being returned, `stateMax` the largest
+// absolute state value seen in its rollout (a runaway prediction shows up here
+// long before it turns into a non-finite number), `accepted` how many of the
+// `iterations` line searches improved the cost.
+struct SolveReport
+{
+    double cost{0.0};
+    double stateMax{0.0};
+    int    iterations{0};
+    int    accepted{0};
+};
+
 template <std::size_t NX, std::size_t NU, std::size_t CAP,
           class Dyn, class Jac, class Project, class StageCostFn, class TermCostFn>
-void solve(const std::array<double, NX>& x0,
+bool solve(const std::array<double, NX>& x0,
            Dyn&& f, Jac&& jac, Project&& project,
            StageCostFn&& stageCost, TermCostFn&& termCost,
            const std::array<double, NU>& lo, const std::array<double, NU>& hi,
            double dt, int maxIters, std::size_t N,
            std::array<std::array<double, NU>, CAP>& warmStart,
-           std::array<double, NU>& u0)
+           std::array<double, NU>& u0,
+           SolveReport* report = nullptr)
 {
     using State = std::array<double, NX>;
     using Input = std::array<double, NU>;
@@ -308,8 +343,26 @@ void solve(const std::array<double, NX>& x0,
     using Mux   = std::array<State, NU>;   // NU rows x NX cols
 
     // The buffers are fixed at capacity CAP; the active horizon N is a runtime
-    // choice that must fit (1 <= N <= CAP). An out-of-range N is a no-op.
-    if (N == 0 || N > CAP) return;
+    // choice that must fit (1 <= N <= CAP). Out of range is an error, not a
+    // silent no-op: u0 would otherwise be left as the caller declared it.
+    if (N == 0 || N > CAP) return true;
+
+    // Largest |state| over a rollout, and whether it is all finite: the two
+    // things that say whether a prediction is worth optimising around.
+    auto rolloutScale = [&](const std::array<State, CAP + 1>& xs_, double& worst)
+    {
+        worst = 0.0;
+        bool finite = true;
+        for (std::size_t k = 0; k <= N; ++k)
+            for (std::size_t i = 0; i < NX; ++i)
+            {
+                const double v = xs_[k][i];
+                if (!std::isfinite(v)) { finite = false; continue; }
+                const double a = (v < 0.0) ? -v : v;
+                if (a > worst) worst = a;
+            }
+        return finite;
+    };
 
     // one discrete step: RK4 + caller projection
     auto Fd = [&](const State& x, const Input& u)
@@ -331,10 +384,30 @@ void solve(const std::array<double, NX>& x0,
     for (std::size_t k = 0; k < N; ++k) xs[k + 1] = Fd(xs[k], us[k]);
     double J = trajCost(xs, us);
 
+    // A warm start whose rollout already diverged gives gradients about a
+    // trajectory the vehicle will never fly: refuse rather than optimise it.
+    double stateMax = 0.0;
+    if (!rolloutScale(xs, stateMax) || !std::isfinite(J)) return true;
+
+#if CDS_ILQR_DEBUG
+    {
+        double worst = 0.0; bool finite = true;
+        for (std::size_t k = 0; k <= N; ++k)
+            for (std::size_t i = 0; i < NX; ++i)
+            {
+                if (!std::isfinite(xs[k][i])) finite = false;
+                worst = std::fmax(worst, std::fabs(xs[k][i]));
+            }
+        std::printf("[ilqr] N=%zu rollout: J0=%.6g  |x|max=%.6g  finite=%d\n", N, J, worst, (int) finite);
+    }
+#endif
+
     std::array<Input, CAP> kff; std::array<Mux, CAP> K; double mu = 1e-3;
+    int iterCount = 0, acceptedCount = 0;
 
     for (int iter = 0; iter < maxIters; ++iter)
     {
+        ++iterCount;
         // terminal value model
         State Vx; Mxx Vxx;
         { TerminalCost<NX> tc = termCost(xs[N]); Vx = tc.lx; Vxx = tc.lxx; }
@@ -399,12 +472,37 @@ void solve(const std::array<double, NX>& x0,
             double Jn = trajCost(xn, un);
             if (Jn < J) { xs = xn; us = un; J = Jn; accepted = true; break; }
         }
-        if (accepted) mu = std::max(mu * 0.7, 1e-6); else { mu *= 4.0; if (mu > 1e3) break; }
+#if CDS_ILQR_DEBUG
+        std::printf("[ilqr]   iter %2d: J=%.6g  accepted=%d  mu=%.3g\n", iter, J, (int) accepted, mu);
+#endif
+        if (accepted) { ++acceptedCount; mu = std::max(mu * 0.7, 1e-6); }
+        else           { mu *= 4.0; if (mu > 1e3) break; }
     }
 
-    for (std::size_t j = 0; j < NU; ++j) u0[j] = std::min(std::max(us[0][j], lo[j]), hi[j]);
+    // Commit only once the answer is known to be usable: everything below writes
+    // into the caller's state, and a half-written command sequence is worse than
+    // no update at all.
+    std::array<double, NU> u0Candidate;
+    for (std::size_t j = 0; j < NU; ++j)
+    {
+        const double v = std::min(std::max(us[0][j], lo[j]), hi[j]);
+        if (!std::isfinite(v)) return true;
+        u0Candidate[j] = v;
+    }
+    if (!rolloutScale(xs, stateMax) || !std::isfinite(J)) return true;
+
+    u0 = u0Candidate;
     for (std::size_t k = 0; k + 1 < N; ++k) warmStart[k] = us[k + 1];
     warmStart[N - 1] = us[N - 1];
+
+    if (report != nullptr)
+    {
+        report->cost       = J;
+        report->stateMax   = stateMax;
+        report->iterations = iterCount;
+        report->accepted   = acceptedCount;
+    }
+    return false;
 }
 
 }} // namespace CDS::control

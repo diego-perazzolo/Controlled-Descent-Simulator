@@ -1460,6 +1460,12 @@ function refreshPlantFreshness(psnap) {
 // the UI recovers instead of freezing. Kept just under the transport's own spin
 // timeout (libs/ws/ws_rpc_client.cpp): above the worst legitimate RPC latency,
 // below anything a user would tolerate as a freeze.
+//
+// It applies to the ws-served build ONLY. In wasm-only the core is in this same
+// module: there is no transport that can stop answering, and a slow call just
+// means a heavy model (a long MPC horizon). Auto-stopping there would blame a
+// server that does not exist, and would look exactly like "the simulation
+// stopped by itself".
 const CALL_STALL_MS = 900;
 let lastCallStalled = false;
 
@@ -1468,13 +1474,41 @@ let lastCallStalled = false;
 function timedCall(fn) {
     const t0 = performance.now();
     const r = fn();
-    lastCallStalled = (performance.now() - t0) > CALL_STALL_MS;
+    const elapsed = performance.now() - t0;
+    lastCallStalled = usesWsTransport() && elapsed > CALL_STALL_MS;
+    if (!lastCallStalled && elapsed > CALL_STALL_MS) {
+        // wasm-only: not a transport problem, but worth saying out loud once
+        reportSlowCall(elapsed);
+    }
     return r;
 }
 
+// True when the backend lives behind the WebSocket bridge (ws-served) rather
+// than inside this page (wasm-only).
+function usesWsTransport() { return !!globalThis.__cdsWs; }
+
+let slowCallWarnedAt = 0;
+function reportSlowCall(elapsed) {
+    const now = performance.now();
+    if (now - slowCallWarnedAt < 5000) return;
+    slowCallWarnedAt = now;
+    console.warn(`[cds] a backend call blocked this frame for ${Math.round(elapsed)} ms `
+               + '(heavy model — e.g. a long MPC horizon). The simulation keeps running.');
+}
+
 function handleTransportStall() {
-    setError('Server not responding (a call timed out) — simulation stopped.');
+    reportStop('Server not responding (a call timed out) — simulation stopped.');
     stop();   // same effect as pressing Stop: halts the run and frees the UI
+}
+
+// Something stopped the run on its own. Say it where it cannot be missed (the
+// sticky banner, visible from every view), keep it in the error line, and leave
+// a console trace: an auto-stop that only whispers is indistinguishable from the
+// simulation "just freezing".
+function reportStop(message) {
+    setError(message);
+    setPerfWarning(message);
+    console.error('[cds] ' + message);
 }
 
 // =============================================================================
@@ -1583,7 +1617,7 @@ function loop() {
         const snap = timedCall(() => sim.ext_getSnapshot());
         if (lastCallStalled) { handleTransportStall(); return; }
         if (snap.isError) {
-            setError('ext_getSnapshot returned error — simulation stopped');
+            reportStop('The backend refused to report its state (ext_getSnapshot error) — simulation stopped.');
             stop();
             return;
         }
@@ -1627,19 +1661,22 @@ function refreshStartEnabled() {
 
 function start() {
     if (trajectoryBuilder.isEmpty()) {
-        setError('Cannot start: trajectory sequence is empty.');
+        reportStop('Cannot start: the trajectory sequence is empty.');
         return;
     }
     if (sendSystemParams()) {
-        setError('ext_setSystemParams failed — is a model initialized?');
+        reportStop('Cannot start: ext_setSystemParams failed — is a model initialized?');
         return;
     }
     if (sim.ext_run()) {
-        setError('ext_run failed — is a model initialized?');
+        // The usual cause is a backend trajectory that a failed re-init left
+        // empty while the JS-side list still looks populated.
+        reportStop('Cannot start: ext_run refused — the backend has no model or no trajectory. '
+                 + 'Try Reset; if it persists, check the log.');
         return;
     }
     running = true;
-    resetRateWatch();        // judge this run on its own window
+    resetRateWatch();        // judge this run on its own window (also clears the banner)
     ui.btnStart.disabled = true;
     ui.btnStop.disabled  = false;
     ui.btnReset.disabled = true;
@@ -1684,7 +1721,13 @@ function reset() {
     // across the re-init rather than losing it on every Reset.
     const savedCtrl = snapshotControllerParams();
     const err = initBackend(readParamsForm());
-    if (err) { setError('init failed on reset'); return; }
+    if (err) {
+        // Bailing out here leaves the backend without the trajectory the JS list
+        // still shows, and the next Start fails with no obvious cause: say so.
+        reportStop('Reset failed to re-initialize the model — the backend has no trajectory, '
+                 + 'so Start will refuse. Check the log.');
+        return;
+    }
     trajectoryBuilder.replayToBackend();
     refreshControllerPanel();          // fresh model (defaults) + current manifest structure
     applyControllerParams(savedCtrl);  // re-apply the user's controller tuning
