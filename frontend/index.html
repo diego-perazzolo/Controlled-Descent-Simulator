@@ -339,9 +339,23 @@
         /* ── Status ── */
         #statusBar { font-size: 0.9em; color: #555; margin-top: 10px; }
         #errorMsg  { color: #f44; margin-top: 4px; font-size: 0.9em; min-height: 1em; }
+
+        /* Performance banner: fixed to the viewport so it is visible from every
+           view (the 3D canvas pushes the in-flow status/error lines below the
+           fold). Hidden unless the sim cannot keep up with the requested speed */
+        #perfWarn {
+            display: none;
+            position: fixed; top: 0; left: 0; right: 0; z-index: 60;
+            background: #3a2a00; color: #fc0; border-bottom: 1px solid #a80;
+            padding: 8px 16px; font-size: 0.9em; text-align: center;
+        }
     </style>
 </head>
 <body>
+
+<!-- Performance banner (fixed, every view): shown when the simulation cannot
+     keep up with the requested speed -->
+<div id="perfWarn"></div>
 
 <!-- ════ Header ════ -->
 <header>

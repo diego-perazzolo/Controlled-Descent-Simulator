@@ -105,12 +105,13 @@ conventions, invariants, verification commands and the review procedure.
 Run from the repo root. Prefer these over inventing new ones.
 
 ```bash
-# wasm-only app (requires emsdk; output lands in build/)
-emcmake cmake -S apps/wasm-only -B build/wasm-only -DCMAKE_BUILD_TYPE=Debug && cmake --build build/wasm-only
+# wasm-only app (requires emsdk; output lands in build/). Build Release: a Debug
+# wasm build cannot sustain the MPC models (the run looks frozen in the browser)
+emcmake cmake -S apps/wasm-only -B build/wasm-only -DCMAKE_BUILD_TYPE=Release && cmake --build build/wasm-only
 
 # ws-served app: WASM proxy (emsdk; output lands in build/) + native core server
 # (always pass a build type: an empty CMAKE_BUILD_TYPE silently builds at -O0)
-emcmake cmake -S apps/ws-served/client -B build/ws-client -DCMAKE_BUILD_TYPE=Debug && cmake --build build/ws-client
+emcmake cmake -S apps/ws-served/client -B build/ws-client -DCMAKE_BUILD_TYPE=Release && cmake --build build/ws-client
 cmake -S apps/ws-served/server -B build/server -DCMAKE_BUILD_TYPE=Release && cmake --build build/server
 
 # Fast C++ syntax check without emsdk (per file)

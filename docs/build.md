@@ -42,9 +42,17 @@ source pathToEmSDK/emsdk_env.sh
 ## wasm-only (full browser)
 
 ```bash
-emcmake cmake -S apps/wasm-only -B build/wasm-only -DCMAKE_BUILD_TYPE=Debug   # or Release
+emcmake cmake -S apps/wasm-only -B build/wasm-only -DCMAKE_BUILD_TYPE=Release
 cmake --build build/wasm-only
 ```
+
+> **Build it in Release.** A Debug wasm build is fast enough for the analytic
+> models, but not for the MPC ones: the iLQR solve costs far more than a frame,
+> so a `quadrotor (MPC)` / `rocket (MPC)` run crawls to the point of looking
+> frozen. Debug is for stepping through the analytic models, not for driving the
+> MPC ones. The frontend detects this and says so: whenever a pure simulation
+> delivers less than a quarter of the requested speed, a banner names the
+> shortfall (and the backend logs it too).
 
 Then serve the repo root and open the frontend:
 
@@ -60,7 +68,7 @@ python3 tools/serve.py 8080
 built is the one the frontend runs):
 
 ```bash
-emcmake cmake -S apps/ws-served/client -B build/ws-client -DCMAKE_BUILD_TYPE=Debug
+emcmake cmake -S apps/ws-served/client -B build/ws-client -DCMAKE_BUILD_TYPE=Release
 cmake --build build/ws-client
 ```
 
@@ -230,11 +238,18 @@ The repository includes a GitHub Actions workflow ([`.github/workflows/deploy.ym
 
 **Cross-origin isolation.** GitHub Pages serves static files and cannot send the
 `Cross-Origin-Opener-Policy` / `Cross-Origin-Embedder-Policy` headers, so the
-page is not cross-origin isolated and browsers clamp `performance.now()` to
-100 µs. Since the tick `dt` is wall-anchored on that clock, the added jitter
-destabilises the feed-forward controllers (the quadrotor FF-LQR visibly
-oscillates). [`frontend/coi-serviceworker.js`](../frontend/coi-serviceworker.js)
-(vendored, MIT) re-injects those headers from a service worker to restore the
+page is not cross-origin isolated and browsers clamp `performance.now()` — the
+clock behind `steady_clock` in the wasm runtime — to 100 µs. The tick `dt` is
+*not* affected: wasm-only never attaches a plant, so the step is the fixed
+nominal period and the controllers see a clean, jitter-free timestep either way.
+(This was not always true: when the plant-less tick was wall-anchored too, the
+clamped clock visibly destabilised the quadrotor FF-LQR — the fixed step removed
+that failure mode.) What the clamp still degrades is everything *measured* on
+that clock: the profiler timings above all (per-scope costs of a few
+microseconds quantise to 0 or 100 µs), and the wall-time pacing that feeds the
+rate accumulator and its per-frame sub-stepping budget.
+[`frontend/coi-serviceworker.js`](../frontend/coi-serviceworker.js) (vendored,
+MIT) re-injects those headers from a service worker to restore the
 high-resolution clock; the first visit performs one transparent reload. It is a
 no-op locally, where [`tools/serve.py`](../tools/serve.py) already sends the
 headers.

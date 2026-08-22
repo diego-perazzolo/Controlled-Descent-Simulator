@@ -146,7 +146,7 @@ const ui = {
     btnStart:   $('btnStart'), btnStop: $('btnStop'), btnReset: $('btnReset'),
     btnCharts:  $('btnCharts'), btn3d: $('btn3d'), btnParams: $('btnParams'), btnDiag: $('btnDiag'),
     viewCharts: $('view-charts'), view3d: $('view-3d'), viewParams: $('view-params'), viewDiag: $('view-diag'),
-    status:     $('statusBar'), error: $('errorMsg'),
+    status:     $('statusBar'), error: $('errorMsg'), perfWarn: $('perfWarn'),
     btnApply:   $('btnApply'),
     // trajectory save / load
     btnTrajSave:   $('btnTrajSave'),
@@ -363,6 +363,13 @@ const fmtI = v => Math.round(v).toString();
 
 function setStatus(msg) { ui.status.textContent = msg; }
 function setError(msg)  { ui.error.textContent  = msg; }
+
+// Performance banner. Empty message hides it. Unlike the status/error lines it
+// is fixed to the viewport, so it reaches the user from the 3D view too.
+function setPerfWarning(msg) {
+    ui.perfWarn.textContent   = msg;
+    ui.perfWarn.style.display = msg ? 'block' : 'none';
+}
 
 // Initialise the backend core for the currently-selected model. `params` must
 // already be in the shape expected by that model's init entry point:
@@ -1340,6 +1347,73 @@ function handleTransportStall() {
     stop();   // same effect as pressing Stop: halts the run and frees the UI
 }
 
+// =============================================================================
+// Speed watchdog
+// =============================================================================
+// The backend never refuses to run: an over-heavy model just advances the
+// simulation far slower than asked, which reads as "nothing is happening".
+// Over a window, compare the simulated time delivered against the wall time
+// times the requested rate. Pure sim only: a plant paces the run itself.
+const RATE_WATCH_WINDOW_S = 2.0;   // observation window
+const RATE_WATCH_FLOOR    = 0.25;  // delivered/requested below this warns
+
+let rateWatchArmed  = false;
+let rateWatchWall_s = 0;   // wall clock at the window start
+let rateWatchSim_s  = 0;   // simulated time at the window start
+let rateWatchStale  = false;   // the window saw a hidden tab: not evidence
+
+// A hidden tab throttles rAF — and in the wasm-only build the tick loop rides
+// on it — so wall time passes with no simulation. Mark those windows instead of
+// guessing from their length: a single tick CAN legitimately take seconds here,
+// which is exactly the case worth reporting.
+document.addEventListener('visibilitychange', () => {
+    if (document.hidden) rateWatchStale = true;
+});
+
+function resetRateWatch() {
+    rateWatchArmed = false;
+    setPerfWarning('');
+}
+
+function pollRateWatch() {
+    if (!running || plantAvailable) { resetRateWatch(); return; }
+
+    const wallNow_s = performance.now() / 1000;
+    if (!rateWatchArmed) {
+        rateWatchArmed  = true;
+        rateWatchWall_s = wallNow_s;
+        rateWatchSim_s  = simTime;
+        return;
+    }
+
+    const wallElapsed_s = wallNow_s - rateWatchWall_s;
+    if (wallElapsed_s < RATE_WATCH_WINDOW_S) return;
+
+    const delivered_s = simTime - rateWatchSim_s;
+    const requested_s = wallElapsed_s * simRate;
+    rateWatchWall_s = wallNow_s;   // slide the window
+    rateWatchSim_s  = simTime;
+
+    // Discontinuities that are not a slow model: a tab that went hidden, and a
+    // simulated-time reset. The evidence is void, so drop any standing verdict
+    // and observe the next window (already re-based above).
+    if (rateWatchStale) { rateWatchStale = false; setPerfWarning(''); return; }
+    if (delivered_s < 0 || !(requested_s > 0)) { setPerfWarning(''); return; }
+
+    const ratio = delivered_s / requested_s;
+    if (ratio >= RATE_WATCH_FLOOR) { setPerfWarning(''); return; }
+
+    if (delivered_s <= 0) {
+        setPerfWarning('Simulation is not advancing — the model is too heavy to run here. '
+                     + 'A Debug WASM build cannot drive the MPC models: rebuild in Release.');
+    } else {
+        setPerfWarning(`Simulation running at ${Math.round(ratio * 100)}% of the requested `
+                     + `${simRate.toFixed(2)}× speed (about ${(ratio * simRate).toFixed(2)}× real time) — `
+                     + 'the model is too heavy to keep up. Lower the speed or the MPC horizon, '
+                     + 'and build in Release.');
+    }
+}
+
 function loop() {
     frameId = requestAnimationFrame(loop);
     if (!sim) return;
@@ -1370,6 +1444,9 @@ function loop() {
     // stats refresh only while the Diag view is up.
     diagnostics.pollLog();
     if (ui.viewDiag.style.display !== 'none') diagnostics.pollStats();
+
+    // Verdict on whether the backend is keeping up with the requested speed
+    pollRateWatch();
 }
 
 // =============================================================================
@@ -1406,6 +1483,7 @@ function start() {
         return;
     }
     running = true;
+    resetRateWatch();        // judge this run on its own window
     ui.btnStart.disabled = true;
     ui.btnStop.disabled  = false;
     ui.btnReset.disabled = true;
@@ -1419,6 +1497,7 @@ function start() {
 
 function stop() {
     running = false;
+    resetRateWatch();
     // the poll loop keeps running (it still polls the plant ghost while idle)
     if (sim) sim.ext_stop();
     ui.btnStop.disabled  = true;

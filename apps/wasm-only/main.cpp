@@ -117,24 +117,38 @@ static void _tick_generator(void)
         g_core_getTickRate(rate);
         if (rate <= 0.0) rate = 1.0;
 
-        _tickAccumulator += elapsed_seconds * rate;
-        constexpr double MAX_BACKLOG_SECONDS = 0.25;
+        const double requested_seconds = elapsed_seconds * rate; // sim-time asked for this frame
+        _tickAccumulator += requested_seconds;
+        /* Backlog cap: how much owed sim time may survive a stall, so a stall cannot
+           burst into a catch-up storm. Kept at a few tick periods: a fixed cap
+           smaller than the period would never be cleared by the sub-stepping
+           loop below, freezing the simulation outright. */
+        const double MAX_BACKLOG_SECONDS = (4.0 * tickPeriodSeconds > 0.25)
+                                         ? 4.0 * tickPeriodSeconds : 0.25;
         if (_tickAccumulator > MAX_BACKLOG_SECONDS)
         {
-            /* sim-seconds requested this frame beyond the deliverable budget */
-            const double overshoot = _tickAccumulator - MAX_BACKLOG_SECONDS;
+            /* Sim-time asked for this frame that will never be simulated. The backlog is
+               clamped on every pass, so the loss can never exceed what this frame
+               requested: 0 <= dropped_seconds <= requested_seconds. */
+            const double dropped_seconds = _tickAccumulator - MAX_BACKLOG_SECONDS;
             _tickAccumulator = MAX_BACKLOG_SECONDS;
-            /* The backlog saturated: the machine cannot sustain the requested
-               rate (the model is too slow — e.g. a Debug MPC build). The sim
-               keeps running, just below `rate`. Warn, rate-limited so it does
-               not spam the log. */
+
+            /* The backlog saturated: the machine cannot sustain the requested rate
+               (the model is too slow). The sim keeps running, just below `rate`.
+               Warn with the share of the requested speed actually simulated (an
+               absolute figure means nothing here), rate-limited so it does not spam. */
             static Clock::time_point lastRateWarn{};
             const auto nowW = Clock::now();
-            if (FpSeconds(nowW - lastRateWarn).count() >= 2.0)
+            if (requested_seconds > 0.0 && FpSeconds(nowW - lastRateWarn).count() >= 2.0)
             {
                 lastRateWarn = nowW;
-                CDS_LOG_WARN(logger, "Cannot keep up with sim rate {}x: running below it, {} s of sim dropped this frame (model too slow for this build)",
-                             static_cast<double>(rate), overshoot);
+                /* Integer percent: the logger's fallback formatter has no format specs */
+                const double delivered_seconds = requested_seconds - dropped_seconds;
+                int deliveredPercent = static_cast<int>(100.0 * delivered_seconds / requested_seconds + 0.5);
+                if (deliveredPercent < 0)  deliveredPercent = 0;
+                if (deliveredPercent > 99) deliveredPercent = 99; // reported only while falling behind
+                CDS_LOG_WARN(logger, "Cannot keep up with the requested {}x speed: simulating at about {}% of it (model too slow for this build; the sim time not simulated is dropped, not queued)",
+                             static_cast<double>(rate), deliveredPercent);
             }
         }
 
