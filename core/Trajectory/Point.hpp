@@ -23,8 +23,10 @@
 // THE SOFTWARE.
 //
 // =============================================================================
-// File        : <filename.cpp>
-// Description : <brief description of this file>
+// File        : Point.hpp
+// Description : Constant "Point" sub-trajectory: holds the vehicle at a fixed
+//               target position and yaw for a given duration (a static
+//               setpoint). Implements the Trajectory interface.
 // Author      : Diego Perazzolo
 // Created     : 2026
 // =============================================================================

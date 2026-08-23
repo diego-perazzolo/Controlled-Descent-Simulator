@@ -147,9 +147,12 @@ void ilqr_bench_solve(const double* x0, double umax, int maxIters,
     for (std::size_t k = 0; k < N; ++k) for (std::size_t a = 0; a < NU; ++a) warm[k][a] = warm_in[k*NU + a];
 
     Input lo, hi; lo.fill(-umax); hi.fill(umax);
-    Input u0;
-    control::solve<NX, NU, N>(x, benchF, benchJac, [](State&){}, benchStage, benchTerm,
-                              lo, hi, DT, maxIters, warm, u0);
+    Input u0{};
+    /* A refused solve leaves u0 and warm untouched; the zeros below then travel
+       back to Python as the answer, where the KKT check fails loudly rather than
+       the shim pretending a solve happened. */
+    (void) control::solve<NX, NU, N>(x, benchF, benchJac, [](State&){}, benchStage, benchTerm,
+                                     lo, hi, DT, maxIters, N, warm, u0);
 
     for (std::size_t a = 0; a < NU; ++a) u0_out[a] = u0[a];
     for (std::size_t k = 0; k < N; ++k) for (std::size_t a = 0; a < NU; ++a) warm_out[k*NU + a] = warm[k][a];

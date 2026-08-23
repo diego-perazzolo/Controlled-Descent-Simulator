@@ -31,7 +31,9 @@ bool ext_initQuadRotor_FFLQR01(ext_initQuadRotorParams params); /* JS: ext_quadR
    QuadRotor params/limits (rotor inertia is unused), returns true on error */
 bool ext_initQuadRotor_MPC01(ext_initQuadRotorParams params);   /* JS: ext_quadRotorMpcInit */
 
-/* Set system parameters (tick period, user forces), returns true on error */
+/* Set system parameters (tick period, sim-speed rate, user forces), returns
+   true on error. The tick period is rejected while a plant mission runs, and the
+   rate whenever a plant is attached (a plant paces real-time). */
 bool ext_setSystemParams(ext_systemParams params);
 
 /* Get a snapshot of the simulation: elapsed time, state, tracking errors */
@@ -79,9 +81,9 @@ bool ext_trajectory_remove_last_item(void);
 ext_logBatch ext_getLogBatch(void);
 
 /* List modules, one record per newline. getLogModules:
-   'index\tname\tlevel\tsampleN'; getProfileModules: 'index\tname\tenabled' */
+   'index\tname\tlevel\tsampleN'; getProfilerModules: 'index\tname\tenabled' */
 ext_moduleList ext_getLogModules(void);
-ext_moduleList ext_getProfileModules(void);
+ext_moduleList ext_getProfilerModules(void);
 
 /* Set a log module's runtime level (0=Trace..4=Error, 5=Off) and its sampling
    divisor N (1 = emit all; N>1 = 1 in N per _SAMPLED call site). Returns true
@@ -89,19 +91,19 @@ ext_moduleList ext_getProfileModules(void);
 bool ext_setLogLevel(ext_logLevelParams params);
 
 /* Enable or disable profiling for a module, returns true on error */
-bool ext_setProfileEnabled(ext_profileEnableParams params);
+bool ext_setProfilerEnabled(ext_profilerEnableParams params);
 
 /* Get the profiler stats table from the latest published snapshot (only scopes
    of enabled modules), one record per newline:
    'module\tscope\tkind\tcount\tmean\tstd\tmin\tmax\tp50\tp95\tp99'. kind is
    'us' (a timed scope, values in microseconds) or 'val' (a value scope, raw) */
-ext_profileTable ext_getProfileTable(void);
+ext_profilerTable ext_getProfilerTable(void);
 
 /* Reset all profiler statistics (clears cold-start outliers), returns true on
    error */
-bool ext_resetProfile(void);
+bool ext_resetProfiler(void);
 
-/* Toggle the server-side diagnostics files (no-op in the wasm build, which has
+/* Toggle the server-side diagnostics files (a no-op when the running build has
    no real filesystem): logFile mirrors the log to a file (cds.log), profileRaw
    streams every raw profiler sample to a CSV (cds_profile_raw.csv) for offline
    analysis. Every file gets a unique, timestamped name and a fresh file is
@@ -120,18 +122,29 @@ ext_recordStatus ext_setRecording(ext_recordParams params);
    and the active model+plant names from the frontend) */
 ext_recordStatus ext_getRecordStatus(void);
 
-/* Get the active controller's parameter manifest: a self-describing TSV listing
-   of its exposed parameters, one record per newline
-   ('id\tgroup\tlabel\tflags\tvalue', flags = 'rw' | 'ro'). The frontend builds
-   its tuning panel from this (no controller-specific UI). Empty text if no model
-   is running or the controller exposes no parameters */
-ext_controllerManifest ext_getControllerManifest(void);
+/* Tunable-parameter interface, split by domain: model (structural knobs, e.g.
+   the MPC horizon), controller (cost weights / solver), observer (estimator
+   covariances + enable) and sensor (per-axis bias / noise / enable). Each
+   <domain>GetManifest returns that domain's self-describing TSV listing, one
+   record per newline ('id\tgroup\tlabel\tflags\tvalue', flags = 'rw' | 'ro');
+   the frontend concatenates the four to build its tuning panel (no model-specific
+   UI). A domain a model does not expose returns empty text (see
+   docs/estimation.md for the observer/sensor knobs). All share ext_paramManifest */
+ext_paramManifest ext_modelGetManifest(void);
+ext_paramManifest ext_controllerGetManifest(void);
+ext_paramManifest ext_observerGetManifest(void);
+ext_paramManifest ext_sensorGetManifest(void);
 
-/* Set one controller parameter, addressed by its manifest id, to a new value.
-   Slow-path, one coefficient at a time (never on the tick). For the LQR models a
-   set re-synthesizes the gain; for the MPC it retunes the cost/solver knobs.
-   Returns true on error (no model, bad id, read-only or rejected value) */
-bool ext_setControllerParam(ext_controllerParamSet params);
+/* Set one parameter within a domain, addressed by its manifest id, to a new
+   value. Slow-path, one coefficient at a time (never on the tick). For the LQR
+   models a controller set re-synthesizes the gain; for the MPC it retunes the
+   cost/solver knobs; an observer covariance re-synthesizes the observer gain.
+   All share ext_paramSet. Returns true on error (no model, bad id, read-only or
+   rejected value) */
+bool ext_modelSetParam(ext_paramSet params);
+bool ext_controllerSetParam(ext_paramSet params);
+bool ext_observerSetParam(ext_paramSet params);
+bool ext_sensorSetParam(ext_paramSet params);
 ```
 
 ## Key types
@@ -155,7 +168,7 @@ ext_userForce                  { fX, fY, fZ }
 ext_fullState                  { x, y, z, x_dot, y_dot, z_dot,
                                 roll, pitch, yaw, roll_dot, pitch_dot, yaw_dot }
 ext_setpointError              { xErr, yErr, zErr, yawErr }
-ext_systemParams               { timestep_seconds, user_forces (ext_userForce) }
+ext_systemParams               { timestep_seconds, rate, user_forces (ext_userForce) }
 ext_snapshotData               { time_seconds, state (ext_fullState),
                                 err (ext_setpointError), isError (bool) }
 ext_plantSnapshotData          { time_seconds, sequence, state (ext_fullState),
@@ -163,14 +176,14 @@ ext_plantSnapshotData          { time_seconds, sequence, state (ext_fullState),
                                 isError (bool) }
 ext_logBatch                   { lines (char[3800]), count, dropped }
 ext_moduleList                 { list (char[1200]), count }
-ext_profileTable               { table (char[3600]), count }
+ext_profilerTable               { table (char[3600]), count }
 ext_logLevelParams             { module, level, sampleN }
-ext_profileEnableParams        { module, enabled (bool) }
+ext_profilerEnableParams        { module, enabled (bool) }
 ext_diagFiles                  { logFile (bool), profileRaw (bool) }
 ext_recordParams               { enabled (bool) }
 ext_recordStatus               { modelName (char[64]), active, enabled, droppedRows }
-ext_controllerManifest         { text (char[2048]) }
-ext_controllerParamSet         { id, value }
+ext_paramManifest              { text (char[2048]) }
+ext_paramSet                   { id, value }
 ```
 
 `ext_recordStatus.modelName` is a "model + plant" summary of the active
@@ -217,7 +230,7 @@ import createSimulator from '../build/simulator.js';
 
 const sim = await createSimulator();
 sim.ext_rocketInit({ rocketPar: {...}, rocketActuatorLimits: {...} });
-sim.ext_setSystemParams({ timestep_seconds: 0.01, user_forces: { fX: 0, fY: 0, fZ: 0 } });
+sim.ext_setSystemParams({ timestep_seconds: 0.01, rate: 1.0, user_forces: { fX: 0, fY: 0, fZ: 0 } });
 
 // with a SITL plant attached: auto-stage before the mission, then poll
 // readiness from the plant snapshot

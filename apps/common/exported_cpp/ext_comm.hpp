@@ -55,6 +55,7 @@ typedef struct
 typedef struct
 {
     ext_coord_t timestep_seconds;
+    ext_coord_t rate; // sim-speed multiplier (plant-less pure sim); 1.0 = real-time
     ext_userForce user_forces;
 } ext_systemParams;
 
@@ -97,7 +98,7 @@ typedef struct
 
 /* struct listing registered modules, one 'index\tname\tvalue' record
 per newline; `value` is the log level (getLogModules) or the enabled
-flag 0/1 (getProfileModules). Fixed char buffer: text on the POD wire */
+flag 0/1 (getProfilerModules). Fixed char buffer: text on the POD wire */
 typedef struct
 {
     char list[1200];
@@ -106,14 +107,15 @@ typedef struct
 } ext_moduleList;
 
 /* struct of the profiler stats table, one record per newline:
-'module\tscope\tcount\tmean_us\tmin_us\tmax_us\tstd_us'. Fixed char
-buffer: text on the POD wire */
+'module\tscope\tkind\tcount\tmean\tstd\tmin\tmax\tp50\tp95\tp99'
+(kind = 'us' for timed scopes, 'val' for value scopes; timings in us).
+Fixed char buffer: text on the POD wire */
 typedef struct
 {
     char table[3600];
     /* number of scope records in `table` */
     ext_coord_t count;
-} ext_profileTable;
+} ext_profilerTable;
 
 /* request: set a log module's runtime level and sampling divisor N
 (module as its index; N = 1 emits all, N>1 emits 1 in N per _SAMPLED
@@ -130,10 +132,10 @@ typedef struct
 {
     ext_coord_t module;
     bool enabled;
-} ext_profileEnableParams;
+} ext_profilerEnableParams;
 
-/* request: toggle the server-side diagnostics files (no-op on wasm,
-which has no real filesystem). logFile: mirror the log to a file;
+/* request: toggle the server-side diagnostics files (a no-op when the
+running build has no filesystem). logFile: mirror the log to a file;
 profileRaw: stream every raw profiler sample to a CSV for analysis */
 typedef struct
 {
@@ -143,7 +145,7 @@ typedef struct
 
 /* request: toggle the server-side per-tick data recorder — a lossless
 wide-CSV black box of the active model's state/input/reference/error
-(no-op on wasm, which has no real filesystem) */
+(a no-op when the running build has no filesystem) */
 typedef struct
 {
     bool enabled;
@@ -163,23 +165,25 @@ typedef struct
     ext_coord_t droppedRows;
 } ext_recordStatus;
 
-/* response: the active controller's exposed parameters, one record per
-newline: 'id\tgroup\tlabel\tflags\tvalue' (flags = 'rw' | 'ro').
-Fixed char buffer: text on the POD wire (empty if no tunable params) */
+/* response: a domain parameter manifest (model / controller / observer /
+sensor), one record per newline: 'id\tgroup\tlabel\tflags\tvalue'
+(flags = 'rw' | 'ro'). Fixed char buffer: text on the POD wire (empty
+if the domain has no exposed parameters) */
 typedef struct
 {
     char text[2048];
-} ext_controllerManifest;
+} ext_paramManifest;
 
-/* request: set one controller parameter by its manifest id. id is
-carried as ext_coord_t (exact up to 2^24) since the wire has no int */
+/* request: set one parameter by its manifest id, within a domain (model
+/ controller / observer / sensor). id is carried as ext_coord_t (exact
+up to 2^24) since the wire has no int */
 typedef struct
 {
-    /* parameter id = its row index in the manifest */
+    /* parameter id = its row index in the domain manifest */
     ext_coord_t id;
     /* new value for the parameter */
     ext_coord_t value;
-} ext_controllerParamSet;
+} ext_paramSet;
 
 /* Initialize Rocket model: FF_LQR_01, returns true on error */
 bool ext_initRocket_FFLQR01(ext_initRocketParams params);
@@ -233,16 +237,16 @@ ext_moduleList ext_getLogModules(void);
 bool ext_setLogLevel(ext_logLevelParams params);
 
 /* List the registered profiler modules with their enabled flag */
-ext_moduleList ext_getProfileModules(void);
+ext_moduleList ext_getProfilerModules(void);
 
 /* Enable or disable profiling for a module, returns true on error */
-bool ext_setProfileEnabled(ext_profileEnableParams params);
+bool ext_setProfilerEnabled(ext_profilerEnableParams params);
 
 /* Get the profiler stats table from the latest published snapshot */
-ext_profileTable ext_getProfileTable(void);
+ext_profilerTable ext_getProfilerTable(void);
 
 /* Reset all profiler statistics (clears cold-start outliers), returns true on error */
-bool ext_resetProfile(void);
+bool ext_resetProfiler(void);
 
 /* Toggle server-side log-to-file and raw-profiler-CSV, returns true on error */
 bool ext_setDiagFiles(ext_diagFiles params);
@@ -253,11 +257,29 @@ ext_recordStatus ext_setRecording(ext_recordParams params);
 /* Get the data recorder status (active model, enabled flag, dropped rows) */
 ext_recordStatus ext_getRecordStatus(void);
 
-/* Get the active controller's parameter manifest (TSV listing) */
-ext_controllerManifest ext_getControllerManifest(void);
-
-/* Set one controller parameter by its manifest id; returns true on error */
-bool ext_setControllerParam(ext_controllerParamSet params);
-
 /* Initialize Rocket model: MPC_01 (nonlinear MPC), returns true on error */
 bool ext_initRocket_MPC01(ext_initRocketParams params);
+
+/* Get the model parameter manifest (structural knobs, e.g. MPC horizon; TSV listing) */
+ext_paramManifest ext_modelGetManifest(void);
+
+/* Set one model parameter by its manifest id; returns true on error */
+bool ext_modelSetParam(ext_paramSet params);
+
+/* Get the controller parameter manifest (cost weights / solver; TSV listing) */
+ext_paramManifest ext_controllerGetManifest(void);
+
+/* Set one controller parameter by its manifest id; returns true on error */
+bool ext_controllerSetParam(ext_paramSet params);
+
+/* Get the observer parameter manifest (estimator covariances + enable; TSV listing) */
+ext_paramManifest ext_observerGetManifest(void);
+
+/* Set one observer parameter by its manifest id; returns true on error */
+bool ext_observerSetParam(ext_paramSet params);
+
+/* Get the sensor parameter manifest (per-axis bias / noise / enable; TSV listing) */
+ext_paramManifest ext_sensorGetManifest(void);
+
+/* Set one sensor parameter by its manifest id; returns true on error */
+bool ext_sensorSetParam(ext_paramSet params);

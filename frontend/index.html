@@ -111,9 +111,16 @@
             padding: 6px 8px;
         }
 
-        /* ── Views ── */
-        #view-charts { display: grid; }
-        #view-3d     { display: none; position: relative; width: 100%; height: calc(100vh - 200px);
+        /* ── Views ──
+           --chrome-h and --dock-h are measured in main.js (app bar / log dock),
+           so a wrapping bar or a collapsed dock resizes the 3D canvas correctly
+           instead of leaving it clipped or short. */
+        :root { --chrome-h: 180px; --dock-h: 120px; }
+        body { padding-bottom: calc(var(--dock-h) + 12px); }
+        #view-charts { display: none; }
+        #view-3d     { display: block; position: relative; width: 100%;
+                       height: calc(100vh - var(--chrome-h) - var(--dock-h) - 24px);
+                       min-height: 260px;
                        background: #0d0d0d; border-radius: 4px; overflow: hidden; }
         #view-params { display: none; }
         #view-diag   { display: none; }
@@ -237,6 +244,8 @@
 
         .chart-panel { grid-column: span 2; }
         canvas { display: block; width: 100%; height: 100px; margin-top: 6px; }
+        /* the time-series panels carry axes and labels: they need the room */
+        .chart-panel canvas { height: 140px; }
 
         /* ── Params form ── */
         .params-grid {
@@ -321,9 +330,12 @@
         .ctrl-group { color: #6cf; font-size: 0.8em; text-transform: uppercase;
                       letter-spacing: 0.06em; margin: 12px 2px 4px; }
         .ctrl-group:first-child { margin-top: 2px; }
+        .ctrl-section { color: #9cf; font-size: 0.82em; font-weight: 600; letter-spacing: 0.04em;
+            margin: 16px 2px 4px; padding-top: 10px; border-top: 1px solid #2a3550; }
         .ctrl-row { display: flex; align-items: center; gap: 10px; margin: 3px 2px; }
         .ctrl-row label { color: #aaa; font-size: 0.9em; min-width: 150px; white-space: nowrap; }
         .ctrl-row input { width: 120px; }
+        .ctrl-row input[type="checkbox"] { width: auto; }
         .ctrl-row.ro input { color: #778; }
         .ctrl-row .ro-tag { color: #556; font-size: 0.75em; }
 
@@ -334,16 +346,84 @@
         }
 
         /* ── Status ── */
-        #statusBar { font-size: 0.9em; color: #555; margin-top: 10px; }
-        #errorMsg  { color: #f44; margin-top: 4px; font-size: 0.9em; min-height: 1em; }
+        /* ── App bar: header + force bar + plant bar + messages, as one block ──
+           Sticky, so it stays put while a view scrolls under it. Its measured
+           height feeds --chrome-h (set from main.js), which is what sizes the
+           full-height views instead of a hard-coded magic number. */
+        #appBar {
+            position: sticky; top: 0; z-index: 40;
+            background: #0d0d0d;
+            margin: -20px -20px 14px;      /* cancel the body padding: edge to edge */
+            padding: 12px 20px 8px;
+            border-bottom: 1px solid #1c1c1c;
+        }
+        #appBar header    { margin-bottom: 10px; }
+        #appBar #forceBar { margin-bottom: 0; }
+        #appBar #plantBar { margin-top: 10px; }
+
+        /* Message strip: state left, failures right, one line unless it wraps */
+        #msgBar {
+            display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap;
+            margin-top: 8px; min-height: 1.2em;
+        }
+        #statusBar { font-size: 0.9em; color: #555; }
+        #errorMsg  { color: #f44; font-size: 0.9em; margin-left: auto; text-align: right; }
+
+        /* Performance banner: the top row of the app bar, so showing it pushes the
+           UI down instead of covering the header controls. Hidden unless the
+           simulation cannot keep up with the requested speed. */
+        #perfWarn {
+            display: none;
+            margin: -12px -20px 10px;   /* out to the app bar's own padding */
+            background: #3a2a00; color: #fc0; border-bottom: 1px solid #a80;
+            padding: 8px 16px; font-size: 0.9em; text-align: center;
+        }
+
+        /* ── Responsive ──
+           The app bar is the part that has to survive a narrow screen: it wraps
+           into rows, the widest controls go full-width, and the decorations that
+           carry no information (the CDS wordmark) are the first to go. */
+        @media (max-width: 1000px) {
+            header { gap: 14px; }
+            #simTime { font-size: 1.4em; }
+            .controls { margin-left: 0; width: 100%; justify-content: flex-start; }
+        }
+        @media (max-width: 700px) {
+            body { padding: 12px; font-size: 14px; }
+            #appBar   { margin: -12px -12px 12px; padding: 10px 12px 8px; }
+            #perfWarn { margin: -10px -12px 8px; }
+            header h1 { display: none; }        /* the browser tab already says CDS */
+            #rateBox, #modelBox { width: 100%; }
+            #rateBox input[type=range] { flex: 1; min-width: 0; }
+            #modelBox select { flex: 1; }
+            #viewToggle { width: 100%; }
+            #viewToggle button { flex: 1; padding: 8px 4px; min-width: 0; }
+            button { padding: 8px 12px; }
+            #errorMsg { margin-left: 0; text-align: left; }
+            .force-group { flex: 1; }
+            .btn-force { flex: 1; min-width: 0; padding: 6px 8px; }
+            .traj-axis-row { grid-template-columns: 62px repeat(3, 1fr); gap: 4px; }
+        }
     </style>
 </head>
 <body>
 
-<!-- ════ Header ════ -->
+<!-- ════ App bar: every always-present strip in one sticky block, so the views
+     below scroll under a single piece of chrome (and the messages reach the
+     user from the 3D view too, where in-flow lines fall below the fold) ════ -->
+<div id="appBar">
+
+<!-- Shown when the simulation cannot keep up with the requested speed -->
+<div id="perfWarn"></div>
+
 <header>
     <h1>CDS</h1>
     <div id="simTime">0.000 <span>s</span></div>
+    <div id="rateBox" title="Simulation speed. Only in pure simulation (no plant attached); a plant forces real-time 1x.">
+        <span class="lbl">rate</span>
+        <input type="range" id="sldRate" min="0.25" max="8" step="0.05" value="1" disabled>
+        <span class="val" id="rateVal">1.0×</span>
+    </div>
     <div id="modelBox">
         <label for="modelSelect">model</label>
         <select id="modelSelect">
@@ -355,8 +435,8 @@
     </div>
     <div class="controls">
         <div id="viewToggle">
-            <button id="btnCharts" class="active">Charts</button>
-            <button id="btn3d"     disabled>3D</button>
+            <button id="btnCharts">Charts</button>
+            <button id="btn3d" class="active" disabled>3D</button>
             <button id="btnParams">Params</button>
             <button id="btnDiag">Diag</button>
         </div>
@@ -399,6 +479,14 @@
     <button id="btnBeginStaging">Begin staging</button>
     <button id="btnStopStaging" disabled>Stop staging</button>
 </div>
+
+<!-- Message strip: state on the left, failures on the right -->
+<div id="msgBar">
+    <div id="statusBar">Loading WASM...</div>
+    <div id="errorMsg"></div>
+</div>
+
+</div><!-- /appBar -->
 
 <!-- ════ Charts view ════ -->
 <div id="view-charts">
@@ -846,9 +934,6 @@
 
     <!-- The log stream itself lives in the persistent dock below (all views) -->
 </div>
-
-<div id="statusBar">Loading WASM...</div>
-<div id="errorMsg"></div>
 
 <!-- ════ Persistent log console dock (visible on every view, collapsible) ════ -->
 <div id="logDock">

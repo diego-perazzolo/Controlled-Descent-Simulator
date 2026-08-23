@@ -53,6 +53,8 @@
 #include "log.hpp"
 #include "profile.hpp"
 #include "Recorder.hpp"
+#include "observer_params.hpp"   // libs/estimate -- observer knobs registration
+#include "sensor_params.hpp"     // libs/sensor   -- sensor knobs registration + measuredThrough
 
 
 // State indexes (match CDS::Dynamics::ROCKET_MPC_01::StateName)
@@ -114,6 +116,11 @@ using M12x12 = std::array<V12, NR>;
 struct Weights { double wp, wq, wv, ww, wterm; double rF1, rT1, rT2, rT3; };
 struct StageRef { std::array<double,3> p; std::array<double,3> ang; std::array<double,3> v; std::array<double,3> w; };
 
+// As for the quadrotor, but the rocket flies descent trajectories hundreds of
+// metres tall, so the box that still counts as "a prediction of this vehicle" is
+// correspondingly larger. See SolveMpc().
+constexpr double STATE_SANITY_LIMIT = 2000.0;
+
 inline double wrapPi(double a) { return std::atan2(std::sin(a), std::cos(a)); }
 
 // ---- cost: residuals + Gauss-Newton Jacobian (SS4 of the notebook) ----
@@ -170,6 +177,30 @@ V12 integrateStep(const Model& model, const V12& x, const V4& u, const std::arra
     return integrate::rk4_step<NX>(x, dt, [&](const V12& s){ return model.Dynamics(s, u, uF); });
 }
 
+// ---- reference preview over the prediction horizon (one StageRef per stage) ----
+// Past the end of the trajectory the last sampled stage is held. Returns true
+// (error) when not even the first stage can be sampled: there is nothing to hold
+// then, and the caller must skip the solve rather than read an unset stage.
+bool sampleHorizon(TrajectoryManager& tm, double t0, double dtMpc, std::size_t horizon,
+                   std::array<StageRef, RocketMPC::MAX_HORIZON + 1>& refs)
+{
+    for (std::size_t k = 0; k <= horizon; ++k)
+    {
+        Reference_t r;
+        if (tm.GetReference(t0 + k * dtMpc, r))
+        {
+            if (k == 0) { return true; }     // no first stage to hold: nothing to solve from
+            refs[k] = refs[k - 1];           // beyond the trajectory: hold the last
+            continue;
+        }
+        refs[k].p   = {{r.pos[0], r.pos[1], r.pos[2]}};
+        refs[k].ang = {{0.0, 0.0, r.yaw}};   // upright attitude at the commanded heading
+        refs[k].v   = {{r.vel[0], r.vel[1], r.vel[2]}};
+        refs[k].w   = {{0.0, 0.0, 0.0}};
+    }
+    return false;
+}
+
 void initState(const Reference_t& ref, V12& s)
 {
     s.fill(0.0);
@@ -193,15 +224,57 @@ RocketMPC::RocketMPC()
     m_time = 0;
     m_seeded = false;
     m_lastSolveTime = 0;
+    m_lastSolveWarnTime = -1.0e30;   // nothing reported yet
 
     // Controller knobs default to the values tuned in the notebook.
     m_wp = 6.0; m_wq = 8.0; m_wv = 1.0; m_ww = 0.50; m_wterm = 20.0;
     m_rF1 = 0.02; m_rT1 = 0.20; m_rT2 = 0.20; m_rT3 = 0.20;   // per-input control weights
     m_dtMpc = 0.02;      // MPC prediction / control step [s]
     m_maxIters = 12;     // iLQR iterations per solve (warm-started)
+    m_horizon = 40;      // active prediction horizon N (runtime-tunable, 1..MAX_HORIZON)
     BuildParamTable();
 
+    // Offset-free disturbance observer: OFF by default (opt-in). Gain synthesised
+    // in SetModelParams, once the model is parameterised. The rocket is heavy
+    // (small disturbance-input coupling Bd = 1/m), so the disturbance is weakly
+    // observed; a larger disturbance-state process variance raises the observer
+    // bandwidth to keep convergence brisk (still well inside the numerically safe
+    // qDist/rPos ratio).
+    m_obsEnabled = false;
+    m_obsQpos = 1.0e-4; m_obsQvel = 1.0e-2; m_obsQdist = 25.0; m_obsRpos = 1.0e-4;
+
     recorder.activateAsModel(); // this model owns the model data recorder while it lives
+}
+
+// Synthesise the translational disturbance observer. The only physical input is
+// the disturbance-input coupling Bd = d(v_dot)/d(F_ext), read FROM the generated
+// model by finite-differencing Dynamics w.r.t. the external force (the force
+// enters additively, so Bd is state/input-independent -- evaluated once at the
+// upright hover). Everything generic lives in the reusable helper.
+void RocketMPC::BuildObserver()
+{
+    auto dyn = (Dynamics::ROCKET_MPC_01*) m_modelPtr;
+    if (dyn == nullptr) return;
+
+    using PN = Dynamics::ROCKET_MPC_01::ParamName;
+    const double mg = dyn->GetParam(PN::Mass) * dyn->GetParam(PN::Gravity);
+    V12 x{}; x.fill(0.0);                 // upright, at rest, at the origin
+    const V4 u{{mg, 0.0, 0.0, 0.0}};      // hover wrench
+
+    const std::array<double,3> zeroF{{0.0, 0.0, 0.0}};
+    const V12 d0 = dyn->Dynamics(x, u, zeroF);
+    control::Mat<POS_DIM, POS_DIM> Bd{}; for (auto& r : Bd) r.fill(0.0);
+    for (std::size_t j = 0; j < POS_DIM; ++j)
+    {
+        std::array<double,3> Fe{{0.0, 0.0, 0.0}}; Fe[j] = 1.0;   // unit external force on axis j
+        const V12 dj = dyn->Dynamics(x, u, Fe);
+        Bd[0][j] = dj[IDX_VX] - d0[IDX_VX];
+        Bd[1][j] = dj[IDX_VY] - d0[IDX_VY];
+        Bd[2][j] = dj[IDX_VZ] - d0[IDX_VZ];
+    }
+
+    if (m_obs.Build(Bd, m_obsQpos, m_obsQvel, m_obsQdist, m_obsRpos))
+        CDS_LOG_ERROR(logger, "Disturbance-observer synthesis failed");
 }
 
 RocketMPC::~RocketMPC()
@@ -234,6 +307,9 @@ bool RocketMPC::SetModelParams(const std::any& params)
     dynamics->SetParam(PN::TorqueYMin,  p.T2_min);
     dynamics->SetParam(PN::TorqueZMax,  p.T3_max);
     dynamics->SetParam(PN::TorqueZMin,  p.T3_min);
+
+    // Synthesise the disturbance observer now the model is parameterised.
+    BuildObserver();
 
     // Recorder run metadata: full model parameters (trajectory added in
     // SetTrajectoryManager, the last setup step).
@@ -286,76 +362,15 @@ bool RocketMPC::PerformIntegration(const core_stepParams_t& params)
     auto dynamics = (Dynamics::ROCKET_MPC_01*) m_modelPtr;
     if (dynamics == nullptr || m_trajectoryManagerPtr == nullptr) { return true; }
 
-    // ---- current reference: drives the tracking errors, and is the base of the
-    //      horizon preview when we re-solve ----
+    /* Current reference: drives the tracking errors, and anchors the horizon
+       preview when the controller re-solves */
     Reference_t ref0;
     if (m_trajectoryManagerPtr->GetReference(m_time, ref0)) { return true; }
+    UpdateTrackingErrors(ref0);
 
-    // ---- tracking errors (position + heading) w.r.t. the current reference ----
-    m_trackingErr[0] = ref0.pos[0] - m_state[IDX_X];
-    m_trackingErr[1] = ref0.pos[1] - m_state[IDX_Y];
-    m_trackingErr[2] = ref0.pos[2] - m_state[IDX_Z];
-    m_trackingErr[3] = wrapPi(ref0.yaw - m_state[IDX_PSI]);
+    /* The solve runs at the control cadence only; in between, m_lastU0 is held */
+    if (!m_seeded || (m_time - m_lastSolveTime) >= m_dtMpc) { SolveMpc(); }
 
-    // ---- re-solve the MPC only at the control cadence (every DT_MPC of model
-    //      time); hold the last command as a zero-order hold in between. The
-    //      horizon already assumes a DT_MPC ZOH, so this is both faithful and
-    //      cheap: it keeps the expensive solve off most ticks, so a high tick
-    //      rate cannot monopolise the system lock (the sim degrades gracefully
-    //      instead of freezing). ----
-    if (!m_seeded || (m_time - m_lastSolveTime) >= m_dtMpc)
-    {
-        CDS_PROFILE(profile, "Total MPC execution");
-        const Weights W{m_wp, m_wq, m_wv, m_ww, m_wterm, m_rF1, m_rT1, m_rT2, m_rT3};
-        // hover command and per-input actuator box from the model params
-        using PN = Dynamics::ROCKET_MPC_01::ParamName;
-        const double mg = dynamics->GetParam(PN::Mass) * dynamics->GetParam(PN::Gravity);
-        const V4 uref{{mg, 0.0, 0.0, 0.0}};
-        const V4 lo{{dynamics->GetParam(PN::ThrustMin), dynamics->GetParam(PN::TorqueXMin),
-                     dynamics->GetParam(PN::TorqueYMin), dynamics->GetParam(PN::TorqueZMin)}};
-        const V4 hi{{dynamics->GetParam(PN::ThrustMax), dynamics->GetParam(PN::TorqueXMax),
-                     dynamics->GetParam(PN::TorqueYMax), dynamics->GetParam(PN::TorqueZMax)}};
-        if (!m_seeded) { for (auto& u : m_warmStart) u = uref; }
-
-        // sample the reference over the horizon (preview)
-        std::array<StageRef, RocketMPC::HORIZON + 1> refs;
-        for (std::size_t k = 0; k <= RocketMPC::HORIZON; ++k)
-        {
-            Reference_t r;
-            if (m_trajectoryManagerPtr->GetReference(m_time + k * m_dtMpc, r))
-            {
-                refs[k] = refs[k - 1];           // beyond the trajectory: hold the last (defensive)
-                continue;
-            }
-            refs[k].p   = {{r.pos[0], r.pos[1], r.pos[2]}};
-            refs[k].ang = {{0.0, 0.0, r.yaw}};   // upright attitude at the commanded heading
-            refs[k].v   = {{r.vel[0], r.vel[1], r.vel[2]}};
-            refs[k].w   = {{0.0, 0.0, 0.0}};
-        }
-
-        // build the rocket closures and hand off to the generic iLQR. The MPC
-        // predicts with no external force (userF = 0); the plant is advanced below
-        // with the true user force. Euler state needs no projection (no-op).
-        const std::array<double,3> predForce{{0.0, 0.0, 0.0}};
-        auto fdyn  = [&](const V12& x, const V4& u){ return dynamics->Dynamics(x, u, predForce); };
-        auto jac   = [&](const V12& x, const V4& u, double fx[NX][NX], double fu[NX][NU]){ dynamics->Jacobians(x, u, fx, fu); };
-        auto proj  = [](V12&){ /* Euler: no state projection */ };
-        auto scost = [&](const V12& x, const V4& u, std::size_t k){ return rocketStageCost(x, u, refs[k], uref, W); };
-        auto tcost = [&](const V12& x){ return rocketTermCost(x, refs[RocketMPC::HORIZON], W); };
-
-        V4 u0;
-        {
-            CDS_PROFILE(profile, "MPC solve");
-            control::solve<NX, NU, RocketMPC::HORIZON>(
-                m_state, fdyn, jac, proj, scost, tcost, lo, hi, m_dtMpc, m_maxIters, m_warmStart, u0);
-        }
-
-        m_lastU0        = u0;
-        m_lastSolveTime = m_time;
-        m_seeded        = true;
-    }
-
-    // ---- apply the held command (ZOH), integrate the plant by the measured step ----
     m_userForces[0] = params.user_fX;
     m_userForces[1] = params.user_fY;
     m_userForces[2] = params.user_fZ;
@@ -364,30 +379,169 @@ bool RocketMPC::PerformIntegration(const core_stepParams_t& params)
         m_state = integrateStep(*dynamics, m_state, m_lastU0, m_userForces, params.timestep);
     }
 
-    m_time += params.timestep;
+    if (m_obsEnabled) { UpdateObserver(params.timestep); }
 
-    // Data recorder: one wide row per tick. Row alignment: the state is
-    // post-integration at t_sim; m_lastU0 is the MPC command held over the step
-    // (zero-order hold between re-solves); the reference (ref0) and tracking
-    // error are sampled at the step start (they lead the state by one dt).
-#if CDS_RECORD_ENABLED
-    {
-        const std::array<double, 31> row{{
-            m_time,
-            m_state[IDX_X], m_state[IDX_Y], m_state[IDX_Z],
-            m_state[IDX_ALPHA], m_state[IDX_BETA], m_state[IDX_PSI],
-            m_state[IDX_VX], m_state[IDX_VY], m_state[IDX_VZ],
-            m_state[IDX_DALPHA], m_state[IDX_DBETA], m_state[IDX_DPSI],
-            m_lastU0[0], m_lastU0[1], m_lastU0[2], m_lastU0[3],
-            ref0.pos[0], ref0.pos[1], ref0.pos[2], ref0.yaw, ref0.vel[0], ref0.vel[1], ref0.vel[2],
-            m_trackingErr[0], m_trackingErr[1], m_trackingErr[2], m_trackingErr[3],
-            m_userForces[0], m_userForces[1], m_userForces[2],
-        }};
-        recorder.record(row);
-    }
-#endif
+    m_time += params.timestep;
+    RecordTick(ref0);
 
     return false;
+}
+
+void RocketMPC::UpdateTrackingErrors(const Reference_t& ref0)
+{
+    m_trackingErr[0] = ref0.pos[0] - m_state[IDX_X];
+    m_trackingErr[1] = ref0.pos[1] - m_state[IDX_Y];
+    m_trackingErr[2] = ref0.pos[2] - m_state[IDX_Z];
+    m_trackingErr[3] = wrapPi(ref0.yaw - m_state[IDX_PSI]);
+}
+
+void RocketMPC::SolveMpc(void)
+{
+    auto dynamics = (Dynamics::ROCKET_MPC_01*) m_modelPtr;
+
+    CDS_PROFILE(profile, "Total MPC execution");
+    const Weights W{m_wp, m_wq, m_wv, m_ww, m_wterm, m_rF1, m_rT1, m_rT2, m_rT3};
+
+    /* hover command and per-input actuator box from the model params */
+    using PN = Dynamics::ROCKET_MPC_01::ParamName;
+    const double mg = dynamics->GetParam(PN::Mass) * dynamics->GetParam(PN::Gravity);
+    const V4 uref{{mg, 0.0, 0.0, 0.0}};
+    const V4 lo{{dynamics->GetParam(PN::ThrustMin), dynamics->GetParam(PN::TorqueXMin),
+                 dynamics->GetParam(PN::TorqueYMin), dynamics->GetParam(PN::TorqueZMin)}};
+    const V4 hi{{dynamics->GetParam(PN::ThrustMax), dynamics->GetParam(PN::TorqueXMax),
+                 dynamics->GetParam(PN::TorqueYMax), dynamics->GetParam(PN::TorqueZMax)}};
+    if (!m_seeded) { for (auto& u : m_warmStart) u = uref; }
+
+    std::array<StageRef, RocketMPC::MAX_HORIZON + 1> refs;
+    if (sampleHorizon(*m_trajectoryManagerPtr, m_time, m_dtMpc, m_horizon, refs))
+    {
+        /* No reference at the horizon start: keep holding the last command */
+        return;
+    }
+
+    std::array<double, POS_DIM> predForce{{0.0, 0.0, 0.0}};
+    const V12 x0 = ControllerInitialState(predForce);
+
+    /* rocket-specific closures handed to the generic iLQR (Euler state: no
+       projection needed) */
+    auto fdyn  = [&](const V12& x, const V4& u){ return dynamics->Dynamics(x, u, predForce); };
+    auto jac   = [&](const V12& x, const V4& u, double fx[NX][NX], double fu[NX][NU]){ dynamics->Jacobians(x, u, fx, fu); };
+    auto proj  = [](V12&){ };
+    auto scost = [&](const V12& x, const V4& u, std::size_t k){ return rocketStageCost(x, u, refs[k], uref, W); };
+    auto tcost = [&](const V12& x){ return rocketTermCost(x, refs[m_horizon], W); };
+
+    V4 u0{};
+    control::SolveReport report;
+    bool solveFailed = false;
+    {
+        CDS_PROFILE(profile, "MPC solve");
+        solveFailed = control::solve<NX, NU, RocketMPC::MAX_HORIZON>(
+            x0, fdyn, jac, proj, scost, tcost, lo, hi, m_dtMpc, m_maxIters, m_horizon, m_warmStart, u0,
+            &report);
+    }
+
+    /* A refused solve leaves u0 and the warm start untouched, so the previous
+       command stays in force (ZOH) until the next cadence: a stale command beats
+       one the solver itself would not vouch for. */
+    if (solveFailed)
+    {
+        if (m_time - m_lastSolveWarnTime >= 1.0)
+        {
+            m_lastSolveWarnTime = m_time;
+            CDS_LOG_ERROR(logger, "MPC solve refused (horizon {}) at t = {} s: holding the previous command",
+                          static_cast<int>(m_horizon), std::round(m_time * 100.0) / 100.0);
+        }
+        m_lastSolveTime = m_time;
+        return;
+    }
+
+    /* Finite and in-box is not the same as trustworthy: over a horizon long
+       compared with the open-loop instability the predicted rollout can run away
+       while every number stays finite, and the command then optimises a
+       trajectory the vehicle will never fly. Report it -- the command is applied
+       anyway, since refusing every solve would freeze the controller. */
+    if (report.stateMax > STATE_SANITY_LIMIT && (m_time - m_lastSolveWarnTime >= 1.0))
+    {
+        m_lastSolveWarnTime = m_time;
+        CDS_LOG_WARN(logger, "MPC prediction is running away (horizon {}) at t = {} s: |state|max = {}, cost = {}. "
+                             "The horizon is long compared with the open-loop instability: shorten it",
+                     static_cast<int>(m_horizon), std::round(m_time * 100.0) / 100.0,
+                     static_cast<int>(report.stateMax), static_cast<int>(report.cost));
+    }
+
+    m_lastU0        = u0;
+    m_lastSolveTime = m_time;
+    m_seeded        = true;
+}
+
+RocketMPC::StateVec RocketMPC::ControllerInitialState(std::array<double, RocketMPC::POS_DIM>& predForce)
+{
+    StateVec x0 = m_state;
+    predForce = {{0.0, 0.0, 0.0}};
+
+    if (m_obsEnabled)
+    {
+        if (m_obs.Seeded())
+        {
+            const auto rHat = m_obs.Position();
+            const auto vHat = m_obs.Velocity();
+            const auto dHat = m_obs.Disturbance();
+            x0[IDX_X]=rHat[0];  x0[IDX_Y]=rHat[1];  x0[IDX_Z]=rHat[2];
+            x0[IDX_VX]=vHat[0]; x0[IDX_VY]=vHat[1]; x0[IDX_VZ]=vHat[2];
+            predForce = {{dHat[0], dHat[1], dHat[2]}};
+        }
+    }
+    else
+    {
+        /* No estimator: the raw (sensor-corrupted) position goes straight to the
+           controller, so noise and bias bite unfiltered. Identity sensor -> truth */
+        const auto yPos = measuredThrough(m_posSensor,
+            std::array<double,POS_DIM>{{ m_state[IDX_X], m_state[IDX_Y], m_state[IDX_Z] }});
+        x0[IDX_X]=yPos[0]; x0[IDX_Y]=yPos[1]; x0[IDX_Z]=yPos[2];
+    }
+
+    return x0;
+}
+
+void RocketMPC::UpdateObserver(core_coord_t dt)
+{
+    auto dynamics = (Dynamics::ROCKET_MPC_01*) m_modelPtr;
+
+    if (!m_obs.Seeded())
+        m_obs.Seed({{ m_state[IDX_X],  m_state[IDX_Y],  m_state[IDX_Z]  }},
+                   {{ m_state[IDX_VX], m_state[IDX_VY], m_state[IDX_VZ] }});
+
+    /* known force-free acceleration: exactly the MPC's prediction assumption */
+    const std::array<double,3> zeroF{{0.0, 0.0, 0.0}};
+    const V12 xdot = dynamics->Dynamics(m_state, m_lastU0, zeroF);
+    const std::array<double,POS_DIM> aKnown{{ xdot[IDX_VX], xdot[IDX_VY], xdot[IDX_VZ] }};
+
+    const std::array<double,POS_DIM> truthPos{{ m_state[IDX_X], m_state[IDX_Y], m_state[IDX_Z] }};
+    std::array<double,POS_DIM> yPos{};
+    std::array<bool,POS_DIM>   valid{};
+    m_posSensor.Apply(truthPos, yPos, valid);
+
+    m_obs.Step(aKnown, yPos, valid, dt);
+}
+
+void RocketMPC::RecordTick(const Reference_t& ref0)
+{
+#if CDS_RECORD_ENABLED
+    const std::array<double, 31> row{{
+        m_time,
+        m_state[IDX_X], m_state[IDX_Y], m_state[IDX_Z],
+        m_state[IDX_ALPHA], m_state[IDX_BETA], m_state[IDX_PSI],
+        m_state[IDX_VX], m_state[IDX_VY], m_state[IDX_VZ],
+        m_state[IDX_DALPHA], m_state[IDX_DBETA], m_state[IDX_DPSI],
+        m_lastU0[0], m_lastU0[1], m_lastU0[2], m_lastU0[3],
+        ref0.pos[0], ref0.pos[1], ref0.pos[2], ref0.yaw, ref0.vel[0], ref0.vel[1], ref0.vel[2],
+        m_trackingErr[0], m_trackingErr[1], m_trackingErr[2], m_trackingErr[3],
+        m_userForces[0], m_userForces[1], m_userForces[2],
+    }};
+    recorder.record(row);
+#else
+    (void) ref0;
+#endif
 }
 
 bool RocketMPC::GetState(core_state_t& state)
@@ -416,48 +570,72 @@ bool RocketMPC::GetCurrentTimeSeconds(core_coord_t& currentTimeSeconds)
 // The state weights are the per-block Gauss-Newton cost weights; the control
 // weights are per-input (F1/T1/T2/T3) because the rocket's actuators are
 // heterogeneous. dt_mpc is the control step (also the horizon spacing); max_iters
-// caps the iLQR iterations per solve. The horizon N is compile-time (fixed
-// buffers) and exposed read-only. No gain to re-synthesise: the MPC re-solves
+// caps the iLQR iterations per solve. The horizon N is runtime-tunable (buffers
+// fixed at MAX_HORIZON). No gain to re-synthesise: the MPC re-solves
 // from scratch every control step.
+// Per-axis group names for the position sensor bank (x/y/z).
+static const char* const SENSOR_GROUPS[3] = { "Sensor x", "Sensor y", "Sensor z" };
+
 void RocketMPC::BuildParamTable()
 {
-    m_params.clear();
+    // Model bucket: the runtime-tunable prediction horizon.
+    m_modelParams.clear();
+    // Active prediction horizon N (runtime-tunable up to the fixed buffer
+    // capacity). A change re-seeds the warm start on the next solve.
+    m_modelParams.add("solver", "horizon N", true,
+        [this]{ return static_cast<double>(m_horizon); },
+        [this](double v){ const int n = static_cast<int>(v + 0.5);
+                          if (n < 1 || n > static_cast<int>(RocketMPC::MAX_HORIZON)) return true;
+                          m_horizon = static_cast<std::size_t>(n); m_seeded = false; return false; });
+
+    // Controller bucket: cost weights + solver knobs.
+    m_controllerParams.clear();
     // State-error cost weights (the MPC's analogue of the LQR Q, one scalar per
     // state block rather than a full diagonal).
-    m_params.add("Q (state cost)", "position", true, [this]{ return m_wp; },
+    m_controllerParams.add("Q (state cost)", "position", true, [this]{ return m_wp; },
                  [this](double v){ if (v < 0.0) return true; m_wp = v; return false; });
-    m_params.add("Q (state cost)", "attitude", true, [this]{ return m_wq; },
+    m_controllerParams.add("Q (state cost)", "attitude", true, [this]{ return m_wq; },
                  [this](double v){ if (v < 0.0) return true; m_wq = v; return false; });
-    m_params.add("Q (state cost)", "velocity", true, [this]{ return m_wv; },
+    m_controllerParams.add("Q (state cost)", "velocity", true, [this]{ return m_wv; },
                  [this](double v){ if (v < 0.0) return true; m_wv = v; return false; });
-    m_params.add("Q (state cost)", "body rate", true, [this]{ return m_ww; },
+    m_controllerParams.add("Q (state cost)", "body rate", true, [this]{ return m_ww; },
                  [this](double v){ if (v < 0.0) return true; m_ww = v; return false; });
     // Control-effort cost weights, one per (heterogeneous) input.
-    m_params.add("R (control cost)", "F1", true, [this]{ return m_rF1; },
+    m_controllerParams.add("R (control cost)", "F1", true, [this]{ return m_rF1; },
                  [this](double v){ if (v <= 0.0) return true; m_rF1 = v; return false; });
-    m_params.add("R (control cost)", "T1", true, [this]{ return m_rT1; },
+    m_controllerParams.add("R (control cost)", "T1", true, [this]{ return m_rT1; },
                  [this](double v){ if (v <= 0.0) return true; m_rT1 = v; return false; });
-    m_params.add("R (control cost)", "T2", true, [this]{ return m_rT2; },
+    m_controllerParams.add("R (control cost)", "T2", true, [this]{ return m_rT2; },
                  [this](double v){ if (v <= 0.0) return true; m_rT2 = v; return false; });
-    m_params.add("R (control cost)", "T3", true, [this]{ return m_rT3; },
+    m_controllerParams.add("R (control cost)", "T3", true, [this]{ return m_rT3; },
                  [this](double v){ if (v <= 0.0) return true; m_rT3 = v; return false; });
-    // Solver knobs: terminal-cost weight, control step, iteration cap, and the
-    // (compile-time, read-only) prediction horizon.
-    m_params.add("solver", "terminal weight", true, [this]{ return m_wterm; },
+    // Solver knobs: terminal-cost weight, control step, iteration cap.
+    m_controllerParams.add("solver", "terminal weight", true, [this]{ return m_wterm; },
                  [this](double v){ if (v < 0.0) return true; m_wterm = v; return false; });
-    m_params.add("solver", "dt_mpc [s]", true, [this]{ return m_dtMpc; },
+    m_controllerParams.add("solver", "dt_mpc [s]", true, [this]{ return m_dtMpc; },
                  [this](double v){ if (v <= 0.0) return true; m_dtMpc = v; return false; });
-    m_params.add("solver", "max iters", true, [this]{ return static_cast<double>(m_maxIters); },
+    m_controllerParams.add("solver", "max iters", true, [this]{ return static_cast<double>(m_maxIters); },
                  [this](double v){ const int n = static_cast<int>(v + 0.5); if (n < 1) return true; m_maxIters = n; return false; });
-    m_params.add("solver", "horizon N", false, []{ return static_cast<double>(RocketMPC::HORIZON); });
+
+    // Observer bucket: covariances + enable (a covariance change re-synthesises
+    // the gain off the tick path).
+    m_observerParams.clear();
+    estimate::appendObserverParams(m_observerParams, m_obsEnabled,
+                                   m_obsQpos, m_obsQvel, m_obsQdist, m_obsRpos,
+                                   [this]{ BuildObserver(); });
+
+    // Sensor bucket: per-axis position-sensor knobs.
+    m_sensorParams.clear();
+    sensor::appendSensorParams(m_sensorParams, m_posSensor, SENSOR_GROUPS);
 }
 
-bool RocketMPC::GetControllerManifest(char* buf, std::size_t n)
-{
-    m_params.buildManifest(buf, n);
-    return false;
-}
-
-bool RocketMPC::SetControllerParam(int id, double value) { return m_params.set(id, value); }
+bool RocketMPC::GetModelManifest(char* buf, std::size_t n)      { m_modelParams.buildManifest(buf, n); return false; }
+bool RocketMPC::SetModelParam(int id, double value)            { return m_modelParams.set(id, value); }
+bool RocketMPC::GetControllerManifest(char* buf, std::size_t n){ m_controllerParams.buildManifest(buf, n); return false; }
+bool RocketMPC::SetControllerParam(int id, double value)      { return m_controllerParams.set(id, value); }
+bool RocketMPC::GetObserverManifest(char* buf, std::size_t n)  { m_observerParams.buildManifest(buf, n); return false; }
+bool RocketMPC::SetObserverParam(int id, double value)        { return m_observerParams.set(id, value); }
+bool RocketMPC::GetSensorManifest(char* buf, std::size_t n)    { m_sensorParams.buildManifest(buf, n); return false; }
+bool RocketMPC::SetSensorParam(int id, double value)          { return m_sensorParams.set(id, value); }
 
 } // namespace CDS

@@ -23,8 +23,9 @@
 // THE SOFTWARE.
 //
 // =============================================================================
-// File        : <filename.cpp>
-// Description : <brief description of this file>
+// File        : Point.cpp
+// Description : Implementation of the Point sub-trajectory: a constant
+//               reference (static setpoint) held for the item's duration.
 // Author      : Diego Perazzolo
 // Created     : 2026
 // =============================================================================

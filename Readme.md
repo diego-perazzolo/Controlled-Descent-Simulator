@@ -30,6 +30,11 @@ It is a learning and portfolio project, it is a work in progress.
   feedforward**, generated as C++ from the notebooks; and a
   control-limited **nonlinear MPC** (iLQR/DDP) with a C++↔Python conformance
   certificate.
+- **State estimation & sensor emulation** — an optional **disturbance observer**
+  (offset-free tracking for the MPC models, a filtered state estimate for the
+  LQR models) and a per-axis **sensor model** (noise / bias / dropout), both off
+  by default and tunable live from the frontend. See
+  [docs/estimation.md](docs/estimation.md).
 - **Notebook → C++ codegen** — model dynamics and LQR gains are generated from
   Jupyter/SymPy, so the symbolic model and the running code cannot drift apart.
 - **A real plant abstraction** — a loopback test double, and an **ArduPilot
@@ -176,6 +181,7 @@ the physics integration in order. Details in [docs/build.md](docs/build.md).
 | [docs/build.md](docs/build.md) | Build & run, prerequisites, app switching, notebook setup, deployment |
 | [docs/api.md](docs/api.md) | The `ext_*` communication API — functions, structs, JS usage |
 | [docs/models.md](docs/models.md) | Physics & control reference — state vectors, forces, controllers |
+| [docs/estimation.md](docs/estimation.md) | The optional disturbance observer & sensor model — roles, tuning, configuration |
 | [docs/sitl.md](docs/sitl.md) | Flying against an ArduPilot SITL in Docker, end to end |
 | [docs/benchmark.md](docs/benchmark.md) | Performance and the cost of the diagnostics |
 | [AGENTS.md](AGENTS.md) | Conventions, invariants and verification commands |
@@ -208,7 +214,7 @@ exposed to JavaScript via embind — see [docs/api.md](docs/api.md).
 /
 ├── core/        # The physics core (models, controller, trajectory), a static library
 ├── apps/        # Deployments of the core: common/ (ext API + bindings), wasm-only/, ws-served/
-├── libs/        # In-house infrastructure (sync, ws, integrate: RK4, control: iLQR/MPC solver)
+├── libs/        # In-house infrastructure (sync, ws, integrate: RK4, control: iLQR/MPC solver, estimate: observer, sensor: sensor model)
 ├── plants/      # External-vehicle plants: loopback + ArduPilot SITL over MAVLink
 ├── frontend/    # Shared web UI — runs whichever app was built last into build/
 ├── modeling/    # Jupyter/SymPy notebooks + C++ code generation
@@ -226,8 +232,8 @@ The full annotated tree is in [docs/build.md](docs/build.md#repository-structure
 The in-browser (WASM-only) app, no server required:
 
 ```bash
-emcmake cmake -S apps/wasm-only -B build-wasm-only -DCMAKE_BUILD_TYPE=Release
-cmake --build build-wasm-only
+emcmake cmake -S apps/wasm-only -B build/wasm-only -DCMAKE_BUILD_TYPE=Release
+cmake --build build/wasm-only
 python3 tools/serve.py 8080
 ```
 
@@ -249,6 +255,7 @@ deployment are all in **[docs/build.md](docs/build.md)**.
 - [x] SITL plant over MAVLink/UDP (ArduCopter): link, telemetry, Guided-mode setpoints, auto arm/takeoff staging
 - [x] Save / load of parameters and trajectories from the frontend
 - [x] Nonlinear model-predictive control (control-limited iLQR/DDP) for both the QuadRotor and the Rocket: one shared C++ solver (`libs/control`) with a Python reference and conformance certificate
+- [x] Disturbance observer & sensor model: offset-free tracking (MPC) / filtered state estimate (LQR), and a per-axis sensor model (noise/bias/dropout), tunable live — one shared estimator (`libs/estimate`) with a Python conformance certificate
 - [ ] Real hardware interface (MAVLink over serial to a Pixhawk): the SITL plant's link layer is the same, only the transport changes
 
 ---

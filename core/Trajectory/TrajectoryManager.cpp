@@ -23,8 +23,10 @@
 // THE SOFTWARE.
 //
 // =============================================================================
-// File        : <filename.cpp>
-// Description : <brief description of this file>
+// File        : TrajectoryManager.cpp
+// Description : Implementation of the trajectory item list: item sequencing,
+//               reference sampling across items, and vertical-range
+//               computation.
 // Author      : Diego Perazzolo
 // Created     : 2026
 // =============================================================================

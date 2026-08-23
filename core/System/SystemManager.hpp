@@ -59,6 +59,7 @@ namespace CDS
         typedef struct
         {
             sm_coord_t timestep_seconds;
+            sm_coord_t rate;              // sim-speed multiplier (plant-less pure sim); 1.0 = real-time
         } systemManagerParams_t;
 
         SystemManager(void);
@@ -121,6 +122,11 @@ namespace CDS
         bool ExecuteTick(sm_coord_t timestep_seconds);
         bool Stop(void);
 
+        /* Set the tick period and the simulation-speed multiplier. Returns true
+           on error: a non-positive rate, a period change while a plant mission
+           is running, or any rate change while a plant is attached (the plant
+           paces real time). Pass the CURRENT value of the field being left
+           alone -- a brace-initialised struct silently zeroes what it omits */
         bool SetParameters(const systemManagerParams_t& params);
         bool GetParameters(systemManagerParams_t& params);
         inline bool IsRunning(void) { /* do not guard with mutex */ return m_isRunning; };
@@ -130,7 +136,8 @@ namespace CDS
         private:
 
         /* Attach the current trajectory to the model, if both exist and the
-           trajectory has at least one item. Caller must hold m_mutex */
+           trajectory has at least one item. An empty trajectory is not an error:
+           nothing is attached and success is returned. Caller must hold m_mutex */
         bool _attachTrajectoryToModel(void);
 
         modelPtr_t m_pModel;

@@ -138,6 +138,7 @@ EMSCRIPTEN_BINDINGS(simulator) {
 
     value_object<ext_systemParams>("ext_systemParams")
         .field("timestep_seconds", &ext_systemParams::timestep_seconds)
+        .field("rate",             &ext_systemParams::rate)
         .field("user_forces",      &ext_systemParams::user_forces);
 
     value_object<ext_snapshotData>("ext_snapshotData")
@@ -165,19 +166,19 @@ EMSCRIPTEN_BINDINGS(simulator) {
                +[](ext_moduleList& o, const std::string& v){ std::strncpy(o.list, v.c_str(), sizeof(o.list) - 1); o.list[sizeof(o.list) - 1] = '\0'; })
         .field("count", &ext_moduleList::count);
 
-    value_object<ext_profileTable>("ext_profileTable")
-        .field("table", +[](const ext_profileTable& o){ return std::string(o.table); },
-               +[](ext_profileTable& o, const std::string& v){ std::strncpy(o.table, v.c_str(), sizeof(o.table) - 1); o.table[sizeof(o.table) - 1] = '\0'; })
-        .field("count", &ext_profileTable::count);
+    value_object<ext_profilerTable>("ext_profilerTable")
+        .field("table", +[](const ext_profilerTable& o){ return std::string(o.table); },
+               +[](ext_profilerTable& o, const std::string& v){ std::strncpy(o.table, v.c_str(), sizeof(o.table) - 1); o.table[sizeof(o.table) - 1] = '\0'; })
+        .field("count", &ext_profilerTable::count);
 
     value_object<ext_logLevelParams>("ext_logLevelParams")
         .field("module",  &ext_logLevelParams::module)
         .field("level",   &ext_logLevelParams::level)
         .field("sampleN", &ext_logLevelParams::sampleN);
 
-    value_object<ext_profileEnableParams>("ext_profileEnableParams")
-        .field("module",  &ext_profileEnableParams::module)
-        .field("enabled", &ext_profileEnableParams::enabled);
+    value_object<ext_profilerEnableParams>("ext_profilerEnableParams")
+        .field("module",  &ext_profilerEnableParams::module)
+        .field("enabled", &ext_profilerEnableParams::enabled);
 
     value_object<ext_diagFiles>("ext_diagFiles")
         .field("logFile",    &ext_diagFiles::logFile)
@@ -193,13 +194,13 @@ EMSCRIPTEN_BINDINGS(simulator) {
         .field("enabled",     &ext_recordStatus::enabled)
         .field("droppedRows", &ext_recordStatus::droppedRows);
 
-    value_object<ext_controllerManifest>("ext_controllerManifest")
-        .field("text", +[](const ext_controllerManifest& o){ return std::string(o.text); },
-               +[](ext_controllerManifest& o, const std::string& v){ std::strncpy(o.text, v.c_str(), sizeof(o.text) - 1); o.text[sizeof(o.text) - 1] = '\0'; });
+    value_object<ext_paramManifest>("ext_paramManifest")
+        .field("text", +[](const ext_paramManifest& o){ return std::string(o.text); },
+               +[](ext_paramManifest& o, const std::string& v){ std::strncpy(o.text, v.c_str(), sizeof(o.text) - 1); o.text[sizeof(o.text) - 1] = '\0'; });
 
-    value_object<ext_controllerParamSet>("ext_controllerParamSet")
-        .field("id",    &ext_controllerParamSet::id)
-        .field("value", &ext_controllerParamSet::value);
+    value_object<ext_paramSet>("ext_paramSet")
+        .field("id",    &ext_paramSet::id)
+        .field("value", &ext_paramSet::value);
 
     // --- Functions exposed to JS ---
     function("ext_rocketInit", &ext_initRocket_FFLQR01);
@@ -219,14 +220,20 @@ EMSCRIPTEN_BINDINGS(simulator) {
     function("ext_getLogBatch", &ext_getLogBatch);
     function("ext_getLogModules", &ext_getLogModules);
     function("ext_setLogLevel", &ext_setLogLevel);
-    function("ext_getProfileModules", &ext_getProfileModules);
-    function("ext_setProfileEnabled", &ext_setProfileEnabled);
-    function("ext_getProfileTable", &ext_getProfileTable);
-    function("ext_resetProfile", &ext_resetProfile);
+    function("ext_getProfilerModules", &ext_getProfilerModules);
+    function("ext_setProfilerEnabled", &ext_setProfilerEnabled);
+    function("ext_getProfilerTable", &ext_getProfilerTable);
+    function("ext_resetProfiler", &ext_resetProfiler);
     function("ext_setDiagFiles", &ext_setDiagFiles);
     function("ext_setRecording", &ext_setRecording);
     function("ext_getRecordStatus", &ext_getRecordStatus);
-    function("ext_getControllerManifest", &ext_getControllerManifest);
-    function("ext_setControllerParam", &ext_setControllerParam);
     function("ext_rocketMpcInit", &ext_initRocket_MPC01);
+    function("ext_modelGetManifest", &ext_modelGetManifest);
+    function("ext_modelSetParam", &ext_modelSetParam);
+    function("ext_controllerGetManifest", &ext_controllerGetManifest);
+    function("ext_controllerSetParam", &ext_controllerSetParam);
+    function("ext_observerGetManifest", &ext_observerGetManifest);
+    function("ext_observerSetParam", &ext_observerSetParam);
+    function("ext_sensorGetManifest", &ext_sensorGetManifest);
+    function("ext_sensorSetParam", &ext_sensorSetParam);
 }

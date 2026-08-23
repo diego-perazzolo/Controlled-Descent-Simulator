@@ -69,7 +69,7 @@ namespace CDS
 SystemManager::SystemManager(void) : m_pModel(nullptr),
                                      m_pPlant(nullptr),
                                      m_pTrajectoryManager(nullptr),
-                                     m_params({0}),
+                                     m_params({.timestep_seconds = 0.0, .rate = 1.0}),
                                      m_isRunning(false),
                                      m_userForces({0})
 {
@@ -439,6 +439,40 @@ bool SystemManager::SetParameters(const systemManagerParams_t &params)
 {
     lockGuard_t lock(m_mutex);
 
+    // A rate of zero or less is not a speed: it would silently freeze the pure
+    // simulation (the tick generators clamp it back to 1x, so the caller would
+    // never learn its value was ignored). Refuse it here, where the caller can
+    // still be told. Caught in practice by a caller that brace-initialises the
+    // parameter struct without the rate field.
+    if (params.rate <= 0.0)
+    {
+        CDS_LOG_WARN(logger, "Parameters rejected: rate must be > 0 (got {})",
+                     static_cast<double>(params.rate));
+        return true;
+    }
+
+    // The tick period is locked while a plant-in-the-loop mission is RUNNING:
+    // the real-time exchange with the plant is paced by it, so retiming it
+    // mid-run would desync the exchange. Enforced here (not only disabled in the
+    // frontend). The setup set (while stopped) is always allowed so the period
+    // can be configured before a run, and a no-op change (same period, e.g. a
+    // routine user-force refresh carrying the current period) never trips it.
+    if (m_pPlant != nullptr && m_isRunning &&
+        params.timestep_seconds != m_params.timestep_seconds)
+    {
+        CDS_LOG_WARN(logger, "Tick period change rejected: a plant mission is running");
+        return true;
+    }
+
+    // The simulation speed is locked whenever a plant is attached: the plant
+    // paces real-time, so a non-1x rate is meaningless. Enforced here (not only
+    // disabled in the frontend); a no-op (same rate) is always allowed.
+    if (m_pPlant != nullptr && params.rate != m_params.rate)
+    {
+        CDS_LOG_WARN(logger, "Rate change rejected: a plant is attached");
+        return true;
+    }
+
     m_params = params;
 
     CDS_LOG_INFO(logger, "Parameters set");
@@ -461,7 +495,11 @@ bool SystemManager::_attachTrajectoryToModel(void)
     Reference_t ref;
     if (m_pTrajectoryManager->GetReference(0, ref))
     {
-        CDS_LOG_ERROR(logger, "Cannot attach an empty trajectory");
+        /* An empty trajectory is a legitimate state, not a failure: it is what
+           the user is left with after clearing the sequence or removing its last
+           item. Nothing to attach, and the caller is told so by the success
+           return -- the model simply keeps no trajectory until one is built. */
+        CDS_LOG_INFO(logger, "Trajectory is now empty: nothing attached to the model");
         return false;
     }
 

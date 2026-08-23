@@ -35,6 +35,8 @@
 #include "profile.hpp"
 #include "Recorder.hpp"
 #include "rk4.hpp"
+#include "observer_params.hpp"   // libs/estimate -- observer knobs registration
+#include "sensor_params.hpp"     // libs/sensor   -- sensor knobs registration + measuredThrough
 
 #include <cmath>
 #include <array>
@@ -157,7 +159,44 @@ Rocket::Rocket()
         CDS_LOG_ERROR(logger, "runtime LQR gain deviates from baked K_default by {}", m_lqr.bridgeError());
     BuildParamTable();
 
+    // State estimator: OFF by default (opt-in). Gain synthesised in
+    // SetModelParams, once the model is parameterised.
+    m_obsEnabled = false;
+    m_obsQpos = 1.0e-4; m_obsQvel = 1.0e-2; m_obsQdist = 25.0; m_obsRpos = 1.0e-4;
+
     recorder.activateAsModel(); // this model owns the model data recorder while it lives
+}
+
+// Synthesise the translational state estimator. The only physical input is the
+// disturbance-input coupling Bd = d(v_dot)/d(F_ext), read FROM the generated
+// model by finite-differencing Dynamics w.r.t. the external force (additive, so
+// state/input-independent -- evaluated once at the upright hover). The estimate
+// feeds the LQR feedback; the disturbance state keeps it accurate under a force.
+void Rocket::BuildObserver()
+{
+    auto dyn = (Dynamics::ROCKET_FF_LQR_01*) m_modelPtr;
+    if (dyn == nullptr) return;
+
+    using PN = Dynamics::ROCKET_FF_LQR_01::ParamName;
+    const double mg = dyn->GetParam(PN::Mass) * dyn->GetParam(PN::Gravity);
+    StateVec x{}; x.fill(0.0);            // upright, at rest, at the origin
+    const InputVec u{{mg, 0.0, 0.0, 0.0}};
+    Reference_t ref{};                    // ref only affects the integral-state rows
+
+    const std::array<double,3> zeroF{{0.0, 0.0, 0.0}};
+    const StateVec d0 = dyn->Dynamics(x, u, ref, zeroF);
+    control::Mat<POS_DIM, POS_DIM> Bd{}; for (auto& r : Bd) r.fill(0.0);
+    for (std::size_t j = 0; j < POS_DIM; ++j)
+    {
+        std::array<double,3> Fe{{0.0, 0.0, 0.0}}; Fe[j] = 1.0;   // unit external force on axis j
+        const StateVec dj = dyn->Dynamics(x, u, ref, Fe);
+        Bd[0][j] = dj[IDX_XDOT] - d0[IDX_XDOT];
+        Bd[1][j] = dj[IDX_YDOT] - d0[IDX_YDOT];
+        Bd[2][j] = dj[IDX_ZDOT] - d0[IDX_ZDOT];
+    }
+
+    if (m_obs.Build(Bd, m_obsQpos, m_obsQvel, m_obsQdist, m_obsRpos))
+        CDS_LOG_ERROR(logger, "State-estimator synthesis failed");
 }
 
 Rocket::~Rocket()
@@ -196,6 +235,9 @@ bool Rocket::SetModelParams(const std::any& params)
     dynamics->SetParam(PN::TorqueYMin, p.T2_min);
     dynamics->SetParam(PN::TorqueZMax, p.T3_max);
     dynamics->SetParam(PN::TorqueZMin, p.T3_min);
+
+    // Synthesise the state estimator now the model is parameterised.
+    BuildObserver();
 
     // Recorder run metadata: full model parameters (the trajectory is added in
     // SetTrajectoryManager, the last setup step, so both end up in the header).
@@ -302,11 +344,36 @@ bool Rocket::PerformIntegration(const core_stepParams_t& params)
     }
 
     // Compute the control once at the current state; it is held constant (ZOH)
-    // over the RK4 step, so it is captured by the derivative closure below.
+    // over the RK4 step, so it is captured by the derivative closure below. When
+    // the estimator is on, the LQR *feedback* reads the observer's filtered
+    // position/velocity in place of the true state (the integral states, evolved
+    // inside the generated dynamics, still use the true state -- offset-free stays
+    // with them). With the estimator off this is the former true-state feedback.
+    Rocket::StateVec stateForControl = m_state;
+    if (m_obsEnabled)
+    {
+        if (m_obs.Seeded())
+        {
+            const auto rHat = m_obs.Position();
+            const auto vHat = m_obs.Velocity();
+            stateForControl[IDX_X]=rHat[0];    stateForControl[IDX_Y]=rHat[1];    stateForControl[IDX_Z]=rHat[2];
+            stateForControl[IDX_XDOT]=vHat[0]; stateForControl[IDX_YDOT]=vHat[1]; stateForControl[IDX_ZDOT]=vHat[2];
+        }
+    }
+    else
+    {
+        // No estimator: the LQR feedback reads the raw (sensor-corrupted) position
+        // directly, so sensor noise/bias bite without filtering. Identity sensor
+        // -> the true position, unchanged. (Integral states still use the true
+        // state inside the generated dynamics.)
+        const auto yPos = measuredThrough(m_posSensor,
+            std::array<double,POS_DIM>{{ m_state[IDX_X], m_state[IDX_Y], m_state[IDX_Z] }});
+        stateForControl[IDX_X]=yPos[0]; stateForControl[IDX_Y]=yPos[1]; stateForControl[IDX_Z]=yPos[2];
+    }
     Rocket::InputVec uApplied{};
     {
         CDS_PROFILE(profile, "Execute control");
-        uApplied = pDyn->ExecuteControl(m_state, ref);
+        uApplied = pDyn->ExecuteControl(stateForControl, ref);
     }
 
     // Runge Kutta 4 (generic fixed-control step; reference held constant, ZOH)
@@ -314,6 +381,28 @@ bool Rocket::PerformIntegration(const core_stepParams_t& params)
         CDS_PROFILE(profile, "RK4 integration");
         m_state = integrate::rk4_step<16>(m_state, params.timestep,
             [&](const Rocket::StateVec& s) { return pDyn->Dynamics(s, uApplied, ref, m_userForces); });
+    }
+
+    // ---- state estimator update (opt-in) ------------------------------------
+    // Every tick at the measured dt off the fresh state: known input a_known is
+    // the model's force-free acceleration; position measured through the sensor
+    // bank; a dropped axis is handled as predict-only inside the helper.
+    if (m_obsEnabled)
+    {
+        if (!m_obs.Seeded())
+            m_obs.Seed({{ m_state[IDX_X],    m_state[IDX_Y],    m_state[IDX_Z]    }},
+                       {{ m_state[IDX_XDOT], m_state[IDX_YDOT], m_state[IDX_ZDOT] }});
+
+        const std::array<double,3> zeroF{{0.0, 0.0, 0.0}};
+        const Rocket::StateVec xdot = pDyn->Dynamics(m_state, uApplied, ref, zeroF);
+        const std::array<double,POS_DIM> aKnown{{ xdot[IDX_XDOT], xdot[IDX_YDOT], xdot[IDX_ZDOT] }};
+
+        const std::array<double,POS_DIM> truthPos{{ m_state[IDX_X], m_state[IDX_Y], m_state[IDX_Z] }};
+        std::array<double,POS_DIM> yPos{};
+        std::array<bool,POS_DIM>   valid{};
+        m_posSensor.Apply(truthPos, yPos, valid);
+
+        m_obs.Step(aKnown, yPos, valid, params.timestep);
     }
 
     m_time += params.timestep;
@@ -419,25 +508,39 @@ const char* const ROCKET_ERR_LABELS[16] = {
 const char* const ROCKET_IN_LABELS[4] = { "F1", "T1", "T2", "T3" };
 } // namespace
 
+// Per-axis group names for the position sensor bank (x/y/z).
+static const char* const SENSOR_GROUPS[3] = { "Sensor x", "Sensor y", "Sensor z" };
+
 void Rocket::BuildParamTable()
 {
-    m_params.clear();
+    // Controller bucket: LQR Q/R diagonal (a weight change re-synthesises the gain).
+    m_controllerParams.clear();
     for (std::size_t i = 0; i < 16; ++i)
-        m_params.add("Q", ROCKET_ERR_LABELS[i], true,
+        m_controllerParams.add("Q", ROCKET_ERR_LABELS[i], true,
                      [this, i] { return m_lqr.qDiag(i); },
                      [this, i](double v) { if (v < 0.0) return true;  m_lqr.setQDiag(i, v); return RecomputeGain(); });
     for (std::size_t a = 0; a < 4; ++a)
-        m_params.add("R", ROCKET_IN_LABELS[a], true,
+        m_controllerParams.add("R", ROCKET_IN_LABELS[a], true,
                      [this, a] { return m_lqr.rDiag(a); },
                      [this, a](double v) { if (v <= 0.0) return true; m_lqr.setRDiag(a, v); return RecomputeGain(); });
+
+    // Observer bucket: covariances + enable (a covariance change re-synthesises
+    // the gain off the tick path).
+    m_observerParams.clear();
+    estimate::appendObserverParams(m_observerParams, m_obsEnabled,
+                                   m_obsQpos, m_obsQvel, m_obsQdist, m_obsRpos,
+                                   [this]{ BuildObserver(); });
+
+    // Sensor bucket: per-axis position-sensor knobs.
+    m_sensorParams.clear();
+    sensor::appendSensorParams(m_sensorParams, m_posSensor, SENSOR_GROUPS);
 }
 
-bool Rocket::GetControllerManifest(char* buf, std::size_t n)
-{
-    m_params.buildManifest(buf, n);
-    return false;
-}
-
-bool Rocket::SetControllerParam(int id, double value) { return m_params.set(id, value); }
+bool Rocket::GetControllerManifest(char* buf, std::size_t n){ m_controllerParams.buildManifest(buf, n); return false; }
+bool Rocket::SetControllerParam(int id, double value)      { return m_controllerParams.set(id, value); }
+bool Rocket::GetObserverManifest(char* buf, std::size_t n)  { m_observerParams.buildManifest(buf, n); return false; }
+bool Rocket::SetObserverParam(int id, double value)        { return m_observerParams.set(id, value); }
+bool Rocket::GetSensorManifest(char* buf, std::size_t n)    { m_sensorParams.buildManifest(buf, n); return false; }
+bool Rocket::SetSensorParam(int id, double value)          { return m_sensorParams.set(id, value); }
 
 } // namespace CDS

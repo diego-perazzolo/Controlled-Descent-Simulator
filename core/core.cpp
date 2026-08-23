@@ -29,6 +29,7 @@
 // Author      : Diego Perazzolo
 // Created     : 2026
 // =============================================================================
+#include <cmath>
 #include <mutex>
 
 #include "log.hpp"
@@ -55,6 +56,74 @@ struct
 
 /* static functions */
 
+/* Every number crossing into the core is checked here, at the one boundary all
+   clients share (embind, websocket, tests). A NaN or an infinity accepted at
+   this point does not stay inside: the trajectory reference is what a plant is
+   commanded with, so it would leave the machine and reach a vehicle. Cheap, and
+   done once per call — never on the tick path. */
+static bool _isFinite(core_coord_t v)
+{
+    return std::isfinite(static_cast<double>(v));
+}
+
+static bool _isFinite(const Vec3& v)
+{
+    return _isFinite(v[0]) && _isFinite(v[1]) && _isFinite(v[2]);
+}
+
+static bool _isFinite(const core_trajectoryPoly4Params_t& p)
+{
+    return _isFinite(p.initialPos) && _isFinite(p.initialYaw)
+        && _isFinite(p.initialVel) && _isFinite(p.initialYawRate)
+        && _isFinite(p.finalPos)   && _isFinite(p.finalYaw)
+        && _isFinite(p.finalVel)   && _isFinite(p.finalYawRate)
+        && _isFinite(p.finalAcc)   && _isFinite(p.finalYawAcc)
+        && _isFinite(p.time_s);
+}
+
+static bool _isFinite(const core_trajectoryPointParams_t& p)
+{
+    return _isFinite(p.finalPos) && _isFinite(p.finalYaw) && _isFinite(p.time_s);
+}
+
+/* Airframe parameters get one more question asked of them than finiteness: a
+   zero mass or inertia divides by zero inside the generated dynamics, and an
+   inverted actuator box (min above max) leaves the solver with no feasible
+   command. Both are configuration mistakes worth naming at the boundary rather
+   than debugging later as a vehicle that behaves strangely. */
+static bool _isUsable(const core_quadRotorParams_t& p)
+{
+    if (!(_isFinite(p.m) && _isFinite(p.Ix) && _isFinite(p.Iy) && _isFinite(p.Iz)
+       && _isFinite(p.g) && _isFinite(p.c) && _isFinite(p.cz) && _isFinite(p.kT)
+       && _isFinite(p.kQ) && _isFinite(p.L) && _isFinite(p.Irot)
+       && _isFinite(p.Fm_max) && _isFinite(p.Fm_min))) return false;
+
+    if (p.m <= 0.0 || p.Ix <= 0.0 || p.Iy <= 0.0 || p.Iz <= 0.0) return false;
+    if (p.Fm_min > p.Fm_max) return false;
+    return true;
+}
+
+static bool _isUsable(const core_rocketParams_t& p)
+{
+    if (!(_isFinite(p.m) && _isFinite(p.Ix) && _isFinite(p.Iy) && _isFinite(p.Iz)
+       && _isFinite(p.g) && _isFinite(p.c) && _isFinite(p.cz)
+       && _isFinite(p.F1_max) && _isFinite(p.F1_min)
+       && _isFinite(p.T1_max) && _isFinite(p.T1_min)
+       && _isFinite(p.T2_max) && _isFinite(p.T2_min)
+       && _isFinite(p.T3_max) && _isFinite(p.T3_min))) return false;
+
+    if (p.m <= 0.0 || p.Ix <= 0.0 || p.Iy <= 0.0 || p.Iz <= 0.0) return false;
+    if (p.F1_min > p.F1_max || p.T1_min > p.T1_max
+     || p.T2_min > p.T2_max || p.T3_min > p.T3_max) return false;
+    return true;
+}
+
+static bool _isFinite(const core_systemParams_t& p)
+{
+    return _isFinite(p.timestep_seconds) && _isFinite(p.rate)
+        && _isFinite(p.user_fX) && _isFinite(p.user_fY) && _isFinite(p.user_fZ);
+}
+
 /* global functions */
 
 /* Updates the system of just one tick, which is dt_seconds long. Returns true on error
@@ -78,6 +147,27 @@ bool g_core_getTickPeriod(core_coord_t &tickPeriod_second)
     return ret;
 }
 
+/* Get the simulation speed multiplier (plant-less pure sim; 1.0 = real-time).
+   For the tick generator to scale how much sim-time it advances per wall-second.
+   Returns true on error */
+bool g_core_getTickRate(core_coord_t &rate)
+{
+    SystemManager::systemManagerParams_t params;
+    bool ret = _ctx.SM.GetParameters(params);
+    rate = params.rate;
+
+    return ret;
+}
+
+/* True while a plant is attached. Non-locking (a plain pointer read), for the
+   tick generator to pick its dt policy: wall-clock (real-time, paced by the
+   plant) when attached, fixed nominal step (deterministic pure simulation) when
+   not. */
+bool g_core_isPlantAttached(void)
+{
+    return _ctx.SM.IsPlantOk();
+}
+
 /* Attach new plant to the System Manager */
 bool g_core_attachPlant(std::unique_ptr<BasePlant> plant)
 {
@@ -98,8 +188,15 @@ bool core_init()
     return false;
 }
 
-bool core_rocketFfLqr01_init(const core_rocketParams_t rPar)
+bool core_modelInitRocketFfLqr01(const core_rocketParams_t rPar)
 {
+    if (!_isUsable(rPar))
+    {
+        CDS_LOG_ERROR(logger, "Rocket parameters rejected: not finite, or a non-positive mass/inertia, "
+                              "or an inverted actuator range");
+        return true;
+    }
+
     // Configure the model. The SystemManager always 
     // receives a fully-initialized model
     auto model = std::make_unique<Rocket>();
@@ -112,8 +209,15 @@ bool core_rocketFfLqr01_init(const core_rocketParams_t rPar)
     return _ctx.SM.InitModel(std::move(model));
 }
 
-bool core_quadRotorFfLqr01_init(const core_quadRotorParams_t rPar)
+bool core_modelInitQuadRotorFfLqr01(const core_quadRotorParams_t rPar)
 {
+    if (!_isUsable(rPar))
+    {
+        CDS_LOG_ERROR(logger, "QuadRotor parameters rejected: not finite, or a non-positive mass/inertia, "
+                              "or an inverted actuator range");
+        return true;
+    }
+
     // Configure the model. The SystemManager always 
     // receives a fully-initialized model
     auto model = std::make_unique<QuadRotor>();
@@ -126,8 +230,15 @@ bool core_quadRotorFfLqr01_init(const core_quadRotorParams_t rPar)
     return _ctx.SM.InitModel(std::move(model));
 }
 
-bool core_quadRotorMPC01_init(const core_quadRotorParams_t rPar)
+bool core_modelInitQuadRotorMpc01(const core_quadRotorParams_t rPar)
 {
+    if (!_isUsable(rPar))
+    {
+        CDS_LOG_ERROR(logger, "Quadrotor MPC parameters rejected: not finite, or a non-positive mass/inertia, "
+                              "or an inverted actuator range");
+        return true;
+    }
+
     // Configure the model. The SystemManager always
     // receives a fully-initialized model
     auto model = std::make_unique<QuadRotorMPC>();
@@ -140,8 +251,15 @@ bool core_quadRotorMPC01_init(const core_quadRotorParams_t rPar)
     return _ctx.SM.InitModel(std::move(model));
 }
 
-bool core_rocketMPC01_init(const core_rocketParams_t rPar)
+bool core_modelInitRocketMpc01(const core_rocketParams_t rPar)
 {
+    if (!_isUsable(rPar))
+    {
+        CDS_LOG_ERROR(logger, "Rocket MPC parameters rejected: not finite, or a non-positive mass/inertia, "
+                              "or an inverted actuator range");
+        return true;
+    }
+
     // Configure the model. The SystemManager always
     // receives a fully-initialized model
     auto model = std::make_unique<RocketMPC>();
@@ -161,12 +279,24 @@ bool core_trajectoryInit()
 
 bool core_trajectoryAppendPoly4(const core_trajectoryPoly4Params_t tPar)
 {
+    if (!_isFinite(tPar))
+    {
+        CDS_LOG_ERROR(logger, "Poly4 rejected: a parameter is not a finite number");
+        return true;
+    }
+
     return _ctx.SM.MutateTrajectoryManager([tPar](TrajectoryManager &tM)
                                   { return tM.AppendPoly4(tPar);});
 }
 
 bool core_trajectoryAppendPoint(const core_trajectoryPointParams_t tPar)
 {
+    if (!_isFinite(tPar))
+    {
+        CDS_LOG_ERROR(logger, "Trajectory point rejected: a parameter is not a finite number");
+        return true;
+    }
+
     return _ctx.SM.MutateTrajectoryManager([tPar](TrajectoryManager &tM)
                                   { return tM.AppendPoint(tPar);});
 }
@@ -177,8 +307,14 @@ bool core_trajectoryRemoveLastItem(void)
                                   { return tM.RemoveLastItem();});
 }
 
-bool core_getTrajectoryPoint(core_coord_t time, Vec3 &point)
+bool core_trajectoryGetPoint(core_coord_t time, Vec3 &point)
 {
+    if (!_isFinite(time))
+    {
+        CDS_LOG_ERROR(logger, "Trajectory query rejected: the time is not a finite number");
+        return true;
+    }
+
     Reference_t ref;
     if (_ctx.SM.ExecuteOnTrajectoryManager([time, &ref](const TrajectoryManager &tM)
                                   { return tM.GetReference(time, ref);}))
@@ -194,17 +330,23 @@ bool core_getTrajectoryPoint(core_coord_t time, Vec3 &point)
     return false;
 }
 
-bool core_setSystemParams(const core_systemParams_t &par)
+bool core_systemSetParams(const core_systemParams_t &par)
 {
+    if (!_isFinite(par))
+    {
+        CDS_LOG_ERROR(logger, "System parameters rejected: a value is not a finite number");
+        return true;
+    }
+
     SystemManager::userForces_t uF = {par.user_fX, par.user_fY, par.user_fZ};
 
-    bool ret = _ctx.SM.SetParameters({.timestep_seconds = par.timestep_seconds});
+    bool ret = _ctx.SM.SetParameters({.timestep_seconds = par.timestep_seconds, .rate = par.rate});
     ret |= _ctx.SM.SetUserForces(uF);
 
     return ret;
 }
 
-bool core_getSnapshot(core_snapshotData_t &par)
+bool core_systemGetSnapshot(core_snapshotData_t &par)
 {
     CDS_PROFILE(profile, "Get system snapshot");
     return _ctx.SM.ExecuteOnModel([&par](BaseModel &model)
@@ -217,19 +359,55 @@ bool core_getSnapshot(core_snapshotData_t &par)
                                 });
 }
 
-bool core_getControllerManifest(char *buf, std::size_t n)
+bool core_modelGetManifest(char *buf, std::size_t n)
+{
+    return _ctx.SM.ExecuteOnModel([&](BaseModel &model)
+                                  { return model.GetModelManifest(buf, n); });
+}
+
+bool core_modelSetParam(int id, double value)
+{
+    return _ctx.SM.ExecuteOnModel([&](BaseModel &model)
+                                  { return model.SetModelParam(id, value); });
+}
+
+bool core_controllerGetManifest(char *buf, std::size_t n)
 {
     return _ctx.SM.ExecuteOnModel([&](BaseModel &model)
                                   { return model.GetControllerManifest(buf, n); });
 }
 
-bool core_setControllerParam(int id, double value)
+bool core_controllerSetParam(int id, double value)
 {
     return _ctx.SM.ExecuteOnModel([&](BaseModel &model)
                                   { return model.SetControllerParam(id, value); });
 }
 
-bool core_getPlantSnapshot(core_plantSnapshotData_t &par)
+bool core_observerGetManifest(char *buf, std::size_t n)
+{
+    return _ctx.SM.ExecuteOnModel([&](BaseModel &model)
+                                  { return model.GetObserverManifest(buf, n); });
+}
+
+bool core_observerSetParam(int id, double value)
+{
+    return _ctx.SM.ExecuteOnModel([&](BaseModel &model)
+                                  { return model.SetObserverParam(id, value); });
+}
+
+bool core_sensorGetManifest(char *buf, std::size_t n)
+{
+    return _ctx.SM.ExecuteOnModel([&](BaseModel &model)
+                                  { return model.GetSensorManifest(buf, n); });
+}
+
+bool core_sensorSetParam(int id, double value)
+{
+    return _ctx.SM.ExecuteOnModel([&](BaseModel &model)
+                                  { return model.SetSensorParam(id, value); });
+}
+
+bool core_plantGetSnapshot(core_plantSnapshotData_t &par)
 {
     CDS_PROFILE(profile, "Get plant snapshot");
     par.isAttached = false;
@@ -257,22 +435,22 @@ bool core_getPlantSnapshot(core_plantSnapshotData_t &par)
     });
 }
 
-bool core_run(void)
+bool core_systemRun(void)
 {
     return _ctx.SM.Run();
 }
 
-bool core_stop(void)
+bool core_systemStop(void)
 {
     return _ctx.SM.Stop();
 }
 
-bool core_beginStaging(core_coord_t safetyAltitude)
+bool core_plantBeginStaging(core_coord_t safetyAltitude)
 {
     return _ctx.SM.BeginStaging(safetyAltitude);
 }
 
-bool core_stopStaging(void)
+bool core_plantStopStaging(void)
 {
     return _ctx.SM.StopStaging();
 }

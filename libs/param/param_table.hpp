@@ -23,19 +23,19 @@
 // THE SOFTWARE.
 //
 // =============================================================================
-// File        : controller_params.hpp
-// Description : A small, self-describing registry of a controller's exposed
-//               parameters, shared by the runtime models (LQR, MPC) to present a
-//               uniform tuning interface to the frontend. Each entry carries a
-//               group and a label (its meaning), a read/write flag, and get/set
-//               accessors bound to the owning model. The registry builds the wire
-//               *manifest* -- a compact TSV text buffer, one line per parameter --
-//               and dispatches a set-by-id. It is used only interactively (open a
-//               panel, read all, write one coefficient at a time), never on the
-//               simulation tick, so it favours clarity over zero-allocation; it
-//               is fixed-capacity and keeps no state on the tick path. Domain- and
-//               protocol-agnostic: depends only on the standard library, so it
-//               lives under libs/.
+// File        : param_table.hpp
+// Description : A small, self-describing registry of exposed tunable parameters,
+//               shared across domains (model, controller, observer, sensor) to
+//               present a uniform tuning interface to the frontend. Each entry
+//               carries a group and a label (its meaning), a read/write flag, and
+//               get/set accessors bound to the owning object. The registry builds
+//               the wire *manifest* -- a compact TSV text buffer, one line per
+//               parameter -- and dispatches a set-by-id. It is used only
+//               interactively (open a panel, read all, write one coefficient at a
+//               time), never on the simulation tick, so it favours clarity over
+//               zero-allocation; it is fixed-capacity and keeps no state on the
+//               tick path. Domain- and protocol-agnostic: depends only on the
+//               standard library, so it lives under libs/.
 // Author      : Diego Perazzolo
 // Created     : 2026
 // =============================================================================
@@ -45,10 +45,11 @@
 #include <cstdio>
 #include <functional>
 
-namespace CDS { namespace control {
+namespace CDS { namespace param {
 
-// Registry of exposed controller parameters. CAP bounds the number of entries
-// (parameters are few -- e.g. ~20 for LQR weights, ~8 for the MPC knobs).
+// Registry of exposed tunable parameters. CAP bounds the number of entries
+// (parameters are few per domain -- e.g. ~20 for LQR weights, ~8 for the MPC
+// knobs, a handful for the observer / sensor banks).
 template <std::size_t CAP = 40>
 class ParamTable
 {
@@ -61,8 +62,9 @@ public:
     void clear() { m_count = 0; }
     std::size_t size() const { return m_count; }
 
-    // Register a parameter. `group` and `label` are stable strings (the model
-    // owns them). `set` may be empty for a read-only parameter (writable=false).
+    // Register a parameter. `group` and `label` are stable strings (the owner
+    // keeps them alive). `set` may be empty for a read-only parameter
+    // (writable=false).
     void add(const char* group, const char* label, bool writable, Getter get, Setter set = {})
     {
         if (m_count >= CAP) return;
@@ -115,4 +117,4 @@ private:
     std::size_t m_count;
 };
 
-}} // namespace CDS::control
+}} // namespace CDS::param

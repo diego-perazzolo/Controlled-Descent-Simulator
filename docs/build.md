@@ -30,17 +30,29 @@ If necessary configure the Emscripten environment with:
 source pathToEmSDK/emsdk_env.sh
 ```
 
-> Each browser app has its **own build directory** (separate CMake caches, no
-> conflicts), but the compiled module always lands in `build/` — the delivery
-> point imported by the frontend. Whichever app was built last owns `build/`:
-> switching app is just one `cmake --build`, no reconfigure, no deleting.
+> Every CMake build directory lives under `build/` (e.g. `build/wasm-only`,
+> `build/ws-client`, `build/server`, `build/mpc-model-test`) —
+> one folder, all gitignored. Each browser app keeps its **own** build dir
+> (separate CMake caches, no conflicts), but the compiled module always lands in
+> `build/` top-level (`build/simulator.js`) — the delivery point imported by the
+> frontend, coexisting with the build dirs. Whichever browser app was built last
+> owns that delivery: switching app is just one `cmake --build`, no reconfigure,
+> no deleting.
 
 ## wasm-only (full browser)
 
 ```bash
-emcmake cmake -S apps/wasm-only -B build-wasm-only -DCMAKE_BUILD_TYPE=Debug   # or Release
-cmake --build build-wasm-only
+emcmake cmake -S apps/wasm-only -B build/wasm-only -DCMAKE_BUILD_TYPE=Release
+cmake --build build/wasm-only
 ```
+
+> **Build it in Release.** A Debug wasm build is fast enough for the analytic
+> models, but not for the MPC ones: the iLQR solve costs far more than a frame,
+> so a `quadrotor (MPC)` / `rocket (MPC)` run crawls to the point of looking
+> frozen. Debug is for stepping through the analytic models, not for driving the
+> MPC ones. The frontend detects this and says so: whenever a pure simulation
+> delivers less than a quarter of the requested speed, a banner names the
+> shortfall (and the backend logs it too).
 
 Then serve the repo root and open the frontend:
 
@@ -56,24 +68,27 @@ python3 tools/serve.py 8080
 built is the one the frontend runs):
 
 ```bash
-emcmake cmake -S apps/ws-served/client -B build-ws-client -DCMAKE_BUILD_TYPE=Debug
-cmake --build build-ws-client
+emcmake cmake -S apps/ws-served/client -B build/ws-client -DCMAKE_BUILD_TYPE=Release
+cmake --build build/ws-client
 ```
 
 **2. Build and run the native core server** (no emsdk needed — plain CMake):
 
 ```bash
-cmake -S apps/ws-served/server -B build-server -DCMAKE_BUILD_TYPE=Release
-cmake --build build-server
-./build-server/cds_server          # listens on ws://0.0.0.0:9002 (port as argv[1])
+cmake -S apps/ws-served/server -B build/server -DCMAKE_BUILD_TYPE=Release
+cmake --build build/server
+./build/server/cds_server          # listens on ws://0.0.0.0:9002 (port as argv[1])
 ```
 
-The websocket server attaches a plant, selected by an optional second argument —
-`loopback` (default) or `sitl`, whilst the first argument is the communication port:
+The websocket server optionally attaches a plant, selected by a second argument —
+`loopback` or `sitl` — whilst the first argument is the communication port. With
+**no** second argument no plant is attached: the server runs a pure, deterministic
+simulation (fixed-step tick — a plant would make the tick wall-clock real-time):
 
 ```bash
-./build-server/cds_server 9002 loopback   # default: the echo test double
-./build-server/cds_server 9002 sitl       # ArduPilot SITL over MAVLink/UDP
+./build/server/cds_server 9002            # no plant: pure deterministic simulation
+./build/server/cds_server 9002 loopback   # the echo test double
+./build/server/cds_server 9002 sitl       # ArduPilot SITL over MAVLink/UDP
 ```
 
 **3. Serve the frontend with COOP/COEP headers** (required: the proxy uses
@@ -87,7 +102,7 @@ The server URL defaults to `ws://localhost:9002` and can be overridden with
 the `?ws=` query parameter, e.g. `http://localhost:8080/frontend/?ws=ws://192.168.1.10:9002`.
 A quick end-to-end check is available at `http://localhost:8080/apps/ws-served/test/test_ws_e2e.html`.
 
-To go back to the fully in-browser app: `cmake --build build-wasm-only`.
+To go back to the fully in-browser app: `cmake --build build/wasm-only`.
 
 ## Running against ArduPilot SITL
 
@@ -97,7 +112,7 @@ selected — it listens, GCS-style, on `0.0.0.0:14550` and learns the vehicle
 from the first valid datagram:
 
 ```bash
-./build-server/cds_server 9002 sitl
+./build/server/cds_server 9002 sitl
 ```
 
 Point the SITL's MAVLink output at that port. With the ArduPilot dev tools
@@ -145,17 +160,17 @@ Standalone native tests (no browser, no emsdk). From the repo root:
 
 ```bash
 # generic iLQR solver — self-contained (double integrator, no core/quaternions)
-cmake -S libs/control/test -B build-ilqr-test -DCMAKE_BUILD_TYPE=Release && cmake --build build-ilqr-test
-./build-ilqr-test/ilqr_test
+cmake -S libs/control/test -B build/ilqr-test -DCMAKE_BUILD_TYPE=Release && cmake --build build/ilqr-test
+./build/ilqr-test/ilqr_test
 
 # QuadRotor MPC — the model + solver end to end (Poly4 tracking + gust rejection)
-cmake -S core/Models/test -B build-mpc-model-test -DCMAKE_BUILD_TYPE=Release && cmake --build build-mpc-model-test
-./build-mpc-model-test/mpc_model_test
+cmake -S core/Models/test -B build/mpc-model-test -DCMAKE_BUILD_TYPE=Release && cmake --build build/mpc-model-test
+./build/mpc-model-test/mpc_model_test
 
 # solver C++<->Python conformance (ctypes, no numpy): certifies the C++ result is a
 # constrained optimum (box-projected KKT residual ~0) on a synthetic benchmark
-cmake -S libs/control/bind -B build-ilqr-bind -DCMAKE_BUILD_TYPE=Release && cmake --build build-ilqr-bind
-python3 libs/control/bind/ilqr_conformance.py build-ilqr-bind
+cmake -S libs/control/bind -B build/ilqr-bind -DCMAKE_BUILD_TYPE=Release && cmake --build build/ilqr-bind
+python3 libs/control/bind/ilqr_conformance.py build/ilqr-bind
 ```
 
 ## Diagnostics: logging, profiling, recording
@@ -192,7 +207,7 @@ propagate to core, plants and the app):
 
 ```bash
 # example: keep only Warn/Error logs, remove profiler and recorder entirely
-cmake -S apps/ws-served/server -B build-server -DCMAKE_BUILD_TYPE=Release \
+cmake -S apps/ws-served/server -B build/server -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_CXX_FLAGS="-DCDS_LOG_COMPILE_LEVEL=3 -DCDS_PROFILE_ENABLED=0 -DCDS_RECORD_ENABLED=0"
 ```
 
@@ -210,11 +225,11 @@ uploads a report artifact. See [benchmark.md](benchmark.md) for the results and
 discussion.
 
 ```bash
-cmake -S bench -B build-bench -DCMAKE_BUILD_TYPE=Release && cmake --build build-bench
-./build-bench/perf_bench        # diagnostics per-call cost (features in)
-./build-bench/perf_bench_off    # same, features compiled out (~0)
-./build-bench/model_bench       # per-model integration cost
-python3 bench/report.py build-bench > benchmark-report.md   # full report (gitignored)
+cmake -S bench -B build/bench -DCMAKE_BUILD_TYPE=Release && cmake --build build/bench
+./build/bench/perf_bench        # diagnostics per-call cost (features in)
+./build/bench/perf_bench_off    # same, features compiled out (~0)
+./build/bench/model_bench       # per-model integration cost
+python3 bench/report.py build/bench > benchmark-report.md   # full report (gitignored)
 ```
 
 ## GitHub Pages
@@ -223,11 +238,18 @@ The repository includes a GitHub Actions workflow ([`.github/workflows/deploy.ym
 
 **Cross-origin isolation.** GitHub Pages serves static files and cannot send the
 `Cross-Origin-Opener-Policy` / `Cross-Origin-Embedder-Policy` headers, so the
-page is not cross-origin isolated and browsers clamp `performance.now()` to
-100 µs. Since the tick `dt` is wall-anchored on that clock, the added jitter
-destabilises the feed-forward controllers (the quadrotor FF-LQR visibly
-oscillates). [`frontend/coi-serviceworker.js`](../frontend/coi-serviceworker.js)
-(vendored, MIT) re-injects those headers from a service worker to restore the
+page is not cross-origin isolated and browsers clamp `performance.now()` — the
+clock behind `steady_clock` in the wasm runtime — to 100 µs. The tick `dt` is
+*not* affected: wasm-only never attaches a plant, so the step is the fixed
+nominal period and the controllers see a clean, jitter-free timestep either way.
+(This was not always true: when the plant-less tick was wall-anchored too, the
+clamped clock visibly destabilised the quadrotor FF-LQR — the fixed step removed
+that failure mode.) What the clamp still degrades is everything *measured* on
+that clock: the profiler timings above all (per-scope costs of a few
+microseconds quantise to 0 or 100 µs), and the wall-time pacing that feeds the
+rate accumulator and its per-frame sub-stepping budget.
+[`frontend/coi-serviceworker.js`](../frontend/coi-serviceworker.js) (vendored,
+MIT) re-injects those headers from a service worker to restore the
 high-resolution clock; the first visit performs one transparent reload. It is a
 no-op locally, where [`tools/serve.py`](../tools/serve.py) already sends the
 headers.
@@ -309,6 +331,18 @@ are described in [`models.md`](models.md).
 │   │   ├── ilqr.hpp                            # Generic control-limited iLQR/DDP solver (header-only)
 │   │   ├── test/ilqr_test.cpp                  # Self-contained solver acid test (double integrator)
 │   │   └── bind/                               # C-ABI shim + ilqr_conformance.py (C++↔Python KKT certificate)
+│   ├── param/                                  # Generic tunable-parameter registry (domain-agnostic)
+│   │   └── param_table.hpp                     # ParamTable: TSV manifest + set-by-id, shared by model/controller/observer/sensor
+│   ├── estimate/                               # Hand-written model-agnostic estimators (AGENTS.md rule 10)
+│   │   ├── observer.hpp                        # Generic dual-LQR observer (header-only)
+│   │   ├── trans_disturbance_observer.hpp      # Reusable offset-free translational disturbance observer
+│   │   ├── observer_params.hpp                 # Observer knobs → ParamTable (libs/param)
+│   │   ├── test/                               # Self-contained observer + TDO acid tests
+│   │   └── bind/                               # C-ABI shim + observer_conformance.py (C++↔Python certificate)
+│   ├── sensor/                                 # Measurement corruptor (per-channel noise/bias/enable)
+│   │   ├── sensor_model.hpp                    # Per-channel SensorModel (Gaussian noise + bias + dropout)
+│   │   ├── sensor_params.hpp                   # Sensor knobs → ParamTable (libs/param) + measuredThrough
+│   │   └── test/sensor_model_test.cpp          # Self-contained sensor acid test
 │   ├── log/                                    # Deferred-format logger (opt-in, runtime-levelled)
 │   │   ├── log.hpp / LogRing.hpp               # Registry + CDS_LOG_* macros; wait-free MPSC ring
 │   │   ├── LogSinks.hpp / LogUiSink.hpp        # Console/File sinks; recent-lines UI buffer

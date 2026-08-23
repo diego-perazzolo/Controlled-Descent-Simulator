@@ -892,6 +892,19 @@ void SitlPlant::_sendSetpoint(Link& link, const plantCommands_t& commands)
     const float nedVz = static_cast<float>(-commands.reference.vel[2]);
     const float nedYaw = static_cast<float>(wrapPi(PI / 2.0 - targetYaw));
 
+    /* Last gate before the wire. The core validates what enters it, so nothing
+       should get this far, but this is the one place whose output steers a real
+       vehicle: a NaN setpoint reaching an autopilot is not a bug to debug from
+       the logs afterwards. Skipping the send leaves the vehicle holding its last
+       valid setpoint, which is the safe thing to do. */
+    if (!std::isfinite(nedX) || !std::isfinite(nedY) || !std::isfinite(nedZ) ||
+        !std::isfinite(nedVx) || !std::isfinite(nedVy) || !std::isfinite(nedVz) ||
+        !std::isfinite(nedYaw))
+    {
+        CDS_LOG_ERROR(logger, "Setpoint NOT sent: a commanded value is not a finite number");
+        return;
+    }
+
     mavlink_message_t message;
     mavlink_msg_set_position_target_local_ned_pack(
         OUR_SYSTEM_ID, OUR_COMPONENT_ID, &message,

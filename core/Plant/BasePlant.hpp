@@ -27,8 +27,9 @@
 // Description : Base plant class: contract between the SystemManager tick and
 //               an external system under control. The mailbox exchange
 //               (triple buffers, sequence numbering) is implemented here once
-//               for every plant (NVI); implementations (SITL, HIL links with
-//               their communication threads and third-party libraries) live
+//               for every plant (NVI); implementations (a link to a real
+//               vehicle or an external simulator, with their communication
+//               threads and third-party libraries) live
 //               OUTSIDE the core and only provide the link lifecycle
 //               (Connect/Disconnect), the mission toggles (Start/Stop) and
 //               params, plus their communication thread, which talks to the
@@ -107,7 +108,7 @@ namespace CDS
            on user request: bring the vehicle up to a stable hover at
            altitude_m AND facing headingYaw (the trajectory's initial heading),
            ready for a mission — so the mission can start with no yaw jump.
-           Default: no-op — a plant that needs no staging (loopback) is ready
+           Default: no-op — a plant that needs no staging is ready
            as soon as its mission Start allows. Returns true on error */
         virtual bool BeginStaging(double altitude_m, double headingYaw)
         { (void)altitude_m; (void)headingYaw; return false; }

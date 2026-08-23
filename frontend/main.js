@@ -111,6 +111,7 @@ const DEFAULT_INIT_PARAMS = {
 // =============================================================================
 let sim        = null;
 let renderer3d = null;
+let chartsRenderer = null;
 let running    = false;
 let frameId    = null;
 let simTime    = 0;
@@ -119,6 +120,7 @@ let lastFpsTs  = performance.now();
 let fpsCounter = 0;
 let fpsDisplay = 0;
 let timestep_s = DEFAULT_TIMESTEP_S;
+let simRate = 1.0;   // simulation speed multiplier (pure sim only; 1.0 = real-time)
 let currentModel = MODEL_ROCKET;   // 'rocket' | 'rocket_mpc' | 'quadrotor' | 'quadrotor_mpc'
 let plantAvailable = false;        // plant attached AND publishing fresh samples
 
@@ -145,7 +147,7 @@ const ui = {
     btnStart:   $('btnStart'), btnStop: $('btnStop'), btnReset: $('btnReset'),
     btnCharts:  $('btnCharts'), btn3d: $('btn3d'), btnParams: $('btnParams'), btnDiag: $('btnDiag'),
     viewCharts: $('view-charts'), view3d: $('view-3d'), viewParams: $('view-params'), viewDiag: $('view-diag'),
-    status:     $('statusBar'), error: $('errorMsg'),
+    status:     $('statusBar'), error: $('errorMsg'), perfWarn: $('perfWarn'),
     btnApply:   $('btnApply'),
     // trajectory save / load
     btnTrajSave:   $('btnTrajSave'),
@@ -181,6 +183,9 @@ const ui = {
     q_kThrust: $('q_kThrust'), q_kTorque: $('q_kTorque'), q_dist: $('q_dist'), q_motI: $('q_motI'),
     q_motMax: $('q_motMax'), q_motMin: $('q_motMin'),
     p_dt:    $('p_dt'),
+    rateBox: $('rateBox'),
+    sldRate: $('sldRate'),
+    rateVal: $('rateVal'),
 };
 
 // =============================================================================
@@ -194,6 +199,7 @@ const userForce = { fX: 0, fY: 0, fZ: 0 };
 function sendSystemParams() {
     return sim.ext_setSystemParams({
         timestep_seconds: timestep_s,
+        rate: simRate,
         user_forces: { fX: userForce.fX, fY: userForce.fY, fZ: userForce.fZ },
     });
 }
@@ -327,11 +333,44 @@ function readTimestep() {
     return v;
 }
 
+// The live tick-period slider is usable only when its "edit" box is checked, a
+// model exists, and no plant is attached — a plant paces the tick, so the period
+// is locked (the core enforces this too, not just this control). Kept in sync
+// with the current period.
+// The live simulation-speed (rate) slider is usable once a model exists and no
+// plant is attached — a plant forces real-time (the core enforces this too). The
+// timestep/granularity itself stays at the model's value (params-form p_dt);
+// only the playback speed changes here.
+function refreshRateControl() {
+    // A plant paces real-time: the speed control is meaningless, so remove it
+    // from the bar entirely (the core enforces the lock regardless).
+    ui.rateBox.style.display = plantAvailable ? 'none' : '';
+    ui.sldRate.disabled      = !sim;
+    ui.sldRate.value         = String(simRate);
+    ui.rateVal.textContent   = `${simRate.toFixed(2)}×`;
+}
+
+ui.sldRate.addEventListener('input', () => {
+    const v = parseFloat(ui.sldRate.value);
+    if (!isFinite(v) || v <= 0) return;
+    simRate = v;
+    ui.rateVal.textContent = `${simRate.toFixed(2)}×`;
+    if (sim && sendSystemParams()) setError('Rate change rejected (a plant is attached).');
+    else                          setError('');
+});
+
 const fmt  = (v, d = 4) => v.toFixed(d);
 const fmtI = v => Math.round(v).toString();
 
 function setStatus(msg) { ui.status.textContent = msg; }
 function setError(msg)  { ui.error.textContent  = msg; }
+
+// Performance banner. Empty message hides it. Unlike the status/error lines it
+// is fixed to the viewport, so it reaches the user from the 3D view too.
+function setPerfWarning(msg) {
+    ui.perfWarn.textContent   = msg;
+    ui.perfWarn.style.display = msg ? 'block' : 'none';
+}
 
 // Initialise the backend core for the currently-selected model. `params` must
 // already be in the shape expected by that model's init entry point:
@@ -347,6 +386,7 @@ function initBackend(params) {
     else if (currentModel === MODEL_ROCKET_MPC)    err = sim.ext_rocketMpcInit(params);
     else                                           err = sim.ext_rocketInit(params);
     if (err) return err;
+    refreshRateControl();    // enable the live sim-speed control for the new model
     return sendSystemParams();
 }
 
@@ -786,71 +826,200 @@ function make3DRenderer() {
 }
 
 // =============================================================================
-// Canvas renderer
+// Charts renderer (canvas 2D, no charting library)
 // =============================================================================
-function makeUplotRenderer() {
-    const MAX_PTS = 3000;
+// Time-series panels drawn by hand: a ring buffer per series (no per-frame array
+// copying), a real simulated-time x axis over a sliding window, labelled y
+// ticks, and the commanded reference drawn under the measured value so tracking
+// is readable at a glance. The buffers fill on every tick, but nothing is
+// rasterised while the charts view is off screen -- on the wasm-only build the
+// canvases share a thread with the simulation, so drawing what nobody is looking
+// at would slow the run down.
+function makeChartsRenderer() {
+    const CAP      = 6000;   // ring capacity (samples)
+    const WINDOW_S = 12.0;   // simulated seconds shown
+    const PAD_L = 46, PAD_R = 10, PAD_T = 10, PAD_B = 18;
 
-    const bufs = { x: [], y: [], z: [], yaw: [], e: [] };
-
-    // One chart per canvas id
+    // One panel per canvas. `ref` marks the series that have a commanded value
+    // to compare against (|err| is an error magnitude: nothing to track).
     const charts = [
-        { id: 'chartX',   key: 'x',   color: '#f80', label: 'x (m)'     },
-        { id: 'chartY',   key: 'y',   color: '#0f8', label: 'y (m)'     },
-        { id: 'chartZ',   key: 'z',   color: '#0cf', label: 'z (m)'     },
-        { id: 'chartYaw', key: 'yaw', color: '#c8f', label: 'yaw (rad)' },
-        { id: 'chartErr', key: 'e',   color: '#fa0', label: '|err| (m)' },
+        { id: 'chartX',   key: 'x',   color: '#f80', unit: 'm',   ref: true  },
+        { id: 'chartY',   key: 'y',   color: '#0f8', unit: 'm',   ref: true  },
+        { id: 'chartZ',   key: 'z',   color: '#0cf', unit: 'm',   ref: true  },
+        { id: 'chartYaw', key: 'yaw', color: '#c8f', unit: 'rad', ref: true  },
+        { id: 'chartErr', key: 'e',   color: '#fa0', unit: 'm',   ref: false },
     ];
 
-    function drawChart({ id, key, color }) {
-        const canvas = $(id);
-        if (!canvas) return;
-        const data = bufs[key];
+    // Ring buffer: `head` is the next write slot, `n` the samples held.
+    const t   = new Float64Array(CAP);
+    const val = {}, ref = {};
+    for (const c of charts) { val[c.key] = new Float64Array(CAP); ref[c.key] = new Float64Array(CAP); }
+    let head = 0, n = 0;
 
-        const w = canvas.width  = canvas.offsetWidth;
-        const h = canvas.height = canvas.offsetHeight;
+    function push(time, values, references) {
+        t[head] = time;
+        for (const c of charts) {
+            val[c.key][head] = values[c.key];
+            ref[c.key][head] = references[c.key] ?? 0;
+        }
+        head = (head + 1) % CAP;
+        if (n < CAP) n++;
+    }
+
+    // Indices of the samples inside the visible window, oldest first. Walking
+    // the ring backwards from the newest stops as soon as the window is filled,
+    // so the cost follows what is drawn, not what is stored.
+    function windowIndices() {
+        const out = [];
+        if (n === 0) return out;
+        const newest = (head - 1 + CAP) % CAP;
+        const tEnd   = t[newest];
+        for (let k = 0; k < n; k++) {
+            const i = (newest - k + CAP) % CAP;
+            if (tEnd - t[i] > WINDOW_S) break;
+            out.push(i);
+        }
+        out.reverse();
+        return out;
+    }
+
+    // Match the backing store to the CSS box and the device pixel ratio, so
+    // lines stay crisp on a HiDPI screen instead of being upscaled.
+    function fitCanvas(canvas) {
+        const w = canvas.offsetWidth, h = canvas.offsetHeight;
+        if (!w || !h) return null;
+        const dpr = Math.min(window.devicePixelRatio || 1, 2);
+        const bw = Math.round(w * dpr), bh = Math.round(h * dpr);
+        if (canvas.width !== bw || canvas.height !== bh) { canvas.width = bw; canvas.height = bh; }
         const ctx = canvas.getContext('2d');
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        return { ctx, w, h };
+    }
+
+    const fmtAxis = v => (Math.abs(v) >= 100 ? v.toFixed(0)
+                        : Math.abs(v) >= 10  ? v.toFixed(1)
+                                             : v.toFixed(2));
+
+    function drawChart(chart, idx) {
+        const canvas = $(chart.id);
+        if (!canvas) return;
+        const fit = fitCanvas(canvas);
+        if (!fit) return;
+        const { ctx, w, h } = fit;
+
         ctx.clearRect(0, 0, w, h);
-        if (data.length < 2) return;
+        if (idx.length < 2) return;
 
-        const min   = Math.min(...data);
-        const max   = Math.max(...data);
-        const range = max - min || 1;
+        const series = val[chart.key];
+        const target = ref[chart.key];
 
-        // zero line
-        if (min <= 0 && max >= 0) {
-            const y0 = h - ((-min) / range) * (h - 4) - 2;
-            ctx.strokeStyle = '#2a2a2a';
-            ctx.lineWidth = 1;
-            ctx.beginPath(); ctx.moveTo(0, y0); ctx.lineTo(w, y0); ctx.stroke();
+        // vertical range over what is actually on screen, value and reference
+        let lo = Infinity, hi = -Infinity;
+        for (const i of idx) {
+            const v = series[i];
+            if (v < lo) lo = v;
+            if (v > hi) hi = v;
+            if (chart.ref) {
+                const r = target[i];
+                if (r < lo) lo = r;
+                if (r > hi) hi = r;
+            }
+        }
+        if (!isFinite(lo) || !isFinite(hi)) return;
+        if (hi - lo < 1e-9) { lo -= 0.5; hi += 0.5; }          // flat series: give it room
+        const margin = (hi - lo) * 0.08;
+        lo -= margin; hi += margin;
+
+        const t0 = t[idx[0]], t1 = t[idx[idx.length - 1]];
+        const span = (t1 - t0) || 1;
+        const plotW = w - PAD_L - PAD_R, plotH = h - PAD_T - PAD_B;
+        const X = time  => PAD_L + ((time - t0) / span) * plotW;
+        const Y = value => PAD_T + (1 - (value - lo) / (hi - lo)) * plotH;
+
+        // ---- grid + labels
+        ctx.font = '10px monospace';
+        ctx.textBaseline = 'middle';
+        ctx.strokeStyle = '#1e1e1e';
+        ctx.fillStyle   = '#556';
+        ctx.lineWidth   = 1;
+        for (let g = 0; g <= 2; g++) {
+            const value = lo + (hi - lo) * (g / 2);
+            const y = Math.round(Y(value)) + 0.5;
+            ctx.beginPath(); ctx.moveTo(PAD_L, y); ctx.lineTo(w - PAD_R, y); ctx.stroke();
+            ctx.textAlign = 'right';
+            ctx.fillText(fmtAxis(value), PAD_L - 6, y);
+        }
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'top';
+        for (let g = 0; g <= 2; g++) {
+            const time = t0 + span * (g / 2);
+            const x = Math.round(X(time)) + 0.5;
+            ctx.strokeStyle = '#1a1a1a';
+            ctx.beginPath(); ctx.moveTo(x, PAD_T); ctx.lineTo(x, h - PAD_B); ctx.stroke();
+            ctx.fillStyle = '#556';
+            ctx.fillText(`${time.toFixed(1)}s`, x, h - PAD_B + 4);
         }
 
-        ctx.strokeStyle = color;
+        // zero line, when the window straddles it
+        if (lo <= 0 && hi >= 0) {
+            const y = Math.round(Y(0)) + 0.5;
+            ctx.strokeStyle = '#333';
+            ctx.beginPath(); ctx.moveTo(PAD_L, y); ctx.lineTo(w - PAD_R, y); ctx.stroke();
+        }
+
+        // ---- reference first, so the measured value reads on top of it
+        if (chart.ref) {
+            ctx.strokeStyle = '#667';
+            ctx.lineWidth = 1;
+            ctx.setLineDash([4, 3]);
+            ctx.beginPath();
+            idx.forEach((i, k) => { const px = X(t[i]), py = Y(target[i]); k ? ctx.lineTo(px, py) : ctx.moveTo(px, py); });
+            ctx.stroke();
+            ctx.setLineDash([]);
+        }
+
+        ctx.strokeStyle = chart.color;
         ctx.lineWidth   = 1.5;
         ctx.beginPath();
-        data.forEach((v, i) => {
-            const px = (i / (MAX_PTS - 1)) * w;
-            const py = h - ((v - min) / range) * (h - 4) - 2;
-            i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
-        });
+        idx.forEach((i, k) => { const px = X(t[i]), py = Y(series[i]); k ? ctx.lineTo(px, py) : ctx.moveTo(px, py); });
         ctx.stroke();
+
+        // ---- current value, top right
+        const last = idx[idx.length - 1];
+        ctx.textAlign = 'right';
+        ctx.textBaseline = 'top';
+        ctx.fillStyle = chart.color;
+        ctx.fillText(`${fmtAxis(series[last])} ${chart.unit}`, w - PAD_R, PAD_T);
+    }
+
+    // Drawing is skipped unless the charts view is the one on screen: the
+    // buffers keep filling regardless, so switching to it shows the history.
+    function chartsVisible() {
+        return ui.viewCharts && ui.viewCharts.style.display !== 'none' && !document.hidden;
     }
 
     return {
-        update(state, err) {
+        update(state, err, simTime) {
             const eMag = Math.sqrt(err.xErr**2 + err.yErr**2 + err.zErr**2);
-            bufs.x.push(state.x);
-            bufs.y.push(state.y);
-            bufs.z.push(state.z);
-            bufs.yaw.push(state.yaw);
-            bufs.e.push(eMag);
-            for (const k of ['x', 'y', 'z', 'yaw', 'e'])
-                if (bufs[k].length > MAX_PTS) bufs[k].shift();
+            // The backend reports the tracking error as (reference - state), so
+            // the commanded value comes back by adding it to the measurement.
+            push(simTime,
+                 { x: state.x, y: state.y, z: state.z, yaw: state.yaw, e: eMag },
+                 { x: state.x + err.xErr, y: state.y + err.yErr, z: state.z + err.zErr,
+                   yaw: state.yaw + err.yawErr });
 
-            charts.forEach(drawChart);
+            if (!chartsVisible()) return;
+            const idx = windowIndices();
+            charts.forEach(c => drawChart(c, idx));
+        },
+        // Redraw on demand (entering the charts view) without adding a sample.
+        redraw() {
+            if (!chartsVisible()) return;
+            const idx = windowIndices();
+            charts.forEach(c => drawChart(c, idx));
         },
         reset() {
-            for (const k of ['x', 'y', 'z', 'yaw', 'e']) bufs[k] = [];
+            head = 0; n = 0;
             charts.forEach(({ id }) => {
                 const c = $(id);
                 if (c) c.getContext('2d').clearRect(0, 0, c.width, c.height);
@@ -1291,6 +1460,12 @@ function refreshPlantFreshness(psnap) {
 // the UI recovers instead of freezing. Kept just under the transport's own spin
 // timeout (libs/ws/ws_rpc_client.cpp): above the worst legitimate RPC latency,
 // below anything a user would tolerate as a freeze.
+//
+// It applies to the ws-served build ONLY. In wasm-only the core is in this same
+// module: there is no transport that can stop answering, and a slow call just
+// means a heavy model (a long MPC horizon). Auto-stopping there would blame a
+// server that does not exist, and would look exactly like "the simulation
+// stopped by itself".
 const CALL_STALL_MS = 900;
 let lastCallStalled = false;
 
@@ -1299,13 +1474,134 @@ let lastCallStalled = false;
 function timedCall(fn) {
     const t0 = performance.now();
     const r = fn();
-    lastCallStalled = (performance.now() - t0) > CALL_STALL_MS;
+    const elapsed = performance.now() - t0;
+    lastCallStalled = usesWsTransport() && elapsed > CALL_STALL_MS;
+    if (!lastCallStalled && elapsed > CALL_STALL_MS) {
+        // wasm-only: not a transport problem, but worth saying out loud once
+        reportSlowCall(elapsed);
+    }
     return r;
 }
 
+// True when the backend lives behind the WebSocket bridge (ws-served) rather
+// than inside this page (wasm-only).
+function usesWsTransport() { return !!globalThis.__cdsWs; }
+
+let slowCallWarnedAt = 0;
+function reportSlowCall(elapsed) {
+    const now = performance.now();
+    if (now - slowCallWarnedAt < 5000) return;
+    slowCallWarnedAt = now;
+    console.warn(`[cds] a backend call blocked this frame for ${Math.round(elapsed)} ms `
+               + '(heavy model — e.g. a long MPC horizon). The simulation keeps running.');
+}
+
 function handleTransportStall() {
-    setError('Server not responding (a call timed out) — simulation stopped.');
+    reportStop('Server not responding (a call timed out) — simulation stopped.');
     stop();   // same effect as pressing Stop: halts the run and frees the UI
+}
+
+// Something stopped the run on its own. Say it where it cannot be missed (the
+// sticky banner, visible from every view), keep it in the error line, and leave
+// a console trace: an auto-stop that only whispers is indistinguishable from the
+// simulation "just freezing".
+function reportStop(message) {
+    setError(message);
+    setPerfWarning(message);
+    console.error('[cds] ' + message);
+}
+
+// =============================================================================
+// Chrome metrics
+// =============================================================================
+// The app bar wraps and the log dock collapses, so their heights are not
+// constants: measure them and publish them as CSS variables, which is what the
+// full-height views size themselves against (instead of a hard-coded guess).
+function publishChromeMetrics() {
+    const appBar  = $('appBar');
+    const logDock = $('logDock');
+    const root    = document.documentElement;
+    if (appBar)  root.style.setProperty('--chrome-h', `${Math.round(appBar.getBoundingClientRect().height)}px`);
+    if (logDock) root.style.setProperty('--dock-h',   `${Math.round(logDock.getBoundingClientRect().height)}px`);
+}
+
+function trackChromeSize() {
+    if (typeof ResizeObserver === 'function') {
+        const ro = new ResizeObserver(publishChromeMetrics);
+        const appBar  = $('appBar');
+        const logDock = $('logDock');
+        if (appBar)  ro.observe(appBar);
+        if (logDock) ro.observe(logDock);
+    }
+    window.addEventListener('resize', publishChromeMetrics);
+    publishChromeMetrics();
+}
+
+// =============================================================================
+// Speed watchdog
+// =============================================================================
+// The backend never refuses to run: an over-heavy model just advances the
+// simulation far slower than asked, which reads as "nothing is happening".
+// Over a window, compare the simulated time delivered against the wall time
+// times the requested rate. Pure sim only: a plant paces the run itself.
+const RATE_WATCH_WINDOW_S = 2.0;   // observation window
+const RATE_WATCH_FLOOR    = 0.25;  // delivered/requested below this warns
+
+let rateWatchArmed  = false;
+let rateWatchWall_s = 0;   // wall clock at the window start
+let rateWatchSim_s  = 0;   // simulated time at the window start
+let rateWatchStale  = false;   // the window saw a hidden tab: not evidence
+
+// A hidden tab throttles rAF — and in the wasm-only build the tick loop rides
+// on it — so wall time passes with no simulation. Mark those windows instead of
+// guessing from their length: a single tick CAN legitimately take seconds here,
+// which is exactly the case worth reporting.
+document.addEventListener('visibilitychange', () => {
+    if (document.hidden) rateWatchStale = true;
+});
+
+function resetRateWatch() {
+    rateWatchArmed = false;
+    setPerfWarning('');
+}
+
+function pollRateWatch() {
+    if (!running || plantAvailable) { resetRateWatch(); return; }
+
+    const wallNow_s = performance.now() / 1000;
+    if (!rateWatchArmed) {
+        rateWatchArmed  = true;
+        rateWatchWall_s = wallNow_s;
+        rateWatchSim_s  = simTime;
+        return;
+    }
+
+    const wallElapsed_s = wallNow_s - rateWatchWall_s;
+    if (wallElapsed_s < RATE_WATCH_WINDOW_S) return;
+
+    const delivered_s = simTime - rateWatchSim_s;
+    const requested_s = wallElapsed_s * simRate;
+    rateWatchWall_s = wallNow_s;   // slide the window
+    rateWatchSim_s  = simTime;
+
+    // Discontinuities that are not a slow model: a tab that went hidden, and a
+    // simulated-time reset. The evidence is void, so drop any standing verdict
+    // and observe the next window (already re-based above).
+    if (rateWatchStale) { rateWatchStale = false; setPerfWarning(''); return; }
+    if (delivered_s < 0 || !(requested_s > 0)) { setPerfWarning(''); return; }
+
+    const ratio = delivered_s / requested_s;
+    if (ratio >= RATE_WATCH_FLOOR) { setPerfWarning(''); return; }
+
+    if (delivered_s <= 0) {
+        setPerfWarning('Simulation is not advancing — the model is too heavy to run here. '
+                     + 'A Debug WASM build cannot drive the MPC models: rebuild in Release.');
+    } else {
+        setPerfWarning(`Simulation running at ${Math.round(ratio * 100)}% of the requested `
+                     + `${simRate.toFixed(2)}× speed (about ${(ratio * simRate).toFixed(2)}× real time) — `
+                     + 'the model is too heavy to keep up. Lower the speed or the MPC horizon, '
+                     + 'and build in Release.');
+    }
 }
 
 function loop() {
@@ -1321,7 +1617,7 @@ function loop() {
         const snap = timedCall(() => sim.ext_getSnapshot());
         if (lastCallStalled) { handleTransportStall(); return; }
         if (snap.isError) {
-            setError('ext_getSnapshot returned error — simulation stopped');
+            reportStop('The backend refused to report its state (ext_getSnapshot error) — simulation stopped.');
             stop();
             return;
         }
@@ -1338,6 +1634,9 @@ function loop() {
     // stats refresh only while the Diag view is up.
     diagnostics.pollLog();
     if (ui.viewDiag.style.display !== 'none') diagnostics.pollStats();
+
+    // Verdict on whether the backend is keeping up with the requested speed
+    pollRateWatch();
 }
 
 // =============================================================================
@@ -1362,18 +1661,22 @@ function refreshStartEnabled() {
 
 function start() {
     if (trajectoryBuilder.isEmpty()) {
-        setError('Cannot start: trajectory sequence is empty.');
+        reportStop('Cannot start: the trajectory sequence is empty.');
         return;
     }
     if (sendSystemParams()) {
-        setError('ext_setSystemParams failed — is a model initialized?');
+        reportStop('Cannot start: ext_setSystemParams failed — is a model initialized?');
         return;
     }
     if (sim.ext_run()) {
-        setError('ext_run failed — is a model initialized?');
+        // The usual cause is a backend trajectory that a failed re-init left
+        // empty while the JS-side list still looks populated.
+        reportStop('Cannot start: ext_run refused — the backend has no model or no trajectory. '
+                 + 'Try Reset; if it persists, check the log.');
         return;
     }
     running = true;
+    resetRateWatch();        // judge this run on its own window (also clears the banner)
     ui.btnStart.disabled = true;
     ui.btnStop.disabled  = false;
     ui.btnReset.disabled = true;
@@ -1387,6 +1690,7 @@ function start() {
 
 function stop() {
     running = false;
+    resetRateWatch();
     // the poll loop keeps running (it still polls the plant ghost while idle)
     if (sim) sim.ext_stop();
     ui.btnStop.disabled  = true;
@@ -1417,7 +1721,13 @@ function reset() {
     // across the re-init rather than losing it on every Reset.
     const savedCtrl = snapshotControllerParams();
     const err = initBackend(readParamsForm());
-    if (err) { setError('init failed on reset'); return; }
+    if (err) {
+        // Bailing out here leaves the backend without the trajectory the JS list
+        // still shows, and the next Start fails with no obvious cause: say so.
+        reportStop('Reset failed to re-initialize the model — the backend has no trajectory, '
+                 + 'so Start will refuse. Check the log.');
+        return;
+    }
     trajectoryBuilder.replayToBackend();
     refreshControllerPanel();          // fresh model (defaults) + current manifest structure
     applyControllerParams(savedCtrl);  // re-apply the user's controller tuning
@@ -1466,6 +1776,7 @@ function setPlantAvailable(avail) {
         refreshStartEnabled();
     }
     applySourceToggles();
+    refreshRateControl();   // lock/unlock the live sim-speed slider with the plant
 }
 
 ui.chkViewTraj.addEventListener('change',  applySourceToggles);
@@ -1517,7 +1828,7 @@ const diagnostics = (() => {
     let lastStatsPoll = 0;
 
     // Per-scope time series for the profiler sparklines, accumulated client-side
-    // from successive getProfileTable snapshots (no extra ext traffic). Keyed by
+    // from successive getProfilerTable snapshots (no extra ext traffic). Keyed by
     // "module\tscope"; ~1 min of history at the stats cadence.
     const TREND_LEN = 120;
     const trends = new Map();
@@ -1556,7 +1867,9 @@ const diagnostics = (() => {
     // persistent log dock: collapse toggle (state remembered). Keep the body
     // padded by the dock's height so the fixed dock never covers content.
     const logDock = $('logDock'), logDockToggle = $('logDockToggle');
-    function padBodyForDock() { document.body.style.paddingBottom = logDock.offsetHeight + 'px'; }
+    // The dock's height is published as --dock-h; the body padding and the
+    // full-height views both derive from it (see the :root block in index.html).
+    function padBodyForDock() { publishChromeMetrics(); }
     function setDockCollapsed(collapsed) {
         logDock.classList.toggle('collapsed', collapsed);
         logDockToggle.textContent = collapsed ? 'Expand' : 'Collapse';
@@ -1573,7 +1886,7 @@ const diagnostics = (() => {
     // profiler reset + server-side file toggles
     $('btnResetProfile').addEventListener('click', () => {
         if (!sim) return;
-        sim.ext_resetProfile();
+        sim.ext_resetProfiler();
         trends.clear();          // restart the sparkline history too
         refreshProfileStats();
     });
@@ -1679,7 +1992,7 @@ const diagnostics = (() => {
     }
 
     function refreshProfileModules() {
-        const list = rows(sim.ext_getProfileModules().list);
+        const list = rows(sim.ext_getProfilerModules().list);
         profEmpty.style.display = list.length ? 'none' : '';
         profTbody.innerHTML = list.map(([idx, name, enabled]) =>
             `<tr><td>${esc(name)}</td>` +
@@ -1688,7 +2001,7 @@ const diagnostics = (() => {
     }
 
     function refreshProfileStats() {
-        const list = rows(sim.ext_getProfileTable().table);
+        const list = rows(sim.ext_getProfilerTable().table);
         statsEmpty.style.display = list.length ? 'none' : '';
         statsTbody.innerHTML = list.map(([mod, scope, kind, count, mean, std, min, max, p50, p95, p99]) => {
             const key = mod + '\t' + scope;
@@ -1714,7 +2027,7 @@ const diagnostics = (() => {
     });
     profTable.addEventListener('change', (e) => {
         if (!sim || !e.target.classList.contains('en')) return;
-        sim.ext_setProfileEnabled({ module: Number(e.target.dataset.mod), enabled: e.target.checked });
+        sim.ext_setProfilerEnabled({ module: Number(e.target.dataset.mod), enabled: e.target.checked });
     });
 
     return {
@@ -1765,6 +2078,7 @@ function showView(name) {
     ui.btnDiag.classList.toggle('active',   name === 'diag');
     if (name === '3d')     renderer3d.show();
     else                   renderer3d.hide();
+    if (name === 'charts') chartsRenderer?.redraw();   // show the buffered history at once
     if (name === 'diag')   diagnostics.onShow();
     if (name === 'params') refreshControllerPanel();
 }
@@ -1993,29 +2307,59 @@ ui.trajFileInput.addEventListener('change', (e) => {
 // Controller parameters (data-driven panel + JSON save / load)
 // =============================================================================
 //
-// The active controller describes its tunable and observed parameters through a
-// manifest -- one TSV record per parameter: id, group, label, flags, value. The
-// panel is built entirely from that manifest (no controller-specific UI code);
-// each writable field is committed one at a time via ext_setControllerParam. The
-// JSON file mirrors the trajectory's: a schema+version header, then the writable
-// parameters keyed by (group, label) so a file loads onto the matching controller.
+// The active model describes its tunable and observed parameters through four
+// per-domain manifests -- controller / model / observer / sensor -- each a TSV
+// listing (id, group, label, flags, value). The panel is built entirely from the
+// concatenation of those manifests (no model-specific UI code); each writable
+// field is committed one at a time through the matching domain's setter. The JSON
+// file mirrors the trajectory's: a schema+version header, then the writable
+// parameters keyed by (group, label) so a file loads onto the matching model.
 //
 const CTRL_FILE_SCHEMA  = 'cds-controller';
 const CTRL_FILE_VERSION = 1;
 
-let controllerManifest = [];   // [{ id, group, label, writable, value }]
+// The four parameter domains, in panel order. Each has a manifest getter and a
+// set-by-id setter; the ids are per-domain (each manifest starts at 0), so a row
+// is identified by (domain, id).
+const PARAM_DOMAINS = [
+    { key: 'controller', get: () => sim.ext_controllerGetManifest().text, set: (a) => sim.ext_controllerSetParam(a) },
+    { key: 'model',      get: () => sim.ext_modelGetManifest().text,      set: (a) => sim.ext_modelSetParam(a) },
+    { key: 'observer',   get: () => sim.ext_observerGetManifest().text,   set: (a) => sim.ext_observerSetParam(a) },
+    { key: 'sensor',     get: () => sim.ext_sensorGetManifest().text,     set: (a) => sim.ext_sensorSetParam(a) },
+];
 
-function parseControllerManifest(text) {
+// Commit one parameter to its domain's setter. Returns true on error/reject.
+function setParamByDomain(domain, id, value) {
+    const d = PARAM_DOMAINS.find(x => x.key === domain);
+    return d ? d.set({ id, value }) : true;   // true = error (bool-is-error)
+}
+
+let controllerManifest = [];   // [{ domain, id, group, label, writable, value }]
+
+function parseControllerManifest(text, domain) {
     return text.split('\n').filter(l => l.length).map(l => {
         const [id, group, label, flags, value] = l.split('\t');
-        return { id: Number(id), group, label, writable: flags === 'rw', value: Number(value) };
+        return { domain, id: Number(id), group, label, writable: flags === 'rw', value: Number(value) };
     });
 }
 
+// A writable knob whose label carries the "(0|1)" convention is a boolean flag
+// (observer / sensor enables): render it as a checkbox rather than a number box.
+function isBooleanParam(p) { return p.writable && /\(0\|1\)/.test(p.label); }
+function paramDisplayLabel(p) { return p.label.replace(/\s*\(0\|1\)\s*/, ''); }
+
+// The observer/sensor domains are demarcated into their own section so they read
+// as a sensor panel, not controller tuning.
+function isEstimatorGroup(g) { return g === 'Observer' || /^Sensor /.test(g); }
+
 function fetchControllerManifest() {
     if (!sim) return [];
-    try { return parseControllerManifest(sim.ext_getControllerManifest().text); }
-    catch { return []; }
+    const out = [];
+    for (const d of PARAM_DOMAINS) {
+        try { for (const row of parseControllerManifest(d.get(), d.key)) out.push(row); }
+        catch { /* a domain a model does not expose returns an empty manifest */ }
+    }
+    return out;
 }
 
 function renderControllerPanel() {
@@ -2034,7 +2378,15 @@ function renderControllerPanel() {
     ui.btnCtrlLoad.disabled = false;
 
     let lastGroup = null;
+    let sensorSectionStarted = false;
     for (const p of controllerManifest) {
+        if (!sensorSectionStarted && isEstimatorGroup(p.group)) {
+            const sec = document.createElement('div');
+            sec.className = 'ctrl-section';
+            sec.textContent = 'Estimator & sensors';
+            box.appendChild(sec);
+            sensorSectionStarted = true;
+        }
         if (p.group !== lastGroup) {
             const h = document.createElement('div');
             h.className = 'ctrl-group';
@@ -2045,19 +2397,30 @@ function renderControllerPanel() {
         const row = document.createElement('div');
         row.className = 'ctrl-row' + (p.writable ? '' : ' ro');
         const lab = document.createElement('label');
-        lab.textContent = p.label;
         const inp = document.createElement('input');
-        inp.type = 'number'; inp.step = 'any'; inp.value = String(p.value);
         inp.dataset.id = String(p.id);
-        row.appendChild(lab);
-        row.appendChild(inp);
-        if (p.writable) {
-            inp.addEventListener('change', onControllerInputChange);
+        inp.dataset.domain = p.domain;
+        if (isBooleanParam(p)) {
+            lab.textContent = paramDisplayLabel(p);
+            inp.type = 'checkbox';
+            inp.checked = p.value >= 0.5;
+            inp.dataset.bool = '1';
+            row.appendChild(lab);
+            row.appendChild(inp);
+            inp.addEventListener('change', onControllerToggleChange);
         } else {
-            inp.readOnly = true;
-            const tag = document.createElement('span');
-            tag.className = 'ro-tag'; tag.textContent = 'read-only';
-            row.appendChild(tag);
+            lab.textContent = p.label;
+            inp.type = 'number'; inp.step = 'any'; inp.value = String(p.value);
+            row.appendChild(lab);
+            row.appendChild(inp);
+            if (p.writable) {
+                inp.addEventListener('change', onControllerInputChange);
+            } else {
+                inp.readOnly = true;
+                const tag = document.createElement('span');
+                tag.className = 'ro-tag'; tag.textContent = 'read-only';
+                row.appendChild(tag);
+            }
         }
         box.appendChild(row);
     }
@@ -2072,23 +2435,42 @@ function syncControllerValues() {
     // Refresh values in place (reflect clamping and updated read-only rows)
     // without rebuilding the DOM, so the field the user just edited keeps focus.
     controllerManifest = fetchControllerManifest();
-    const byId = new Map(controllerManifest.map(p => [p.id, p.value]));
+    const byId = new Map(controllerManifest.map(p => [`${p.domain}:${p.id}`, p.value]));
     ui.ctrlParams.querySelectorAll('input[data-id]').forEach(inp => {
         if (document.activeElement === inp) return;
-        const v = byId.get(Number(inp.dataset.id));
-        if (v !== undefined) inp.value = String(v);
+        const v = byId.get(`${inp.dataset.domain}:${Number(inp.dataset.id)}`);
+        if (v === undefined) return;
+        if (inp.dataset.bool === '1') inp.checked = v >= 0.5;
+        else                          inp.value = String(v);
     });
 }
 
 function onControllerInputChange(e) {
     const id = Number(e.target.dataset.id);
+    const domain = e.target.dataset.domain;
     const value = Number(e.target.value);
     const label = e.target.previousSibling ? e.target.previousSibling.textContent : `id ${id}`;
     if (!isFiniteNum(value)) { setError(`"${label}" must be a number.`); return; }
-    if (sim.ext_setControllerParam({ id, value })) {
+    if (setParamByDomain(domain, id, value)) {
         // Rejected: an invalid value (e.g. a negative weight) or the controller
         // could not re-synthesise its gain for these settings. The gain is kept.
         setError(`"${label}" = ${value} rejected — invalid value or the controller could not re-synthesise (gain unchanged). See the Diag log.`);
+    } else {
+        setError('');
+    }
+    syncControllerValues();
+}
+
+// Boolean knob (observer / sensor enable): commit as 1 / 0. On rejection revert
+// the checkbox to its prior state so the UI reflects what the backend accepted.
+function onControllerToggleChange(e) {
+    const id = Number(e.target.dataset.id);
+    const domain = e.target.dataset.domain;
+    const value = e.target.checked ? 1 : 0;
+    const label = e.target.previousSibling ? e.target.previousSibling.textContent : `id ${id}`;
+    if (setParamByDomain(domain, id, value)) {
+        setError(`"${label}" toggle rejected. See the Diag log.`);
+        e.target.checked = !e.target.checked;
     } else {
         setError('');
     }
@@ -2139,12 +2521,12 @@ function snapshotControllerParams() {
 // matching by (group, label) so entries that don't fit are skipped rather than
 // failing the batch. Returns { applied, skipped, rejected }.
 function applyControllerParams(params) {
-    const idOf = new Map(controllerManifest.filter(p => p.writable).map(p => [`${p.group}\t${p.label}`, p.id]));
+    const rowOf = new Map(controllerManifest.filter(p => p.writable).map(p => [`${p.group}\t${p.label}`, p]));
     let applied = 0, skipped = 0, rejected = 0;
     for (const p of params) {
-        const id = idOf.get(`${p.group}\t${p.label}`);
-        if (id === undefined) { skipped++; continue; }
-        if (sim.ext_setControllerParam({ id, value: p.value })) rejected++; else applied++;
+        const row = rowOf.get(`${p.group}\t${p.label}`);
+        if (row === undefined) { skipped++; continue; }
+        if (setParamByDomain(row.domain, row.id, p.value)) rejected++; else applied++;
     }
     return { applied, skipped, rejected };
 }
@@ -2191,11 +2573,14 @@ ui.ctrlFileInput.addEventListener('change', (e) => {
         diagnostics.setFileSinksAvailable(!!globalThis.__cdsWs);
 
         // Register renderers
-        renderers.push(makeUplotRenderer());
+        chartsRenderer = makeChartsRenderer();
+        renderers.push(chartsRenderer);
 
+        trackChromeSize();              // publish --chrome-h / --dock-h for the views
         renderer3d = make3DRenderer();
         renderers.push(renderer3d);
         ui.btn3d.disabled = false;
+        showView('3d');                 // home view (the CSS starts on it too)
 
         // Reflect the default model in the selector and show its params panel.
         currentModel = ui.modelSelect ? ui.modelSelect.value : MODEL_ROCKET;

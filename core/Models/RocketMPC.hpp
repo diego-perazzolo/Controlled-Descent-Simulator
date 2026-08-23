@@ -39,7 +39,7 @@
 //               allocation), with a per-input actuator box. Controller knobs
 //               (cost weights, control step, iterations) are runtime-tunable
 //               through the controller-parameter interface; the horizon N is
-//               compile-time (fixed buffers) and exposed read-only.
+//               runtime-tunable (fixed buffers sized to MAX_HORIZON).
 //               Derived in modeling/notebooks/model/dynamics_rocket_MPC01.ipynb.
 // Author      : Diego Perazzolo
 // Created     : 2026
@@ -49,7 +49,9 @@
 #include <array>
 
 #include "BaseModel.hpp"
-#include "controller_params.hpp"
+#include "param_table.hpp"                 // libs/param    -- tunable-parameter registry
+#include "trans_disturbance_observer.hpp"  // libs/estimate -- reusable offset-free observer
+#include "sensor_model.hpp"                // libs/sensor   -- position measurement corruptor
 
 namespace CDS
 {
@@ -67,15 +69,23 @@ namespace CDS
         virtual bool GetTrackingErrors(core_trackingErrors_t& tErrors) override;
         virtual bool GetCurrentTimeSeconds(core_coord_t& currentTimeSeconds) override;
 
-        // Controller-parameter interface (cost weights, control step, iterations).
+        // Tunable-parameter interface, split by domain: model (horizon),
+        // controller (cost weights, control step, iterations), observer
+        // (covariances + enable) and sensor (per-axis bias / noise / enable).
+        bool GetModelManifest(char* buf, std::size_t n) override;
+        bool SetModelParam(int id, double value) override;
         bool GetControllerManifest(char* buf, std::size_t n) override;
         bool SetControllerParam(int id, double value) override;
+        bool GetObserverManifest(char* buf, std::size_t n) override;
+        bool SetObserverParam(int id, double value) override;
+        bool GetSensorManifest(char* buf, std::size_t n) override;
+        bool SetSensorParam(int id, double value) override;
 
         // Physical runtime state (Euler angles, no LQR integrators):
         //   [r(3), euler(3: alpha,beta,psi), v(3), euler_rate(3)]
         static constexpr std::size_t STATE_DIM = 12;
         static constexpr std::size_t INPUT_DIM = 4;    // [F1, T1, T2, T3] wrench
-        static constexpr std::size_t HORIZON   = 40;   // MPC prediction horizon (compile-time)
+        static constexpr std::size_t MAX_HORIZON = 256; // fixed buffer capacity (max prediction horizon)
 
         using StateVec    = std::array<double, STATE_DIM>;
         using InputVec    = std::array<double, INPUT_DIM>;
@@ -83,8 +93,47 @@ namespace CDS
         using TrackingErr = std::array<double, 4>;      // tracking err w.r.t. [x, y, z, yaw]
         using UserForces  = std::array<double, 3>;      // user input forces [Fx, Fy, Fz]
 
+        // Translational disturbance-observer size: 3 position axes.
+        static constexpr std::size_t POS_DIM = 3;
+
+        // Offset-free observer feature toggle (opt-in; OFF by default so the
+        // model is unchanged until switched on). Not part of the BaseModel
+        // interface -- surfaced to the frontend later through the ext API.
+        void SetObserverEnabled(bool on) { m_obsEnabled = on; }
+        bool IsObserverEnabled() const   { return m_obsEnabled; }
+        // Runtime access to the position sensor bank (per-axis noise / bias /
+        // enable) so a dropped or noisy sensor can be configured live.
+        sensor::SensorModel<POS_DIM>& PositionSensor() { return m_posSensor; }
+
         private:
-        void BuildParamTable();        // register the exposed MPC knobs
+        void BuildParamTable();        // register the exposed knobs into the 4 tables
+
+        // ---- one tick, split by responsibility (driven by PerformIntegration) --
+
+        // Position and heading error of the current state w.r.t. `ref0`, kept for
+        // the frontend and the recorder.
+        void UpdateTrackingErrors(const Reference_t& ref0);
+
+        // Re-solve the MPC from the current state and publish the first command
+        // in m_lastU0. Called only at the control cadence: in between that
+        // command is held (ZOH), which is what the horizon itself assumes.
+        void SolveMpc(void);
+
+        // Initial state handed to the solver, and through `predForce` the external
+        // force it should predict over the horizon: x_hat / d_hat with the
+        // observer on (offset-free), the raw sensor position and a zero force with
+        // it off. Advances the sensor noise stream when the observer is off.
+        StateVec ControllerInitialState(std::array<double, POS_DIM>& predForce);
+
+        // Advance the disturbance observer by `dt` off the post-integration state:
+        // known input is the model's force-free acceleration, measurement is the
+        // position through the sensor bank (a dropped axis stays predict-only).
+        void UpdateObserver(core_coord_t dt);
+
+        // Append this tick's wide recorder row. The state is post-integration at
+        // t_sim and m_lastU0 the command held over the step, while `ref0` and the
+        // tracking error are sampled at the step start (they lead the state by dt).
+        void RecordTick(const Reference_t& ref0);
 
         void*              m_modelPtr;
         StateVec           m_state;
@@ -98,17 +147,22 @@ namespace CDS
         // cost is a per-input weight (the rocket's actuators are heterogeneous --
         // thrust ~1e2 N vs torques ~1e0 N.m -- so a single scalar would let the
         // thrust dominate). w_term scales the terminal state cost; dt_mpc is the
-        // control step; max_iters caps the iLQR iterations. HORIZON is compile-time.
+        // control step; max_iters caps the iLQR iterations; m_horizon is the
+        // active prediction horizon N <= MAX_HORIZON (runtime-tunable).
         // Defaulted in the constructor to the values tuned in the notebook.
         double             m_wp, m_wq, m_wv, m_ww, m_wterm;
         double             m_rF1, m_rT1, m_rT2, m_rT3;
         double             m_dtMpc;
+        std::size_t        m_horizon;   // active horizon N (1..MAX_HORIZON)
         int                m_maxIters;
-        control::ParamTable<> m_params;
+        param::ParamTable<> m_modelParams;       // structural knobs (horizon)
+        param::ParamTable<> m_controllerParams;  // cost weights + solver
+        param::ParamTable<> m_observerParams;    // observer covariances + enable
+        param::ParamTable<> m_sensorParams;      // per-axis position sensor knobs
 
         // Warm-start command sequence: the previous solve, kept and shifted so the
         // next tick starts a few iterations away from the answer.
-        std::array<InputVec, HORIZON> m_warmStart;
+        std::array<InputVec, MAX_HORIZON> m_warmStart;
         bool               m_seeded;
 
         // The MPC re-solves only at the control cadence (every DT_MPC of model
@@ -117,5 +171,25 @@ namespace CDS
         // not monopolise the system lock and the simulation degrades gracefully.
         InputVec           m_lastU0;
         double             m_lastSolveTime;
+
+        // Model time of the last solver complaint, so a solve that misbehaves on
+        // every cadence says so about once a simulated second instead of filling
+        // the log with one line per solve.
+        double             m_lastSolveWarnTime;
+
+        // ---- Offset-free disturbance observer (opt-in, OFF by default) --------
+        // Translational estimator [r(3), v(3), d(3)] that recovers the external
+        // force disturbance so the MPC predicts predForce = d_hat and reaches
+        // zero steady-state error. The only physics, the disturbance-input
+        // coupling Bd, is read FROM the generated model (finite difference of
+        // Dynamics w.r.t. the external force); everything generic lives in the
+        // reusable helper. When m_obsEnabled is false the model is unchanged.
+        void BuildObserver();   // read Bd from the model and synthesise the gain
+
+        estimate::TransDisturbanceObserver<POS_DIM> m_obs;
+        sensor::SensorModel<POS_DIM> m_posSensor;   // per-axis noise/bias/enable
+        bool   m_obsEnabled;                        // feature toggle (default false)
+        double m_obsQpos, m_obsQvel, m_obsQdist;    // process-noise covariance diag
+        double m_obsRpos;                           // measurement-noise covariance
     };
 }

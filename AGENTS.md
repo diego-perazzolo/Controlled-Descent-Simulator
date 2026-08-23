@@ -61,11 +61,16 @@ conventions, invariants, verification commands and the review procedure.
    point takes the lock. The tick path never blocks: no I/O, no unbounded
    waits; the plant exchange goes exclusively through the wait-free mailboxes
    (`PushCommands` / `PullMeasurements` are non-virtual by design — do not
-   bypass or override them). The dt passed to `ExecuteTick` is the *measured*
-   wall-clock elapsed, clamped by the tick generator: simulation time is
-   wall-anchored by design — do not replace it with the nominal tick period,
-   and do not reintroduce integer `duration_cast` in the elapsed measurement
-   (sub-unit iterations truncate to zero and silently freeze the simulation).
+   bypass or override them). The dt fed to `ExecuteTick` is picked by the tick
+   generator from whether a plant is attached: WITH a plant it is the *measured*
+   wall-clock elapsed (clamped after a stall), so the exchange stays real-time;
+   WITHOUT a plant it is the *fixed nominal period*, advanced through a
+   rate-scaled fixed-timestep accumulator (bounded by a per-frame wall-time
+   budget, and warning when it can't keep up), so a pure simulation is
+   deterministic and reproducible and its speed is tunable. Both are deliberate —
+   do not "fix" the plant-less fixed step back to the wall clock. Do not
+   reintroduce integer `duration_cast` in the elapsed measurement (sub-unit
+   iterations truncate to zero and silently freeze the simulation).
 10. **Controllers are generic C++ plus a Python conformance certificate.**
     Hand-written control algorithms (iLQR today, LQR next) live in
     `libs/control` as model- and protocol-agnostic, header-only infrastructure —
@@ -100,19 +105,21 @@ conventions, invariants, verification commands and the review procedure.
 Run from the repo root. Prefer these over inventing new ones.
 
 ```bash
-# wasm-only app (requires emsdk; output lands in build/)
-emcmake cmake -S apps/wasm-only -B build-wasm-only -DCMAKE_BUILD_TYPE=Debug && cmake --build build-wasm-only
+# wasm-only app (requires emsdk; output lands in build/). Build Release: a Debug
+# wasm build cannot sustain the MPC models (the run looks frozen in the browser)
+emcmake cmake -S apps/wasm-only -B build/wasm-only -DCMAKE_BUILD_TYPE=Release && cmake --build build/wasm-only
 
 # ws-served app: WASM proxy (emsdk; output lands in build/) + native core server
 # (always pass a build type: an empty CMAKE_BUILD_TYPE silently builds at -O0)
-emcmake cmake -S apps/ws-served/client -B build-ws-client -DCMAKE_BUILD_TYPE=Debug && cmake --build build-ws-client
-cmake -S apps/ws-served/server -B build-server -DCMAKE_BUILD_TYPE=Release && cmake --build build-server
+emcmake cmake -S apps/ws-served/client -B build/ws-client -DCMAKE_BUILD_TYPE=Release && cmake --build build/ws-client
+cmake -S apps/ws-served/server -B build/server -DCMAKE_BUILD_TYPE=Release && cmake --build build/server
 
 # Fast C++ syntax check without emsdk (per file)
 clang++ -std=c++20 -fsyntax-only \
   -Icore -Icore/System -Icore/Plant -Icore/Models -Icore/Trajectory \
   -Iapps/common/exported_cpp -Iapps/ws-served/exported_cpp \
   -Iapps/ws-served/server -Ilibs/ws -Ilibs/sync -Ilibs/integrate -Ilibs/control \
+  -Ilibs/param -Ilibs/estimate -Ilibs/sensor \
   -Ilibs/log -Ilibs/profile -Ilibs/record \
   -Imodeling/notebooks/exported_cpp/ROCKET_FF_LQR_01 \
   -Imodeling/notebooks/exported_cpp/QUADROTOR_FF_LQR_01 \
@@ -125,36 +132,47 @@ cp frontend/main.js /tmp/main_check.mjs && node --check /tmp/main_check.mjs
 # ext API generator: verify generated files match apps/common/ext_api.py
 python3 apps/common/gen_ext.py --check
 
-# ws protocol end-to-end test (builds nothing: needs build-server/cds_server)
-python3 apps/ws-served/test/test_protocol.py ./build-server/cds_server
+# ws protocol end-to-end test (builds nothing: needs build/server/cds_server)
+python3 apps/ws-served/test/test_protocol.py ./build/server/cds_server
 
 # plant machinery integration tests (native)
-cmake -S plants/test -B build-plants-test -DCMAKE_BUILD_TYPE=Release
-cmake --build build-plants-test
-./build-plants-test/driver        # mailboxes, freshness, lifecycle
-./build-plants-test/sitl_driver   # SITL plant vs in-process fake ArduCopter
+cmake -S plants/test -B build/plants-test -DCMAKE_BUILD_TYPE=Release
+cmake --build build/plants-test
+./build/plants-test/driver        # mailboxes, freshness, lifecycle
+./build/plants-test/sitl_driver   # SITL plant vs in-process fake ArduCopter
 
 # generic control-solver tests (native, self-contained: no core, no quaternions)
-cmake -S libs/control/test -B build-ilqr-test -DCMAKE_BUILD_TYPE=Release
-cmake --build build-ilqr-test
-./build-ilqr-test/ilqr_test        # double-integrator: loose-box reach + tight-box feasibility
-./build-ilqr-test/lqr_test         # LQR synthesis: known-answer gains + closed-loop stability
+cmake -S libs/control/test -B build/ilqr-test -DCMAKE_BUILD_TYPE=Release
+cmake --build build/ilqr-test
+./build/ilqr-test/ilqr_test        # double-integrator: loose-box reach + tight-box feasibility
+./build/ilqr-test/lqr_test         # LQR synthesis: known-answer gains + closed-loop stability
+
+# generic estimator tests (native, self-contained: no core, no quaternions)
+cmake -S libs/estimate/test -B build/observer-test -DCMAKE_BUILD_TYPE=Release
+cmake --build build/observer-test
+./build/observer-test/observer_test # observer synthesis (dual LQR): known-answer gains + Step convergence + observability rank test + error covariance P
+./build/observer-test/tdo_test      # translational disturbance observer: d_hat recovery + dropped-axis coast
+
+# generic sensor-model tests (native, self-contained: no core, no external deps)
+cmake -S libs/sensor/test -B build/sensor-test -DCMAKE_BUILD_TYPE=Release
+cmake --build build/sensor-test
+./build/sensor-test/sensor_model_test # measurement corruptor: passthrough + bias + runtime disable + noise stats + determinism
 
 # logger + profiler tests (native, self-contained: no core, no protocol)
-cmake -S libs/log/test -B build-log-test -DCMAKE_BUILD_TYPE=Release
-cmake --build build-log-test
-./build-log-test/log_test          # deferred formatting + level filter + drop counting
-cmake -S libs/profile/test -B build-profile-test -DCMAKE_BUILD_TYPE=Release
-cmake --build build-profile-test
-./build-profile-test/profile_test  # scope aggregates + wait-free snapshot round-trip
-cmake -S libs/record/test -B build-record-test -DCMAKE_BUILD_TYPE=Release
-cmake --build build-record-test
-./build-record-test/record_test    # wide-CSV round-trip + explicit drop counting
+cmake -S libs/log/test -B build/log-test -DCMAKE_BUILD_TYPE=Release
+cmake --build build/log-test
+./build/log-test/log_test          # deferred formatting + level filter + drop counting
+cmake -S libs/profile/test -B build/profile-test -DCMAKE_BUILD_TYPE=Release
+cmake --build build/profile-test
+./build/profile-test/profile_test  # scope aggregates + wait-free snapshot round-trip
+cmake -S libs/record/test -B build/record-test -DCMAKE_BUILD_TYPE=Release
+cmake --build build/record-test
+./build/record-test/record_test    # wide-CSV round-trip + explicit drop counting
 
 # speed benchmarks (NOT a CI gate — timing-dependent). perf_bench sizes the
 # per-call cost of the logger/profiler/recorder macros ON vs OFF and the drain
 # (perf_bench_off shows the compile-out residual); model_bench times one
-# PerformIntegration per model. `python3 bench/report.py build-bench` assembles
+# PerformIntegration per model. `python3 bench/report.py build/bench` assembles
 # the Markdown artifact the CI `benchmark` job uploads.
 # RULE: every runtime model MUST be represented in model_bench (add new models
 # there) so its integration cost is tracked. docs/benchmark.md is the stable,
@@ -164,11 +182,11 @@ cmake --build build-record-test
 # cost moved by roughly an order of magnitude, or clearly regressed beyond run-to-
 # run noise), do NOT silently update the doc — flag it to the developer: it may be
 # a real performance regression, or benchmark.md may be due for a refresh.
-cmake -S bench -B build-bench -DCMAKE_BUILD_TYPE=Release
-cmake --build build-bench
-./build-bench/perf_bench            # features compiled in (runtime ON/OFF)
-./build-bench/perf_bench_off        # features compiled out (macros stripped ~0)
-./build-bench/model_bench          # per-model integration cost (mean/p50/p95/max)
+cmake -S bench -B build/bench -DCMAKE_BUILD_TYPE=Release
+cmake --build build/bench
+./build/bench/perf_bench            # features compiled in (runtime ON/OFF)
+./build/bench/perf_bench_off        # features compiled out (macros stripped ~0)
+./build/bench/model_bench          # per-model integration cost (mean/p50/p95/max)
 
 # controller C++<->Python conformance (golden rule 10). ctypes, no numpy:
 # certifies each hand-written solver against an independent Python oracle on a
@@ -176,18 +194,31 @@ cmake --build build-bench
 # (box-projected KKT residual ~0). LQR: the returned gain is an optimum, checked
 # by a Lyapunov-stationarity residual ||K - R^-1 B' X|| ~0 (X from the Lyapunov
 # equation) with X positive-definite as the Hurwitz witness. Both bind libraries
-# build from the same CMake (build-ilqr-bind).
-cmake -S libs/control/bind -B build-ilqr-bind -DCMAKE_BUILD_TYPE=Release
-cmake --build build-ilqr-bind
-python3 libs/control/bind/ilqr_conformance.py build-ilqr-bind
-python3 libs/control/bind/lqr_conformance.py  build-ilqr-bind
+# build from the same CMake (build/ilqr-bind).
+cmake -S libs/control/bind -B build/ilqr-bind -DCMAKE_BUILD_TYPE=Release
+cmake --build build/ilqr-bind
+python3 libs/control/bind/ilqr_conformance.py build/ilqr-bind
+python3 libs/control/bind/lqr_conformance.py  build/ilqr-bind
+
+# estimator C++<->Python conformance (golden rule 10, dual of the LQR one). The
+# observer gain is synthesised as the LQR dual (L = lqr(A',C',Qw,Rv)') and here
+# certified an optimum by the filtering Lyapunov-stationarity residual
+# ||L - P C' Rv^-1|| ~0 (P from A_cl P + P A_cl' = -(Qw + L Rv L'), A_cl = A - L C)
+# with P positive-definite as the Hurwitz witness.
+cmake -S libs/estimate/bind -B build/observer-bind -DCMAKE_BUILD_TYPE=Release
+cmake --build build/observer-bind
+python3 libs/estimate/bind/observer_conformance.py build/observer-bind
 
 # model tests (native, exercise the runtime models end to end)
-cmake -S core/Models/test -B build-mpc-model-test -DCMAKE_BUILD_TYPE=Release
-cmake --build build-mpc-model-test
-./build-mpc-model-test/mpc_model_test        # QuadRotorMPC: Poly4 tracking + gust rejection
-./build-mpc-model-test/rocket_mpc_model_test # RocketMPC: Poly4+yaw tracking + gust rejection
-./build-mpc-model-test/lqr_model_test        # Rocket/QuadRotor FF-LQR: runtime gain bridge + Q/R retune
+cmake -S core/Models/test -B build/mpc-model-test -DCMAKE_BUILD_TYPE=Release
+cmake --build build/mpc-model-test
+./build/mpc-model-test/mpc_model_test        # QuadRotorMPC: Poly4 tracking + gust rejection
+./build/mpc-model-test/rocket_mpc_model_test # RocketMPC: Poly4+yaw tracking + gust rejection
+./build/mpc-model-test/lqr_model_test        # Rocket/QuadRotor FF-LQR: runtime gain bridge + Q/R retune
+./build/mpc-model-test/offset_free_model_test # Quad/Rocket MPC disturbance observer: offset-free vs baseline + sensor-drop coast
+./build/mpc-model-test/lqr_observer_model_test # Quad/Rocket FF-LQR state estimator: clean baseline + noisy-sensor filtering + drop coast
+./build/mpc-model-test/determinism_model_test  # all 4 models: same inputs twice -> bit-identical trace (observer on, sensors noisy)
+./build/mpc-model-test/horizon_edge_model_test # MPC preview off the end of the trajectory (short traj, sub-control-step traj, N=MAX)
 
 # Python codegen sanity (base_codegen shared at root; model codegens under model/)
 python3 -c "import ast; [ast.parse(open(f).read()) for f in ( \

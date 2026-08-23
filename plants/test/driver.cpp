@@ -187,7 +187,7 @@ static void testWithSystemManager(void)
               LoopbackPlant::loopbackParams_t{0.02, 0.05, 0.1}) == false);
     CHECK(sm.AttachPlant(std::move(plant)) == false);
 
-    CHECK(sm.SetParameters({0.01}) == false);
+    CHECK(sm.SetParameters({.timestep_seconds = 0.01, .rate = 1.0}) == false);
 
     /* run must be refused with no... model is there: run OK. Detach while
        running must be refused */
@@ -260,7 +260,7 @@ static void testRunSeedsPlant(void)
     auto spy = std::make_unique<SpyPlant>();
     SpyPlant* spyPtr = spy.get();
     CHECK(sm.AttachPlant(std::move(spy)) == false);
-    CHECK(sm.SetParameters({0.01}) == false);
+    CHECK(sm.SetParameters({.timestep_seconds = 0.01, .rate = 1.0}) == false);
 
     /* Run must deposit the trajectory-start command before starting the
        plant mission, so the plant never captures a stale command */

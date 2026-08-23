@@ -41,16 +41,105 @@
 
 using Clock = std::chrono::steady_clock;
 
+/* Elapsed is measured as floating-point seconds: an integer duration_cast would
+   truncate to zero once a frame gets faster than its unit, silently freezing the
+   simulation */
+using FpSeconds = std::chrono::duration<double>;
+
 static const auto logger = cds_log::registry().module("Main");
 static const auto profile = cds_profile::registry().module("Main");
 
 static Clock::time_point _lastTime;
 static int _is_sys_init = 0;
+static double _tickAccumulator = 0.0; // pure-sim fixed-step accumulator (sim-seconds owed)
 
 extern bool g_core_tick(core_coord_t dt_seconds); // global function from core.cpp
 extern bool g_core_getTickPeriod(core_coord_t& tickPeriod_second); // global function from core.cpp
+extern bool g_core_getTickRate(core_coord_t& rate); // global function from core.cpp
+extern bool g_core_isPlantAttached(void); // global function from core.cpp
 
-/* tick the system at rate 1/tick_period_ms, unless ticking system takes too much (> 1/tick_period_ms) */
+/* Real-time pacing, used while a plant is attached: the plant owns wall time, so
+   the model gets one tick per elapsed period, fed the measured elapsed. A stall
+   (backgrounded tab, model re-init) is clamped so it cannot feed a huge dt. */
+static void _tickRealTime(double elapsed_seconds, core_coord_t tickPeriodSeconds, Clock::time_point now)
+{
+    if (elapsed_seconds < tickPeriodSeconds) return;
+
+    _lastTime = now;
+    core_coord_t dt_seconds = static_cast<core_coord_t>(elapsed_seconds);
+    const core_coord_t dtMax_seconds = 3 * tickPeriodSeconds;
+    if (dt_seconds > dtMax_seconds) dt_seconds = dtMax_seconds;
+
+    CDS_PROFILE(profile, "Ticking");
+    g_core_tick(dt_seconds);
+    /* Single-threaded build: publish the profiler aggregates (writer side) and
+       pump them into the UI cache (reader side) on this same thread */
+    cds_profile::registry().publish();
+    cds_profile::registry().pump();
+}
+
+/* Sim time owed for this frame (elapsed x rate), added to the backlog and capped.
+   What the cap discards is what a machine that cannot sustain the rate actually
+   loses, so it is reported as the share of the requested speed still simulated —
+   rate-limited, since a saturated backlog saturates on every frame. */
+static void _accrueSimTime(double elapsed_seconds, core_coord_t rate, core_coord_t tickPeriodSeconds)
+{
+    const double requested_seconds = elapsed_seconds * rate;
+    _tickAccumulator += requested_seconds;
+
+    /* Backlog cap: how much owed sim time may survive a stall, so a stall cannot
+       burst into a catch-up storm. Kept at a few tick periods: a fixed cap
+       smaller than the period would never be cleared by the sub-stepping loop,
+       freezing the simulation outright. */
+    const double MAX_BACKLOG_SECONDS = (4.0 * tickPeriodSeconds > 0.25)
+                                     ? 4.0 * tickPeriodSeconds : 0.25;
+    if (_tickAccumulator <= MAX_BACKLOG_SECONDS) return;
+
+    /* Sim time asked for this frame that will never be simulated. The backlog is
+       capped on every pass, so the loss cannot exceed what this frame requested:
+       0 <= dropped_seconds <= requested_seconds. */
+    const double dropped_seconds = _tickAccumulator - MAX_BACKLOG_SECONDS;
+    _tickAccumulator = MAX_BACKLOG_SECONDS;
+
+    static Clock::time_point lastRateWarn{};
+    const auto nowW = Clock::now();
+    if (requested_seconds <= 0.0 || FpSeconds(nowW - lastRateWarn).count() < 2.0) return;
+    lastRateWarn = nowW;
+
+    /* Integer percent: the logger's fallback formatter has no format specs */
+    const double delivered_seconds = requested_seconds - dropped_seconds;
+    int deliveredPercent = static_cast<int>(100.0 * delivered_seconds / requested_seconds + 0.5);
+    if (deliveredPercent < 0)  deliveredPercent = 0;
+    if (deliveredPercent > 99) deliveredPercent = 99; // reported only while falling behind
+    CDS_LOG_WARN(logger, "Cannot keep up with the requested {}x speed: simulating at about {}% of it (model too slow for this build; the sim time not simulated is dropped, not queued)",
+                 static_cast<double>(rate), deliveredPercent);
+}
+
+/* Spend the owed sim time in whole fixed steps, bounded by a wall-time budget
+   (and a hard step cap) so an expensive model cannot stall the frame: it runs
+   below the requested rate instead of freezing it. Returns the steps taken. */
+static int _runFixedSteps(core_coord_t tickPeriodSeconds)
+{
+    constexpr double STEP_BUDGET_SECONDS = 0.008; // wall time to spend sub-stepping per frame
+    constexpr int    MAX_STEPS = 2000;            // hard fallback cap
+
+    const auto subStart = Clock::now();
+    int steps = 0;
+
+    CDS_PROFILE(profile, "Ticking");
+    while (_tickAccumulator >= tickPeriodSeconds && steps < MAX_STEPS)
+    {
+        g_core_tick(tickPeriodSeconds);
+        _tickAccumulator -= tickPeriodSeconds;
+        ++steps;
+        if (FpSeconds(Clock::now() - subStart).count() >= STEP_BUDGET_SECONDS) break;
+    }
+    return steps;
+}
+
+/* One animation frame: measure the elapsed wall time and hand it to the pacing
+   policy — real-time when a plant paces the run, fixed rate-scaled steps in a
+   pure simulation — then drain the log queue off the tick's critical work. */
 static void _tick_generator(void)
 {
     core_coord_t tickPeriodSeconds;
@@ -59,6 +148,7 @@ static void _tick_generator(void)
         /* No model yet, or tick period not configured: re-anchor the time
            base on the next valid pass */
         _is_sys_init = 0;
+        _tickAccumulator = 0.0;
         return;
     }
 
@@ -67,42 +157,35 @@ static void _tick_generator(void)
     {
         _is_sys_init = 1;
         _lastTime = Clock::now();
+        _tickAccumulator = 0.0;
     }
 
-    /* Elapsed measured as floating-point seconds: an integer duration_cast
-       would truncate to zero once a frame gets faster than its unit,
-       silently freezing the simulation */
-    using FpSeconds = std::chrono::duration<double>;
+    const auto t1 = Clock::now();
+    const double elapsed_seconds = FpSeconds(t1 - _lastTime).count();
 
-    auto t1 = Clock::now();
-    double elapsed_seconds = FpSeconds(t1 - _lastTime).count();
-
-    if (elapsed_seconds >= tickPeriodSeconds)
+    if (g_core_isPlantAttached())
     {
+        _tickRealTime(elapsed_seconds, tickPeriodSeconds, t1);
+    }
+    else
+    {
+        /* Pure simulation: the step stays at the nominal period (smooth and
+           deterministic) while the rate multiplier sets how much sim time to
+           cover per wall second (1.0 = real-time, 2.0 = 2x) */
         _lastTime = t1;
+        core_coord_t rate = 1.0;
+        g_core_getTickRate(rate);
+        if (rate <= 0.0) rate = 1.0;
 
-        /* A stall (e.g. the browser tab left in background) must not feed a huge dt
-           into the integrator */
-        core_coord_t dt_seconds = static_cast<core_coord_t>(elapsed_seconds);
-        const core_coord_t dtMax_seconds = 3 * tickPeriodSeconds;
-        if (dt_seconds > dtMax_seconds)
+        _accrueSimTime(elapsed_seconds, rate, tickPeriodSeconds);
+        if (_runFixedSteps(tickPeriodSeconds) > 0)
         {
-            dt_seconds = dtMax_seconds;
+            cds_profile::registry().publish();
+            cds_profile::registry().pump();
         }
-
-        CDS_PROFILE(profile, "Ticking");
-        /* Actually tick the system */
-        g_core_tick(dt_seconds);
-
-        /* Single-threaded build: publish the profiler aggregates (writer side)
-           and pump them into the UI cache (reader side) right after the tick,
-           on this same thread */
-        cds_profile::registry().publish();
-        cds_profile::registry().pump();
     }
 
-    /* Drain the log queue at a fixed point outside the tick's critical work.
-       One thread here, so producer and consumer are the same: this is the
+    /* One thread here, so producer and consumer are the same: this is the log
        ring's single drain-point (no background thread as on the server) */
     cds_log::registry().drain();
 }

@@ -85,6 +85,7 @@ bool testModel(const char* name)
     if (!(dBack < 1e-9)) ok = false;
 
     // 4. Controller manifest + set-by-id (the ParamTable path used by the wire).
+    // The observer/sensor knobs live in their own manifests now, not here.
     char buf[2048] = {0};
     if (m.GetControllerManifest(buf, sizeof buf)) ok = false;
     int lines = 0; for (const char* p = buf; *p; ++p) if (*p == '\n') ++lines;

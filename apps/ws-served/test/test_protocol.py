@@ -160,6 +160,39 @@ def run_tests(s):
     assert struct.unpack("<BBB", p)[2] == 0, "append poly4 failed"
     print("append poly4 OK")
 
+    # Nothing non-finite may cross into the core: the trajectory reference is
+    # what a plant is commanded with, so a NaN accepted here would leave the
+    # machine as a setpoint. Same for the system parameters and the airframe.
+    nan, inf = float("nan"), float("inf")
+    bad_poly = struct.pack("<21f",
+                           -50, 50, 80, 0,
+                           0, 5, -50, 0,
+                           nan, 0, 0, 0,          # finalPos.x = NaN
+                           0, 0, 0, 0,
+                           0, 0, 0, 0,
+                           20)
+    p = rpc(s, header(MSG["TRAJ_APPEND_POLY4"]) + bad_poly)
+    assert struct.unpack("<BBB", p)[2] == 1, "a NaN poly4 was accepted"
+
+    bad_point = struct.pack("<5f", 1.0, 2.0, inf, 0.0, 5.0)     # finalPos.z = inf
+    p = rpc(s, header(MSG["TRAJ_APPEND_POINT"]) + bad_point)
+    assert struct.unpack("<BBB", p)[2] == 1, "an infinite trajectory point was accepted"
+
+    p = rpc(s, header(MSG["SET_SYSTEM_PARAMS"]) + struct.pack("<5f", 0.01, 1.0, nan, 0, 0))
+    assert struct.unpack("<BBB", p)[2] == 1, "NaN user forces were accepted"
+
+    p = rpc(s, header(MSG["SET_SYSTEM_PARAMS"]) + struct.pack("<5f", 0.01, 0.0, 0, 0, 0))
+    assert struct.unpack("<BBB", p)[2] == 1, "a zero simulation rate was accepted"
+
+    zero_mass = struct.pack("<6f", 0.0, 10 / 3, 10 / 3, 1.0, 1.0, 0.02)
+    p = rpc(s, header(MSG["INIT_ROCKET"]) + zero_mass + limits)
+    assert struct.unpack("<BBB", p)[2] == 1, "a zero-mass airframe was accepted"
+
+    inverted = struct.pack("<8f", 0, 500, 10, -10, 10, -10, 10, -10)   # F1_max < F1_min
+    p = rpc(s, header(MSG["INIT_ROCKET"]) + params + inverted)
+    assert struct.unpack("<BBB", p)[2] == 1, "an inverted actuator range was accepted"
+    print("non-finite / unusable parameters rejected OK (6 cases)")
+
     # trajectory point at t=10 must match the reference values
     p = rpc(s, header(MSG["TRAJ_GET_POINT"]) + struct.pack("<f", 10.0))
     v, t, x, y, z = struct.unpack("<BB3f", p)
@@ -168,7 +201,7 @@ def run_tests(s):
     print(f"trajectory point OK ({x:.2f}, {y:.2f}, {z:.2f})")
 
     # system params: 10 ms tick period, no user forces
-    p = rpc(s, header(MSG["SET_SYSTEM_PARAMS"]) + struct.pack("<4f", 0.01, 0, 0, 0))
+    p = rpc(s, header(MSG["SET_SYSTEM_PARAMS"]) + struct.pack("<5f", 0.01, 1.0, 0, 0, 0))
     assert struct.unpack("<BBB", p)[2] == 0, "set system params failed"
     print("set system params OK")
 
@@ -211,6 +244,22 @@ def run_tests(s):
     assert t_plant > 0, f"plant time not advancing: {t_plant}"
     print(f"plant snapshot OK (seq={seq_run:.0f}, plantTime={t_plant:.3f}s)")
 
+    # the tick period is locked while a plant mission is running (core-side
+    # guard, not only the frontend): a period CHANGE is rejected, a no-op is not
+    p = rpc(s, header(MSG["SET_SYSTEM_PARAMS"]) + struct.pack("<5f", 0.02, 1.0, 0, 0, 0))
+    assert struct.unpack("<BBB", p)[2] == 1, "period change while running+plant should be rejected"
+    p = rpc(s, header(MSG["SET_SYSTEM_PARAMS"]) + struct.pack("<5f", 0.01, 1.0, 0, 0, 0))
+    assert struct.unpack("<BBB", p)[2] == 0, "same-period refresh while running should be allowed"
+    print("tick period locked while plant mission running OK")
+
+    # the sim rate is locked whenever a plant is attached (core-side guard): a
+    # rate CHANGE is rejected, a no-op (same rate) is allowed.
+    p = rpc(s, header(MSG["SET_SYSTEM_PARAMS"]) + struct.pack("<5f", 0.01, 2.0, 0, 0, 0))
+    assert struct.unpack("<BBB", p)[2] == 1, "rate change with a plant attached should be rejected"
+    p = rpc(s, header(MSG["SET_SYSTEM_PARAMS"]) + struct.pack("<5f", 0.01, 1.0, 0, 0, 0))
+    assert struct.unpack("<BBB", p)[2] == 0, "same-rate refresh should be allowed"
+    print("sim rate locked while a plant is attached OK")
+
     # stop: simulated time must freeze
     p = rpc(s, header(MSG["STOP"]))
     assert struct.unpack("<BBB", p)[2] == 0, "stop failed"
@@ -219,6 +268,13 @@ def run_tests(s):
     t2 = struct.unpack("<BB17fB", rpc(s, header(MSG["GET_SNAPSHOT"])))[2]
     assert t1 == t2, f"time still advancing after stop: {t1} -> {t2}"
     print(f"stop OK (t frozen at {t2:.3f}s)")
+
+    # with the mission stopped the period is settable again (the setup path),
+    # even though the loopback plant is still attached
+    p = rpc(s, header(MSG["SET_SYSTEM_PARAMS"]) + struct.pack("<5f", 0.02, 1.0, 0, 0, 0))
+    assert struct.unpack("<BBB", p)[2] == 0, "period change while stopped should be allowed"
+    rpc(s, header(MSG["SET_SYSTEM_PARAMS"]) + struct.pack("<5f", 0.01, 1.0, 0, 0, 0))  # restore
+    print("tick period settable while stopped OK")
 
     # plant after stop: STOP ends the mission, not the link. The plant stays
     # connected (two-phase lifecycle: link lives from attach to detach), so a
@@ -245,7 +301,7 @@ def run_tests(s):
     n_logmod = struct.unpack("<f", p[1202:1206])[0]
     print(f"get log modules OK (count={n_logmod:.0f})")
 
-    p = rpc(s, header(MSG["GET_PROFILE_MODULES"]))       # same shape as log modules
+    p = rpc(s, header(MSG["GET_PROFILER_MODULES"]))       # same shape as log modules
     assert len(p) == 1206, f"profile modules size {len(p)}"
     print("get profile modules OK")
 
@@ -255,7 +311,7 @@ def run_tests(s):
     dropped = struct.unpack("<f", p[3806:3810])[0]
     print(f"get log batch OK (count={n_lines:.0f}, dropped={dropped:.0f})")
 
-    p = rpc(s, header(MSG["GET_PROFILE_TABLE"]))        # header(2) + char[3600] + count
+    p = rpc(s, header(MSG["GET_PROFILER_TABLE"]))        # header(2) + char[3600] + count
     assert len(p) == 3606, f"profile table size {len(p)}"
     print("get profile table OK")
 
@@ -266,12 +322,12 @@ def run_tests(s):
     assert struct.unpack("<BBB", p)[2] == 1, "set log level should reject out-of-range module"
     print("set log level out-of-range rejected OK")
 
-    p = rpc(s, header(MSG["SET_PROFILE_ENABLED"]) + struct.pack("<fB", 999.0, 1))
+    p = rpc(s, header(MSG["SET_PROFILER_ENABLED"]) + struct.pack("<fB", 999.0, 1))
     assert struct.unpack("<BBB", p)[2] == 1, "set profile enabled should reject out-of-range module"
     print("set profile enabled out-of-range rejected OK")
 
     # reset profiler stats: always succeeds
-    p = rpc(s, header(MSG["RESET_PROFILE"]))
+    p = rpc(s, header(MSG["RESET_PROFILER"]))
     assert struct.unpack("<BBB", p)[2] == 0, "reset profile failed"
     print("reset profile OK")
 
@@ -307,7 +363,7 @@ def run_tests(s):
     # diagonal (16 Q + 4 R = 20 rows). Read the manifest, set a weight by id, and
     # confirm the change round-trips; a bad id must be rejected.
     def manifest():
-        p = rpc(s, header(MSG["GET_CONTROLLER_MANIFEST"]))
+        p = rpc(s, header(MSG["CONTROLLER_GET_MANIFEST"]))
         assert len(p) == 2050, f"manifest size {len(p)}"
         text = p[2:2050].split(b"\x00", 1)[0].decode("ascii", "replace")
         rows = [ln.split("\t") for ln in text.splitlines() if ln]
@@ -317,12 +373,12 @@ def run_tests(s):
     assert len(rows) == 20, f"expected 20 controller params, got {len(rows)}"
     assert rows[0][1] == "Q" and rows[0][3] == "rw", f"unexpected first row {rows[0]}"
     old = float(rows[0][4])
-    p = rpc(s, header(MSG["SET_CONTROLLER_PARAM"]) + struct.pack("<2f", 0.0, 5000.0))
+    p = rpc(s, header(MSG["CONTROLLER_SET_PARAM"]) + struct.pack("<2f", 0.0, 5000.0))
     assert struct.unpack("<BBB", p)[2] == 0, "set controller param (id 0) failed"
     assert abs(float(manifest()[0][4]) - 5000.0) < 1e-3, "controller param did not update"
-    p = rpc(s, header(MSG["SET_CONTROLLER_PARAM"]) + struct.pack("<2f", 999.0, 1.0))
+    p = rpc(s, header(MSG["CONTROLLER_SET_PARAM"]) + struct.pack("<2f", 999.0, 1.0))
     assert struct.unpack("<BBB", p)[2] == 1, "out-of-range controller id should be rejected"
-    rpc(s, header(MSG["SET_CONTROLLER_PARAM"]) + struct.pack("<2f", 0.0, old))  # restore
+    rpc(s, header(MSG["CONTROLLER_SET_PARAM"]) + struct.pack("<2f", 0.0, old))  # restore
     print(f"controller params OK (20 rows, set/round-trip/reject)")
 
     # close politely
@@ -332,7 +388,10 @@ def run_tests(s):
 def main():
     server = None
     if len(sys.argv) > 1:
-        server = subprocess.Popen([os.path.abspath(sys.argv[1]), str(PORT)])
+        # launch WITH an explicit loopback plant — the plant-path assertions
+        # (snapshot, freshness, tick-period lock) need one; with no plant arg the
+        # server now runs plant-less on purpose.
+        server = subprocess.Popen([os.path.abspath(sys.argv[1]), str(PORT), "loopback"])
     try:
         s = ws_connect()
         print(f"handshake OK (protocol version 0x{VERSION:02X})")
