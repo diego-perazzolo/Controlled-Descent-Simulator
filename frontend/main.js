@@ -148,6 +148,7 @@ const ui = {
     btnCharts:  $('btnCharts'), btn3d: $('btn3d'), btnParams: $('btnParams'), btnDiag: $('btnDiag'),
     viewCharts: $('view-charts'), view3d: $('view-3d'), viewParams: $('view-params'), viewDiag: $('view-diag'),
     status:     $('statusBar'), error: $('errorMsg'), perfWarn: $('perfWarn'),
+    controlsPanel: $('controlsPanel'), btnControlsToggle: $('btnControlsToggle'),
     btnApply:   $('btnApply'),
     // trajectory save / load
     btnTrajSave:   $('btnTrajSave'),
@@ -341,6 +342,32 @@ function readTimestep() {
 // plant is attached — a plant forces real-time (the core enforces this too). The
 // timestep/granularity itself stays at the model's value (params-form p_dt);
 // only the playback speed changes here.
+// The speed slider and the user-force buttons are set-up controls: needed now
+// and then, in the way the rest of the time. They collapse like the log dock,
+// the choice is remembered, and on a phone-sized screen they start collapsed --
+// there the primary row alone already fills the width.
+const CONTROLS_COLLAPSE_KEY = 'cds.controls.collapsed';
+const NARROW_SCREEN_PX = 700;
+
+function setControlsCollapsed(collapsed) {
+    ui.controlsPanel.classList.toggle('collapsed', collapsed);
+    ui.btnControlsToggle.textContent = collapsed ? 'Controls ▾' : 'Controls ▴';
+    ui.btnControlsToggle.setAttribute('aria-expanded', String(!collapsed));
+    try { localStorage.setItem(CONTROLS_COLLAPSE_KEY, collapsed ? '1' : '0'); } catch (e) {}
+    publishChromeMetrics();   // the bar just changed height: the views resize with it
+}
+
+function initControlsPanel() {
+    let collapsed = window.innerWidth < NARROW_SCREEN_PX;      // default by screen
+    try {
+        const stored = localStorage.getItem(CONTROLS_COLLAPSE_KEY);
+        if (stored !== null) collapsed = (stored === '1');     // the user decided
+    } catch (e) {}
+    setControlsCollapsed(collapsed);
+    ui.btnControlsToggle.addEventListener('click',
+        () => setControlsCollapsed(!ui.controlsPanel.classList.contains('collapsed')));
+}
+
 function refreshRateControl() {
     // A plant paces real-time: the speed control is meaningless, so remove it
     // from the bar entirely (the core enforces the lock regardless).
@@ -2422,7 +2449,29 @@ function renderControllerPanel() {
                 row.appendChild(tag);
             }
         }
+        row.dataset.group = p.group;
+        row.dataset.label = p.label;
         box.appendChild(row);
+    }
+    applySensorDimming();
+}
+
+// "prediction only" means that axis publishes nothing, so its bias and noise
+// describe a measurement that is not being taken: grey them out (and refuse the
+// edit) rather than leave two live boxes that change nothing.
+function applySensorDimming() {
+    const rows = [...ui.ctrlParams.querySelectorAll('.ctrl-row[data-group]')];
+    const offGroups = new Set(rows
+        .filter(r => /^prediction only/.test(r.dataset.label) && r.querySelector('input')?.checked)
+        .map(r => r.dataset.group));
+
+    for (const r of rows) {
+        if (/^prediction only/.test(r.dataset.label)) continue;
+        if (!/^Sensor /.test(r.dataset.group)) continue;
+        const off = offGroups.has(r.dataset.group);
+        r.classList.toggle('dimmed', off);
+        const inp = r.querySelector('input');
+        if (inp) inp.disabled = off;
     }
 }
 
@@ -2475,6 +2524,7 @@ function onControllerToggleChange(e) {
         setError('');
     }
     syncControllerValues();
+    applySensorDimming();
 }
 
 function saveControllerParams() {
@@ -2576,6 +2626,7 @@ ui.ctrlFileInput.addEventListener('change', (e) => {
         chartsRenderer = makeChartsRenderer();
         renderers.push(chartsRenderer);
 
+        initControlsPanel();            // secondary bar: collapsed state + toggle
         trackChromeSize();              // publish --chrome-h / --dock-h for the views
         renderer3d = make3DRenderer();
         renderers.push(renderer3d);

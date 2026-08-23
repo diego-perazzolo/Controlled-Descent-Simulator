@@ -495,6 +495,25 @@ bool solve(const std::array<double, NX>& x0,
     for (std::size_t k = 0; k + 1 < N; ++k) warmStart[k] = us[k + 1];
     warmStart[N - 1] = us[N - 1];
 
+#if CDS_ILQR_DEBUG
+    {
+        // How much of the horizon sits on the actuator bounds: a plan that is
+        // saturated everywhere has no authority left to shape the trajectory.
+        int pinnedStages = 0;
+        for (std::size_t k = 0; k < N; ++k)
+        {
+            int pinned = 0;
+            for (std::size_t a = 0; a < NU; ++a)
+                if (us[k][a] <= lo[a] + 1e-9 || us[k][a] >= hi[a] - 1e-9) ++pinned;
+            if (pinned == static_cast<int>(NU)) ++pinnedStages;
+        }
+        std::printf("[ilqr] done: J=%.6g |x|max=%.4g accepted=%d/%d allSaturatedStages=%d/%zu u0=[",
+                    J, stateMax, acceptedCount, iterCount, pinnedStages, N);
+        for (std::size_t a = 0; a < NU; ++a) std::printf("%s%.3f", a ? ", " : "", u0[a]);
+        std::printf("]\n");
+    }
+#endif
+
     if (report != nullptr)
     {
         report->cost       = J;

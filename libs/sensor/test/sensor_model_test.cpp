@@ -100,6 +100,36 @@ int main()
                     int(valid[0]), int(valid[1]), int(valid[2]));
     }
 
+    // ---- 3b. ApplyHeld: a dropped channel holds, it does not leak the truth --
+    //      This is the path a controller with NO estimator behind it uses: there
+    //      is no prediction to coast on, so a missing sensor must freeze at its
+    //      last reading rather than hand back a perfect one.
+    {
+        SensorModel<3> s;
+        s.SetChannel(1, {true, 0.0, 0.0});                  // clean, publishing
+        std::array<double, 3> truth{{1.0, 2.0, 3.0}}, meas{};
+
+        s.ApplyHeld(truth, meas);                           // delivers 2.0 on ch 1
+        check(meas[1] == 2.0, "held: a publishing channel measures normally");
+
+        s.SetEnabled(1, false);                             // the sensor drops out
+        std::array<double, 3> moved{{1.0, 42.0, 3.0}};      // the truth runs away
+        s.ApplyHeld(moved, meas);
+        check(meas[1] == 2.0, "held: a dropped channel keeps its last value");
+        check(meas[0] == 1.0 && meas[2] == 3.0, "held: the other channels are unaffected");
+
+        // A channel that never published has nothing to hold: the truth is the
+        // only sane fallback, and it happens once.
+        SensorModel<3> fresh;
+        fresh.SetEnabled(2, false);
+        std::array<double, 3> m2{};
+        fresh.ApplyHeld(truth, m2);
+        check(m2[2] == 3.0, "held: a never-published channel falls back to the truth");
+
+        std::printf("sample and hold   : dropped ch keeps %.4f while truth moves to %.1f\n",
+                    meas[1], moved[1]);
+    }
+
     // ---- 4. noise statistics: sample mean -> truth+bias, std -> noiseStd -----
     {
         const double    bias  = 2.0;

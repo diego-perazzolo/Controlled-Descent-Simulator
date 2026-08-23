@@ -32,20 +32,38 @@
             font-size: 15px;
         }
 
-        /* ── Header ── */
+        /* ── Header ──
+           Two groups: identity on the left, everything you press on the right.
+           They share one line while there is room; when the right group has to
+           wrap it goes FULL WIDTH and left-aligned, so it lines up with the row
+           above instead of floating against the right edge over a gap. */
         header {
             display: flex;
             align-items: center;
-            gap: 24px;
-            margin-bottom: 12px;
+            gap: 16px 24px;
             flex-wrap: wrap;
         }
+        .bar-group { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+        .bar-actions { margin-left: auto; gap: 10px; }
+        @media (max-width: 1150px) {
+            .bar-actions { margin-left: 0; width: 100%; }
+        }
+        .run-controls { display: flex; gap: 8px; }
         header h1 { color: #fff; font-size: 1.1em; margin: 0; letter-spacing: 0.05em; }
+
+        /* One height for every control in the bar, so the row reads as a row */
+        header button, header select, #btnControlsToggle {
+            height: 34px; padding: 0 14px; line-height: 1;
+        }
+        #modelBox select { height: 34px; }
+
+        /* Disclosure for the secondary row, styled like the log dock's toggle */
+        #btnControlsToggle { color: #888; font-size: 0.9em; }
+        #btnControlsToggle:hover { color: #ccc; }
 
         #simTime { font-size: 1.8em; color: #0cf; letter-spacing: 0.05em; }
         #simTime span { font-size: 0.6em; color: #666; margin-left: 4px; }
 
-        .controls { display: flex; gap: 8px; margin-left: auto; flex-wrap: wrap; }
 
         #modelBox { display: flex; align-items: center; gap: 8px; }
         #modelBox label { color: #555; font-size: 0.85em; text-transform: uppercase; letter-spacing: 0.08em; }
@@ -90,12 +108,26 @@
         #viewToggle button:last-child  { border-radius: 0 3px 3px 0; border-right-width: 1px; }
         #viewToggle button.active { background: #111f2a; }
 
+        /* ── Secondary controls row (speed + user forces), collapsible ── */
+        #controlsPanel {
+            display: flex; align-items: center; gap: 14px 28px; flex-wrap: wrap;
+            margin-top: 10px; padding-top: 10px;
+            border-top: 1px solid #1c1c1c;
+        }
+        #controlsPanel.collapsed { display: none; }
+
+        /* Speed control: label, slider, read-out. The slider takes the room it
+           can without pushing the force bar off the row. */
+        #rateBox { display: flex; align-items: center; gap: 8px; }
+        #rateBox .lbl { color: #555; font-size: 0.85em; text-transform: uppercase; letter-spacing: 0.08em; }
+        #rateBox input[type=range] { width: 190px; max-width: 40vw; }
+        #rateBox .val { color: #0cf; font-variant-numeric: tabular-nums; min-width: 52px; }
+
         /* ── Force bar ── */
         #forceBar {
             display: flex;
             align-items: center;
             gap: 12px;
-            margin-bottom: 14px;
             flex-wrap: wrap;
         }
         #forceBar .lbl { color: #555; font-size: 0.85em; }
@@ -244,6 +276,7 @@
 
         .chart-panel { grid-column: span 2; }
         canvas { display: block; width: 100%; height: 100px; margin-top: 6px; }
+        .chart-note { color: #667; font-size: 0.85em; margin: 2px 2px 8px; line-height: 1.5; }
         /* the time-series panels carry axes and labels: they need the room */
         .chart-panel canvas { height: 140px; }
 
@@ -337,6 +370,9 @@
         .ctrl-row input { width: 120px; }
         .ctrl-row input[type="checkbox"] { width: auto; }
         .ctrl-row.ro input { color: #778; }
+        /* A knob that describes a measurement which is not being taken */
+        .ctrl-row.dimmed { opacity: 0.4; }
+        .ctrl-row.dimmed input { cursor: not-allowed; }
         .ctrl-row .ro-tag { color: #556; font-size: 0.75em; }
 
         #btnTrajAppend {
@@ -357,9 +393,8 @@
             padding: 12px 20px 8px;
             border-bottom: 1px solid #1c1c1c;
         }
-        #appBar header    { margin-bottom: 10px; }
-        #appBar #forceBar { margin-bottom: 0; }
-        #appBar #plantBar { margin-top: 10px; }
+        #appBar > * + * { margin-top: 10px; }   /* one vertical rhythm for every row */
+        #appBar #perfWarn + * { margin-top: 0; }
 
         /* Message strip: state left, failures right, one line unless it wraps */
         #msgBar {
@@ -384,24 +419,33 @@
            into rows, the widest controls go full-width, and the decorations that
            carry no information (the CDS wordmark) are the first to go. */
         @media (max-width: 1000px) {
-            header { gap: 14px; }
             #simTime { font-size: 1.4em; }
-            .controls { margin-left: 0; width: 100%; justify-content: flex-start; }
         }
+        /* Phone: every group takes a full row, controls grow to fill it, and the
+           touch targets get taller. The secondary row starts collapsed here (set
+           from main.js), so what is left is the sim time, the view and Start. */
         @media (max-width: 700px) {
             body { padding: 12px; font-size: 14px; }
             #appBar   { margin: -12px -12px 12px; padding: 10px 12px 8px; }
             #perfWarn { margin: -10px -12px 8px; }
             header h1 { display: none; }        /* the browser tab already says CDS */
-            #rateBox, #modelBox { width: 100%; }
-            #rateBox input[type=range] { flex: 1; min-width: 0; }
+            header { gap: 10px; }
+            .bar-id { width: 100%; justify-content: space-between; }
+            .bar-actions { gap: 8px; }
+            #modelBox { width: 100%; }
             #modelBox select { flex: 1; }
             #viewToggle { width: 100%; }
-            #viewToggle button { flex: 1; padding: 8px 4px; min-width: 0; }
-            button { padding: 8px 12px; }
-            #errorMsg { margin-left: 0; text-align: left; }
+            #viewToggle button { flex: 1; padding: 0 4px; min-width: 0; }
+            .run-controls { width: 100%; }
+            .run-controls button { flex: 1; padding: 0 8px; }
+            header button, header select, #btnControlsToggle { height: 40px; }
+            #btnControlsToggle { width: 100%; }
+            #rateBox { width: 100%; }
+            #rateBox input[type=range] { flex: 1; width: auto; max-width: none; }
+            #forceBar { width: 100%; gap: 8px; }
             .force-group { flex: 1; }
-            .btn-force { flex: 1; min-width: 0; padding: 6px 8px; }
+            .btn-force { flex: 1; min-width: 0; padding: 8px 6px; }
+            #errorMsg { margin-left: 0; text-align: left; }
             .traj-axis-row { grid-template-columns: 62px repeat(3, 1fr); gap: 4px; }
         }
     </style>
@@ -416,57 +460,69 @@
 <!-- Shown when the simulation cannot keep up with the requested speed -->
 <div id="perfWarn"></div>
 
+<!-- Primary row: what you touch while a run is going on -->
 <header>
-    <h1>CDS</h1>
-    <div id="simTime">0.000 <span>s</span></div>
-    <div id="rateBox" title="Simulation speed. Only in pure simulation (no plant attached); a plant forces real-time 1x.">
-        <span class="lbl">rate</span>
-        <input type="range" id="sldRate" min="0.25" max="8" step="0.05" value="1" disabled>
-        <span class="val" id="rateVal">1.0×</span>
+    <div class="bar-group bar-id">
+        <h1>CDS</h1>
+        <div id="simTime">0.000 <span>s</span></div>
     </div>
-    <div id="modelBox">
-        <label for="modelSelect">model</label>
-        <select id="modelSelect">
-            <option value="rocket">rocket</option>
-            <option value="rocket_mpc">rocket (MPC)</option>
-            <option value="quadrotor">quadrotor</option>
-            <option value="quadrotor_mpc">quadrotor (MPC)</option>
-        </select>
-    </div>
-    <div class="controls">
+    <div class="bar-group bar-actions">
+        <div id="modelBox">
+            <label for="modelSelect">model</label>
+            <select id="modelSelect">
+                <option value="rocket">rocket</option>
+                <option value="rocket_mpc">rocket (MPC)</option>
+                <option value="quadrotor">quadrotor</option>
+                <option value="quadrotor_mpc">quadrotor (MPC)</option>
+            </select>
+        </div>
         <div id="viewToggle">
             <button id="btnCharts">Charts</button>
             <button id="btn3d" class="active" disabled>3D</button>
             <button id="btnParams">Params</button>
             <button id="btnDiag">Diag</button>
         </div>
-        <button id="btnStart" disabled>Start</button>
-        <button id="btnStop"  disabled>Stop</button>
-        <button id="btnReset" disabled>Reset</button>
+        <div class="run-controls">
+            <button id="btnStart" disabled>Start</button>
+            <button id="btnStop"  disabled>Stop</button>
+            <button id="btnReset" disabled>Reset</button>
+        </div>
+        <button id="btnControlsToggle" class="disclosure"
+                title="Show or hide the simulation speed and the user-force controls">Controls ▾</button>
     </div>
 </header>
 
-<!-- ════ Force bar (always visible) ════ -->
-<div id="forceBar">
-    <span class="lbl">User force</span>
-    <div class="force-group">
-        <span>X</span>
-        <button class="btn-force" id="fXp" data-axis="fX" data-sign="1">+X</button>
-        <button class="btn-force" id="fXn" data-axis="fX" data-sign="-1">−X</button>
+<!-- Secondary row: speed and user forces. Reached rarely once a run is set up,
+     so it collapses (and starts collapsed on a phone-sized screen) the same way
+     the log dock does, with the choice remembered. -->
+<div id="controlsPanel">
+    <div id="rateBox" title="Simulation speed. Only in pure simulation (no plant attached); a plant forces real-time 1x.">
+        <span class="lbl">rate</span>
+        <input type="range" id="sldRate" min="0.25" max="8" step="0.05" value="1" disabled>
+        <span class="val" id="rateVal">1.0×</span>
     </div>
-    <div class="force-group">
-        <span>Y</span>
-        <button class="btn-force" id="fYp" data-axis="fY" data-sign="1">+Y</button>
-        <button class="btn-force" id="fYn" data-axis="fY" data-sign="-1">−Y</button>
+
+    <div id="forceBar">
+        <span class="lbl">User force</span>
+        <div class="force-group">
+            <span>X</span>
+            <button class="btn-force" id="fXp" data-axis="fX" data-sign="1">+X</button>
+            <button class="btn-force" id="fXn" data-axis="fX" data-sign="-1">−X</button>
+        </div>
+        <div class="force-group">
+            <span>Y</span>
+            <button class="btn-force" id="fYp" data-axis="fY" data-sign="1">+Y</button>
+            <button class="btn-force" id="fYn" data-axis="fY" data-sign="-1">−Y</button>
+        </div>
+        <div class="force-group">
+            <span>Z</span>
+            <button class="btn-force" id="fZp" data-axis="fZ" data-sign="1">+Z</button>
+            <button class="btn-force" id="fZn" data-axis="fZ" data-sign="-1">−Z</button>
+        </div>
+        <span class="lbl">Mag</span>
+        <input type="number" id="forceMag" value="20" min="0" step="5">
+        <span class="lbl">N</span>
     </div>
-    <div class="force-group">
-        <span>Z</span>
-        <button class="btn-force" id="fZp" data-axis="fZ" data-sign="1">+Z</button>
-        <button class="btn-force" id="fZn" data-axis="fZ" data-sign="-1">−Z</button>
-    </div>
-    <span class="lbl">Mag</span>
-    <input type="number" id="forceMag" value="20" min="0" step="5">
-    <span class="lbl">N</span>
 </div>
 
 <!-- ════ Plant bar (staging; shown when a plant is connected) ════ -->
@@ -531,6 +587,8 @@
             <div class="field"><span class="lbl">fps</span> <span class="val" id="fps">—</span></div>
         </div>
     </div>
+    <p class="chart-note">Solid line: the measured value. Dashed grey: the commanded
+       reference over the same window — the gap between the two is the tracking error.</p>
     <div class="grid">
         <div class="panel chart-panel"><h2>x (m)</h2>        <canvas id="chartX"></canvas></div>
         <div class="panel chart-panel"><h2>y (m)</h2>        <canvas id="chartY"></canvas></div>

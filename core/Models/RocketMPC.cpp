@@ -507,6 +507,12 @@ void RocketMPC::UpdateObserver(core_coord_t dt)
 {
     auto dynamics = (Dynamics::ROCKET_MPC_01*) m_modelPtr;
 
+    /* One scope over the whole per-tick observer work -- sensor read, known
+       input, prediction and correction -- which is what "how much does the
+       estimator cost" means. Scoping only the seed would time a one-shot copy
+       that happens once per run. */
+    CDS_PROFILE(profile, "Execute observer");
+
     if (!m_obs.Seeded())
         m_obs.Seed({{ m_state[IDX_X],  m_state[IDX_Y],  m_state[IDX_Z]  }},
                    {{ m_state[IDX_VX], m_state[IDX_VY], m_state[IDX_VZ] }});

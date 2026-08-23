@@ -105,6 +105,15 @@ class SensorModel
                std::array<double, NCH>&       meas,
                std::array<bool,   NCH>&       valid);
 
+    // Same corruption, for a consumer that has NO estimator behind it and so
+    // cannot coast on a prediction: a channel that is not publishing keeps the
+    // last value it delivered (sample and hold), instead of the truth -- which
+    // would turn a missing sensor into a perfect one. A channel that has never
+    // published falls back to the truth: there is nothing held yet, and the
+    // alternative (a zero, or a NaN) would be worse than a one-off exact sample.
+    void ApplyHeld(const std::array<double, NCH>& truth,
+                   std::array<double, NCH>&       meas);
+
     private:
 
     // splitmix64: a single 64-bit state, good statistical quality, trivially
@@ -115,6 +124,8 @@ class SensorModel
     double        NextGaussian(void);  // zero-mean, unit-variance (Box-Muller)
 
     std::array<Channel, NCH> m_ch;
+    std::array<double,  NCH> m_held;     // last delivered value, per channel
+    std::array<bool,    NCH> m_hasHeld;  // whether that channel ever delivered
     std::uint64_t            m_rng;      // splitmix64 state
     double                   m_spare;    // cached second Box-Muller deviate
     bool                     m_hasSpare; // whether m_spare is live
@@ -124,7 +135,7 @@ class SensorModel
 
 template <std::size_t NCH>
 SensorModel<NCH>::SensorModel(std::uint64_t seed)
-    : m_ch{}, m_rng(seed), m_spare(0.0), m_hasSpare(false)
+    : m_ch{}, m_held{}, m_hasHeld{}, m_rng(seed), m_spare(0.0), m_hasSpare(false)
 {
     for (std::size_t i = 0; i < NCH; ++i)
         m_ch[i] = Channel{true, 0.0, 0.0};   // identity: passthrough
@@ -217,7 +228,7 @@ void SensorModel<NCH>::Apply(const std::array<double, NCH>& truth,
     {
         if (!m_ch[i].enabled)
         {
-            meas[i]  = truth[i];   // passthrough; caller must gate on valid[i]
+            meas[i]  = truth[i];   // filler only; caller MUST gate on valid[i]
             valid[i] = false;
             continue;
         }
@@ -225,7 +236,19 @@ void SensorModel<NCH>::Apply(const std::array<double, NCH>& truth,
         if (m_ch[i].noiseStd > 0.0) y += m_ch[i].noiseStd * NextGaussian();
         meas[i]  = y;
         valid[i] = true;
+        m_held[i]    = y;          // what a hold would keep if this channel drops
+        m_hasHeld[i] = true;
     }
+}
+
+template <std::size_t NCH>
+void SensorModel<NCH>::ApplyHeld(const std::array<double, NCH>& truth,
+                                 std::array<double, NCH>&       meas)
+{
+    std::array<bool, NCH> valid{};
+    Apply(truth, meas, valid);
+    for (std::size_t i = 0; i < NCH; ++i)
+        if (!valid[i] && m_hasHeld[i]) meas[i] = m_held[i];
 }
 
 }}  // namespace CDS::sensor

@@ -43,24 +43,23 @@
 
 namespace CDS { namespace sensor {
 
-// Corrupt a measurement triple through the sensor bank and return it. Disabled
-// channels pass the true value through unchanged (without an estimator there is
-// nothing to coast on, so a dropped channel simply injects nothing). Used by the
-// no-observer path to feed the controller the raw (unfiltered) measurement, so
-// sensor noise/bias bite even when the estimator is off.
+// Corrupt a measurement triple through the sensor bank and return it, for the
+// no-observer path: the controller then reads the raw measurement, so noise and
+// bias bite even with the estimator off. A channel that is not publishing is
+// sample-and-held at its last delivered value -- there is no prediction to coast
+// on here, and handing back the truth would make a missing sensor look perfect.
 template <std::size_t NP>
 inline std::array<double, NP> measuredThrough(SensorModel<NP>& s,
                                               const std::array<double, NP>& truth)
 {
     std::array<double, NP> y{};
-    std::array<bool, NP>   valid{};
-    s.Apply(truth, y, valid);
+    s.ApplyHeld(truth, y);   // no estimator here: a dropped channel holds, not leaks
     return y;
 }
 
-// Append the per-channel sensor knobs to `table`: for each channel, enable
-// (0|1), bias and noise std, under the group name `groups[i]` (the caller owns
-// those NCH strings; noise std rejects negatives, bias is unrestricted). The
+// Append the per-channel sensor knobs to `table`: for each channel, prediction
+// only (0|1), bias and noise std, under the group name `groups[i]` (the caller
+// owns those NCH strings; noise std rejects negatives, bias is unrestricted). The
 // getters/setters bind to `sensor` by reference (same lifetime).
 template <std::size_t NCH, std::size_t CAP>
 inline void appendSensorParams(param::ParamTable<CAP>& table,
@@ -69,9 +68,13 @@ inline void appendSensorParams(param::ParamTable<CAP>& table,
 {
     for (std::size_t a = 0; a < NCH; ++a)
     {
-        table.add(groups[a], "enable (0|1)", true,
-            [&sensor, a] { return sensor.GetChannel(a).enabled ? 1.0 : 0.0; },
-            [&sensor, a](double v) { sensor.SetEnabled(a, v >= 0.5); return false; });
+        /* Named for what switching it ON does, not for an internal flag: with no
+           measurement on this axis the estimator has nothing to correct with and
+           runs on its prediction alone. Stored inverted w.r.t. the channel's
+           `enabled`, so the row reads 1 = "this axis is not being measured". */
+        table.add(groups[a], "prediction only (0|1)", true,
+            [&sensor, a] { return sensor.GetChannel(a).enabled ? 0.0 : 1.0; },
+            [&sensor, a](double v) { sensor.SetEnabled(a, v < 0.5); return false; });
         table.add(groups[a], "bias", true,
             [&sensor, a] { return sensor.GetChannel(a).bias; },
             [&sensor, a](double v) { sensor.SetBias(a, v); return false; });

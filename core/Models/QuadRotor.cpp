@@ -388,6 +388,12 @@ bool QuadRotor::PerformIntegration(const core_stepParams_t& params)
     // bank; a dropped axis is handled as predict-only inside the helper.
     if (m_obsEnabled)
     {
+        /* One scope over the whole per-tick observer work -- sensor read, known
+           input, prediction and correction -- which is what "how much does the
+           estimator cost" means. Scoping only the seed would time a one-shot
+           copy that happens once per run. */
+        CDS_PROFILE(profile, "Execute observer");
+
         if (!m_obs.Seeded())
             m_obs.Seed({{ m_state[IDX_X],  m_state[IDX_Y],  m_state[IDX_Z]  }},
                        {{ m_state[IDX_VX], m_state[IDX_VY], m_state[IDX_VZ] }});

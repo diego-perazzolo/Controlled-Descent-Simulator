@@ -74,13 +74,21 @@ observer's distinctive value-add.
 A per-axis measurement corruptor (`libs/sensor/sensor_model.hpp`) emulating a
 sensor suite. Each of the 3 position axes carries:
 
-- **enable** — a disabled axis withholds its measurement (see below);
+- **prediction only** — when set, that axis publishes nothing: the measurement is
+  marked invalid and the observer runs on its prediction alone (the sensor
+  drop-out path). Named for the consequence rather than for the flag, because
+  that is what the user is choosing;
 - **bias** — a constant additive offset;
 - **noise std** — the standard deviation of additive zero-mean Gaussian noise.
 
 The noise is **deterministic** (a seeded splitmix64 PRNG with Box-Muller), so runs
-are reproducible across platforms. A fresh sensor is the identity (enabled, zero
-bias, zero noise) — the feature is opt-in.
+are reproducible across platforms. A fresh sensor is the identity (measuring, zero
+bias, zero noise) — the feature is opt-in, and a default run behaves exactly as if
+the sensor model were not there.
+
+With no estimator behind it (`measuredThrough`, the observer-off path) a dropped
+axis is **sample-and-held** at its last delivered value: there is no prediction to
+coast on, and returning the truth would turn a missing sensor into a perfect one.
 
 ### Sensors bite with or without the observer
 
@@ -137,12 +145,14 @@ than the QuadRotor because its heavy mass makes the disturbance weakly observed.
 
 Each module exposes its knobs through its own **per-domain parameter manifest** —
 the observer's covariances + enable via the `observer` domain (groups `Observer`),
-the sensor's per-axis bias / noise / enable via the `sensor` domain (groups
-`Sensor x/y/z`) — read with `<domain>GetManifest` and set with `<domain>SetParam`
-(see [api.md](api.md)). The frontend concatenates the four domain manifests (model
-/ controller / observer / sensor) into the **Params** view, rendering the observer
-and sensor rows under an *Estimator & sensors* section: the enable flags as
-checkboxes, the rest as numeric fields.
+the sensor's per-axis bias / noise / prediction-only via the `sensor` domain
+(groups `Sensor x/y/z`) — read with `<domain>GetManifest` and set with
+`<domain>SetParam` (see [api.md](api.md)). The frontend concatenates the four
+domain manifests (model / controller / observer / sensor) into the **Params**
+view, rendering the observer and sensor rows under an *Estimator & sensors*
+section: the flags as checkboxes, the rest as numeric fields. An axis switched to
+prediction only greys out its own bias and noise rows — they describe a
+measurement that is not being taken.
 
 ---
 
