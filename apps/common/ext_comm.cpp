@@ -120,9 +120,24 @@ static core_trajectoryPointParams_t _convertExtToCore_trajectoryPointParams(ext_
     return coreParam;
 }
 
-static ext_trajectoryPoint _convertExtToCore_trajectoryPoint(Vec3& point)
+static ext_vec3_t _convertCoreToExt_vec3(const Vec3& v)
 {
-    ext_trajectoryPoint extParam = {.x = (ext_coord_t) point[0], .y = (ext_coord_t) point[1], .z = (ext_coord_t) point[2]};
+    ext_vec3_t extParam = {.x = (ext_coord_t) v[0], .y = (ext_coord_t) v[1], .z = (ext_coord_t) v[2]};
+
+    return extParam;
+}
+
+static ext_trajectoryReference _convertCoreToExt_trajectoryReference(const Reference_t& ref)
+{
+    ext_trajectoryReference extParam = {
+        .pos     = _convertCoreToExt_vec3(ref.pos),
+        .yaw     = (ext_coord_t) ref.yaw,
+        .vel     = _convertCoreToExt_vec3(ref.vel),
+        .yawRate = (ext_coord_t) ref.yawRate,
+        .acc     = _convertCoreToExt_vec3(ref.acc),
+        .yawAcc  = (ext_coord_t) ref.yawAcc,
+        .isError = false,
+    };
 
     return extParam;
 }
@@ -344,16 +359,17 @@ bool ext_trajectory_remove_last_item(void)
     return ret;
 }
 
-ext_trajectoryPoint ext_trajectory_get_point(ext_coord_t t)
+ext_trajectoryReference ext_trajectory_get_reference(ext_coord_t t)
 {
-    Vec3 p = {};
-    if(core_trajectoryGetPoint(t, p))
+    Reference_t ref = {};
+    if(core_trajectoryGetReference(t, ref))
     {
-        // Err
-        return {};
+        // Err: no reference at t. Say so explicitly -- a zeroed reference is a
+        // valid command to sit at the origin, and the caller must not read one.
+        return {.isError = true};
     }
 
-    return _convertExtToCore_trajectoryPoint(p);
+    return _convertCoreToExt_trajectoryReference(ref);
 }
 
 bool ext_setSystemParams(ext_systemParams params)

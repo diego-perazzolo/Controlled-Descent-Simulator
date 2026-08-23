@@ -48,6 +48,11 @@ It is a learning and portfolio project, it is a work in progress.
 - **Built-in diagnostics** — a deferred-format logger, a wait-free profiler and
   a black-box data recorder, all off by default and compile-out-able, with
   their cost tracked by a CI benchmark.
+- **A frontend that follows the flight** — every state charted against its
+  commanded setpoint (position, velocity, attitude and body rates, in groups you
+  turn on and off), and a 3D view that scales itself to the trajectory, from a
+  quadrotor hovering in a room to a full-scale reentry, with an optional chase
+  camera locked on the vehicle.
 
 ---
 

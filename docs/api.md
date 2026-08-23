@@ -59,8 +59,9 @@ bool ext_beginStaging(ext_coord_t safetyAltitude);
 /* Abort auto-staging (hold in place), returns true on error */
 bool ext_stopStaging(void);
 
-/* Get a point at time instant t along the trajectory */
-ext_trajectoryPoint ext_trajectory_get_point(ext_coord_t t);
+/* Get the commanded reference (position, velocity, acceleration and heading with
+   its rates) at time instant t along the trajectory */
+ext_trajectoryReference ext_trajectory_get_reference(ext_coord_t t);
 
 /* Add a trajectory Polynomial 4th order, returns true on error */
 bool ext_trajectory_append_poly4(ext_trajectoryPoly4Params_t params);
@@ -164,6 +165,7 @@ ext_quadRotorParams            { mass_Kg, inertiaX/Y/Z_Kgm2, c, cz, motorThrustC
 ext_quadRotorActuatorLimits    { motor_max_thrust, motor_min_thrust }
 ext_trajectoryPoly4Params_t    { initialPos/Vel + initialYaw/YawRate, finalPos/Vel/Acc + finalYaw/YawRate/YawAcc, time_s }
 ext_trajectoryPointParams_t    { finalPos, finalYaw, time_s }
+ext_trajectoryReference        { pos, yaw, vel, yawRate, acc, yawAcc, isError (bool) }
 ext_userForce                  { fX, fY, fZ }
 ext_fullState                  { x, y, z, x_dot, y_dot, z_dot,
                                 roll, pitch, yaw, roll_dot, pitch_dot, yaw_dot }

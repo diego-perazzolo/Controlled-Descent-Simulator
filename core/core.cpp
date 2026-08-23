@@ -307,7 +307,7 @@ bool core_trajectoryRemoveLastItem(void)
                                   { return tM.RemoveLastItem();});
 }
 
-bool core_trajectoryGetPoint(core_coord_t time, Vec3 &point)
+bool core_trajectoryGetReference(core_coord_t time, Reference_t &ref)
 {
     if (!_isFinite(time))
     {
@@ -315,17 +315,12 @@ bool core_trajectoryGetPoint(core_coord_t time, Vec3 &point)
         return true;
     }
 
-    Reference_t ref;
     if (_ctx.SM.ExecuteOnTrajectoryManager([time, &ref](const TrajectoryManager &tM)
                                   { return tM.GetReference(time, ref);}))
     {
         CDS_LOG_ERROR(logger, "Cannot obtain trajectory reference");
         return true;
     }
-
-    point[0] = ref.pos[0];
-    point[1] = ref.pos[1];
-    point[2] = ref.pos[2];
 
     return false;
 }

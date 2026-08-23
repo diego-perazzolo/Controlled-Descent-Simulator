@@ -109,21 +109,30 @@ bool ext_initQuadRotor_FFLQR01(ext_initQuadRotorParams params)
     return resp.isError != 0;
 }
 
-ext_trajectoryPoint ext_trajectory_get_point(ext_coord_t t)
+ext_trajectoryReference ext_trajectory_get_reference(ext_coord_t t)
 {
-    reqTrajGetPoint_t req = {};
-    respTrajGetPoint_t resp = {};
+    ext_trajectoryReference ret = {};
+    reqTrajGetRef_t req = {};
+    respTrajGetRef_t resp = {};
 
-    req.h.type = WS_MSG_TRAJ_GET_POINT;
+    req.h.type = WS_MSG_TRAJ_GET_REF;
     req.t = t;
 
     if(_rpc(req, resp))
     {
-        // Err
-        return {};
+        ret.isError = true;
+        return ret;
     }
 
-    return resp.p;
+    ret.pos = resp.pos;
+    ret.yaw = resp.yaw;
+    ret.vel = resp.vel;
+    ret.yawRate = resp.yawRate;
+    ret.acc = resp.acc;
+    ret.yawAcc = resp.yawAcc;
+    ret.isError = resp.isError != 0;
+
+    return ret;
 }
 
 bool ext_trajectory_append_poly4(ext_trajectoryPoly4Params_t params)

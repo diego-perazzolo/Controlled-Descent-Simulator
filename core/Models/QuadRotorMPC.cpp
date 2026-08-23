@@ -117,7 +117,17 @@ struct StageRef { std::array<double,3> p; std::array<double,4> q; std::array<dou
 // vehicle: positions stay within a room, the quaternion within a unit, speeds
 // and body rates in the tens. Runaway predictions stay finite (so they pass the
 // solver's own checks) and are worth a word in the log -- see SolveMpc().
+//
+// This is the FLOOR of the test only: the box grows with the reference the
+// horizon is tracking, since "large" means nothing except relative to where the
+// trajectory is asking the vehicle to be. A fixed box would fire on every solve
+// of any trajectory that simply flies further than the box. See runawayLimit().
 constexpr double STATE_SANITY_LIMIT = 200.0;
+
+// How far past the reference a rollout may reach before it stops being a
+// prediction of this flight. Generous on purpose: the test is there to catch a
+// prediction that has left the trajectory behind entirely, not to grade tracking.
+constexpr double RUNAWAY_REF_MARGIN = 5.0;
 
 // ---- quaternion helpers ----
 inline void quatMul(const double a[4], const double b[4], double o[4])
@@ -218,6 +228,25 @@ bool sampleHorizon(TrajectoryManager& tm, double t0, double dtMpc, std::size_t h
         refs[k].w = {{0.0, 0.0, 0.0}};
     }
     return false;
+}
+
+// The runaway box for this solve: the sanity floor, or a multiple of the largest
+// position / velocity the horizon's reference asks for, whichever is larger.
+// Only pos and vel enter the scale -- the quaternion is a unit and the rate
+// reference is 0, so neither carries any magnitude information.
+double runawayLimit(const std::array<StageRef, QuadRotorMPC::MAX_HORIZON + 1>& refs,
+                    std::size_t horizon)
+{
+    double scale = 0.0;
+    for (std::size_t k = 0; k <= horizon; ++k)
+    {
+        for (std::size_t i = 0; i < 3; ++i)
+        {
+            scale = std::max(scale, std::abs(refs[k].p[i]));
+            scale = std::max(scale, std::abs(refs[k].v[i]));
+        }
+    }
+    return std::max(STATE_SANITY_LIMIT, RUNAWAY_REF_MARGIN * scale);
 }
 
 void initState(const Reference_t& ref, V13& s)
@@ -475,7 +504,7 @@ void QuadRotorMPC::SolveMpc(void)
        while every number stays finite, and the command then optimises a
        trajectory the vehicle will never fly. Report it -- the command is applied
        anyway, since refusing every solve would freeze the controller. */
-    if (report.stateMax > STATE_SANITY_LIMIT && (m_time - m_lastSolveWarnTime >= 1.0))
+    if (report.stateMax > runawayLimit(refs, m_horizon) && (m_time - m_lastSolveWarnTime >= 1.0))
     {
         m_lastSolveWarnTime = m_time;
         CDS_LOG_WARN(logger, "MPC prediction is running away (horizon {}) at t = {} s: |state|max = {}, cost = {}. "

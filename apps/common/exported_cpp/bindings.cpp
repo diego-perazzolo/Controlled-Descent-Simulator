@@ -104,10 +104,14 @@ EMSCRIPTEN_BINDINGS(simulator) {
         .field("finalYaw", &ext_trajectoryPointParams_t::finalYaw)
         .field("time_s",   &ext_trajectoryPointParams_t::time_s);
 
-    value_object<ext_trajectoryPoint>("ext_trajectoryPoint")
-        .field("x", &ext_trajectoryPoint::x)
-        .field("y", &ext_trajectoryPoint::y)
-        .field("z", &ext_trajectoryPoint::z);
+    value_object<ext_trajectoryReference>("ext_trajectoryReference")
+        .field("pos",     &ext_trajectoryReference::pos)
+        .field("yaw",     &ext_trajectoryReference::yaw)
+        .field("vel",     &ext_trajectoryReference::vel)
+        .field("yawRate", &ext_trajectoryReference::yawRate)
+        .field("acc",     &ext_trajectoryReference::acc)
+        .field("yawAcc",  &ext_trajectoryReference::yawAcc)
+        .field("isError", &ext_trajectoryReference::isError);
 
     value_object<ext_userForce>("ext_userForce")
         .field("fX", &ext_userForce::fX)
@@ -205,7 +209,7 @@ EMSCRIPTEN_BINDINGS(simulator) {
     // --- Functions exposed to JS ---
     function("ext_rocketInit", &ext_initRocket_FFLQR01);
     function("ext_quadRotorInit", &ext_initQuadRotor_FFLQR01);
-    function("ext_trajectory_get_point", &ext_trajectory_get_point);
+    function("ext_trajectory_get_reference", &ext_trajectory_get_reference);
     function("ext_trajectory_append_poly4", &ext_trajectory_append_poly4);
     function("ext_trajectory_append_point", &ext_trajectory_append_point);
     function("ext_trajectory_remove_last_item", &ext_trajectory_remove_last_item);

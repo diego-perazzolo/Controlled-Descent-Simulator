@@ -193,12 +193,28 @@ def run_tests(s):
     assert struct.unpack("<BBB", p)[2] == 1, "an inverted actuator range was accepted"
     print("non-finite / unusable parameters rejected OK (6 cases)")
 
-    # trajectory point at t=10 must match the reference values
-    p = rpc(s, header(MSG["TRAJ_GET_POINT"]) + struct.pack("<f", 10.0))
-    v, t, x, y, z = struct.unpack("<BB3f", p)
+    # trajectory reference at t=10 must match the reference values: position and
+    # velocity are checked against the Poly4 appended above, and the error flag
+    # must be clear (t is inside the trajectory)
+    p = rpc(s, header(MSG["TRAJ_GET_REF"]) + struct.pack("<f", 10.0))
+    v, t, x, y, z, yaw, vx, vy, vz, yawRate, ax, ay, az, yawAcc, isErr = \
+        struct.unpack("<BB12fB", p)
+    assert isErr == 0, "trajectory reference reported an error inside the trajectory"
     assert (round(x, 2), round(y, 2), round(z, 2)) == (-15.62, 21.88, -37.50), \
-        f"trajectory point drifted: ({x:.2f}, {y:.2f}, {z:.2f})"
-    print(f"trajectory point OK ({x:.2f}, {y:.2f}, {z:.2f})")
+        f"trajectory position drifted: ({x:.2f}, {y:.2f}, {z:.2f})"
+    assert (round(vx, 2), round(vy, 2), round(vz, 2)) == (3.75, -5.00, 6.50), \
+        f"trajectory velocity drifted: ({vx:.2f}, {vy:.2f}, {vz:.2f})"
+    print(f"trajectory reference OK (pos {x:.2f}, {y:.2f}, {z:.2f} | "
+          f"vel {vx:.2f}, {vy:.2f}, {vz:.2f})")
+
+    # past the end of the trajectory the manager holds the final position with
+    # every derivative zeroed -- a stationary reference, not an error
+    p = rpc(s, header(MSG["TRAJ_GET_REF"]) + struct.pack("<f", 1.0e6))
+    vals = struct.unpack("<BB12fB", p)
+    assert vals[-1] == 0, "holding the end of the trajectory reported an error"
+    assert all(abs(v) < 1e-6 for v in vals[2:14]), \
+        f"end-of-trajectory hold is not the (zeroed) final state: {vals[2:14]}"
+    print("trajectory reference past the end holds the final state OK")
 
     # system params: 10 ms tick period, no user forces
     p = rpc(s, header(MSG["SET_SYSTEM_PARAMS"]) + struct.pack("<5f", 0.01, 1.0, 0, 0, 0))

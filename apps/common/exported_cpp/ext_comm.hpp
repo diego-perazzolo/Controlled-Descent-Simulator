@@ -191,8 +191,9 @@ bool ext_initRocket_FFLQR01(ext_initRocketParams params);
 /* Initialize QuadRotor model: FF_LQR_01, returns true on error */
 bool ext_initQuadRotor_FFLQR01(ext_initQuadRotorParams params);
 
-/* Get a point at time instant t along the trajectory */
-ext_trajectoryPoint ext_trajectory_get_point(ext_coord_t t);
+/* Get the commanded reference (position, velocity, acceleration and
+   heading with its rates) at time instant t along the trajectory */
+ext_trajectoryReference ext_trajectory_get_reference(ext_coord_t t);
 
 /* Add a trajectory Polynomial 4th order, returns true on error */
 bool ext_trajectory_append_poly4(ext_trajectoryPoly4Params_t params);

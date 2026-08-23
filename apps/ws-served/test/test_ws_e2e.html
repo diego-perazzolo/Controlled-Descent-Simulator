@@ -36,7 +36,7 @@ try {
         time_s: 20,
     });
 
-    const p = sim.ext_trajectory_get_point(10.0);
+    const p = sim.ext_trajectory_get_reference(10.0);
 
     /* configure the tick thread, then run / snapshot / stop */
     const parErr = sim.ext_setSystemParams({
@@ -62,7 +62,7 @@ try {
     out.textContent = (ok ? 'TESTRESULT' : 'TESTFAIL') +
         ' initErr=' + initErr + ' polyErr=' + polyErr + ' parErr=' + parErr +
         ' runErr=' + runErr + ' stopErr=' + stopErr +
-        ' point=(' + p.x.toFixed(2) + ',' + p.y.toFixed(2) + ',' + p.z.toFixed(2) + ')' +
+        ' point=(' + p.pos.x.toFixed(2) + ',' + p.pos.y.toFixed(2) + ',' + p.pos.z.toFixed(2) + ')' +
         ' t0=' + snap0.time_seconds.toFixed(3) +
         ' tRun=' + snap1.time_seconds.toFixed(3) +
         ' tFrozen=' + snapB.time_seconds.toFixed(3) +

@@ -118,8 +118,17 @@ struct StageRef { std::array<double,3> p; std::array<double,3> ang; std::array<d
 
 // As for the quadrotor, but the rocket flies descent trajectories hundreds of
 // metres tall, so the box that still counts as "a prediction of this vehicle" is
-// correspondingly larger. See SolveMpc().
+// correspondingly larger. This is only the FLOOR of the runaway test: the box
+// grows with the reference the horizon is tracking, because "large" only means
+// anything relative to where the trajectory is asking the vehicle to be -- a
+// full-scale descent legitimately sits at 10^5 m and 10^3 m/s, and a fixed box
+// would flag every single solve. See runawayLimit() and SolveMpc().
 constexpr double STATE_SANITY_LIMIT = 2000.0;
+
+// How far past the reference a rollout may reach before it stops being a
+// prediction of this flight. Generous on purpose: the test is there to catch a
+// prediction that has left the trajectory behind entirely, not to grade tracking.
+constexpr double RUNAWAY_REF_MARGIN = 5.0;
 
 inline double wrapPi(double a) { return std::atan2(std::sin(a), std::cos(a)); }
 
@@ -199,6 +208,25 @@ bool sampleHorizon(TrajectoryManager& tm, double t0, double dtMpc, std::size_t h
         refs[k].w   = {{0.0, 0.0, 0.0}};
     }
     return false;
+}
+
+// The runaway box for this solve: the sanity floor, or a multiple of the largest
+// position / velocity the horizon's reference asks for, whichever is larger.
+// Only pos and vel enter the scale -- the attitude and rate references are 0 (or
+// a bounded angle), so they carry no magnitude information.
+double runawayLimit(const std::array<StageRef, RocketMPC::MAX_HORIZON + 1>& refs,
+                    std::size_t horizon)
+{
+    double scale = 0.0;
+    for (std::size_t k = 0; k <= horizon; ++k)
+    {
+        for (std::size_t i = 0; i < 3; ++i)
+        {
+            scale = std::max(scale, std::abs(refs[k].p[i]));
+            scale = std::max(scale, std::abs(refs[k].v[i]));
+        }
+    }
+    return std::max(STATE_SANITY_LIMIT, RUNAWAY_REF_MARGIN * scale);
 }
 
 void initState(const Reference_t& ref, V12& s)
@@ -460,7 +488,7 @@ void RocketMPC::SolveMpc(void)
        while every number stays finite, and the command then optimises a
        trajectory the vehicle will never fly. Report it -- the command is applied
        anyway, since refusing every solve would freeze the controller. */
-    if (report.stateMax > STATE_SANITY_LIMIT && (m_time - m_lastSolveWarnTime >= 1.0))
+    if (report.stateMax > runawayLimit(refs, m_horizon) && (m_time - m_lastSolveWarnTime >= 1.0))
     {
         m_lastSolveWarnTime = m_time;
         CDS_LOG_WARN(logger, "MPC prediction is running away (horizon {}) at t = {} s: |state|max = {}, cost = {}. "

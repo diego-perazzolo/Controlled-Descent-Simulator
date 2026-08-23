@@ -61,8 +61,9 @@ bool core_trajectoryAppendPoint(const core_trajectoryPointParams_t tPar);
 // Remove last trajectory item, returns true on error
 bool core_trajectoryRemoveLastItem(void);
 
-// Get Trajectory point at a certain time instant, returns true on error
-bool core_trajectoryGetPoint(core_coord_t time, Vec3& point);
+// Get the commanded trajectory reference (position, heading, and their
+// derivatives) at a certain time instant, returns true on error
+bool core_trajectoryGetReference(core_coord_t time, Reference_t& ref);
 
 // Set systems parameters (timestep, user forces). Returns true on error 
 bool core_systemSetParams(const core_systemParams_t& par);

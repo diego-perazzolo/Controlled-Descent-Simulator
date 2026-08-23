@@ -165,6 +165,12 @@ const ui = {
     chkViewModel: $('chkViewModel'),
     chkViewPlant: $('chkViewPlant'),
     lblViewPlant: $('lblViewPlant'),
+    // 3D view camera panel
+    cameraToggle: $('cameraToggle'),
+    cameraBody:   $('cameraBody'),
+    chkCamFollow: $('chkCamFollow'),
+    btnCamReset:  $('btnCamReset'),
+    btnCamFit:    $('btnCamFit'),
     // plant / staging controls
     plantBar:     $('plantBar'),
     plantStatus:  $('plantStatus'),
@@ -423,13 +429,26 @@ function initBackend(params) {
 function make3DRenderer() {
     const TRAIL_MAX = 6000;
     const TRAJECTORY_MAX = 6000;
-    const trail      = [];
-    const plantTrail = [];
-    const trajectory = [];
+    // Point buffers of the three polylines (model trail, plant trail, reference
+    // preview). Built by init(), so they stay null until the scene exists.
+    let trailBuf = null, plantTrailBuf = null, trajectoryBuf = null;
+
+    // Camera panel state: chase camera on/off.
+    const cameraCfg = { follow: false };
+
+    // Characteristic size of what is on screen, in scene units, and the bounding
+    // box of the reference trajectory it is derived from. Everything that has a
+    // length in the scene (near/far planes, fog, grid, zoom limits, the default
+    // camera distance) is expressed in worldSpan rather than hardcoded: the same
+    // view has to work for a 0.75 m quadrotor hovering in a room and for a rocket
+    // flying a 125 km reentry.
+    let worldSpan = 0;
+    const trajBox = new THREE.Box3();
 
     let scene, camera, renderer, controls;
     let rocketGroup, trailLine, trajectoryLine;   // rocketGroup = active vehicle mesh
     let plantGroup, plantTrailLine;               // plant ghost mesh + its trail
+    let gridHelper;                               // ground grid, resized with the world
     let initialized = false;
     let animating   = false;
     let visible     = false;
@@ -567,19 +586,115 @@ function make3DRenderer() {
         return group;
     }
 
-    // Camera preset per model: the quadrotor is real-size (~0.75 m tip-to-tip),
-    // so it needs a much closer start and a smaller zoom-in limit than the rocket.
-    function applyCameraForModel() {
-        if (!camera || !controls) return;
-        if (isQuadFamily(currentModel)) {
-            camera.position.set(2.5, 1.5, 2.5);
-            controls.minDistance = 0.5;
-        } else {
-            camera.position.set(40, 25, 40);
-            controls.minDistance = 5;
+    // Tip-to-tip size of the vehicle mesh, in scene units (= metres). The two
+    // airframes differ by more than an order of magnitude, and every near-field
+    // distance (near plane, zoom-in limit) has to follow the one on screen.
+    const QUAD_SPAN   = 0.75;   // ~520-class frame, prop tip to prop tip: 2*(0.26 + 0.115)
+    const ROCKET_SPAN = 8.0;    // base to nose tip, as built by buildRocket(): 6 body + 2 cone
+    function vehicleSpan() { return isQuadFamily(currentModel) ? QUAD_SPAN : ROCKET_SPAN; }
+
+    // Recompute worldSpan from the vehicle and the reference trajectory, then
+    // re-derive everything sized in scene units. Called on model switch and
+    // whenever the trajectory preview is (re)generated.
+    function applyWorldScale() {
+        if (!camera || !controls || !scene) return;
+
+        const veh = vehicleSpan();
+        // A trajectory-less scene still needs room to fly in: a few vehicle
+        // lengths. With a trajectory, the diagonal of its bounding box wins.
+        let span = veh * 20;
+        if (!trajBox.isEmpty()) {
+            const size = trajBox.getSize(new THREE.Vector3());
+            span = Math.max(span, size.length());
         }
+        worldSpan = span;
+
+        // Depth range. The near plane follows the VEHICLE (you must be able to fly
+        // the camera up to it), the far plane the WORLD, so on a full-scale
+        // trajectory the ratio reaches ~1e6 -- far past what a fixed-point depth
+        // buffer resolves, which is what the logarithmic buffer is for (set once,
+        // at renderer construction).
+        //
+        // The floor keeps that ratio bounded even in the worst pairing, a 0.75 m
+        // quadrotor on a 160 km trajectory, which would otherwise ask for 1e7 and
+        // upset the driver rather than merely losing precision. At 1e-6 of the
+        // world the near plane still sits well inside any vehicle.
+        camera.near = Math.max(veh * 0.02, worldSpan * 1.0e-6);
+        camera.far  = worldSpan * 6;
+        camera.updateProjectionMatrix();
+
+        // Fog as a depth cue, not as a wall: it must start beyond the vehicle and
+        // clear the far side of the trajectory.
+        scene.fog.near = worldSpan * 0.6;
+        scene.fog.far  = worldSpan * 3.0;
+
+        // Ground grid, rebuilt because GridHelper bakes its size into geometry.
+        if (gridHelper) {
+            scene.remove(gridHelper);
+            gridHelper.geometry.dispose();
+            gridHelper.material.dispose();
+        }
+        gridHelper = new THREE.GridHelper(worldSpan, 60, 0x2a2a2a, 0x1a1a1a);
+        scene.add(gridHelper);
+
+        controls.minDistance = veh * 0.6;
+        controls.maxDistance = worldSpan * 3;
+    }
+
+    // Default view: looking at the origin from a distance that frames the
+    // vehicle, in the same three-quarter direction for both airframes.
+    function resetCamera() {
+        if (!camera || !controls) return;
+        const d = vehicleSpan() * 4;
+        camera.position.set(d, d * 0.62, d);
         controls.target.set(0, 0, 0);
         controls.update();
+    }
+
+    // Frame the whole reference trajectory: centre the target on its bounding
+    // box and back off far enough for the box to fit the vertical field of view.
+    function fitTrajectory() {
+        if (!camera || !controls || trajBox.isEmpty()) return;
+        const centre = trajBox.getCenter(new THREE.Vector3());
+        const radius = 0.5 * trajBox.getSize(new THREE.Vector3()).length();
+        // Fit the bounding sphere in the NARROWER of the two fields of view: on a
+        // portrait-ish viewport the horizontal one is the binding constraint, and
+        // fitting the vertical alone would cut the trajectory off at the sides.
+        const vFov = THREE.MathUtils.degToRad(camera.fov);
+        const hFov = 2 * Math.atan(Math.tan(vFov / 2) * camera.aspect);
+        const dist = Math.max(radius / Math.tan(0.5 * Math.min(vFov, hFov)),
+                              vehicleSpan() * 4);
+        const dir    = new THREE.Vector3(1, 0.62, 1).normalize();
+        camera.position.copy(centre).addScaledVector(dir, dist);
+        controls.target.copy(centre);
+        controls.update();
+    }
+
+    // Chase camera: carry BOTH the orbit target and the camera by the vehicle's
+    // displacement, so the user's own orbit and zoom around it are preserved --
+    // only the point being orbited moves. Rigid, not smoothed: at 1.5 km/s any
+    // lag would leave the vehicle off screen.
+    const followPrev = new THREE.Vector3();
+    let followPrimed = false;
+    function applyFollow() {
+        if (!cameraCfg.follow || !camera || !controls) { followPrimed = false; return; }
+        const group = rocketGroup;
+        if (!group || !group.visible) { followPrimed = false; return; }
+
+        if (!followPrimed) {
+            // Entering follow: keep the current viewing offset, move the target on
+            // to the vehicle in one step.
+            const offset = camera.position.clone().sub(controls.target);
+            controls.target.copy(group.position);
+            camera.position.copy(group.position).add(offset);
+            followPrev.copy(group.position);
+            followPrimed = true;
+            return;
+        }
+        const delta = group.position.clone().sub(followPrev);
+        controls.target.add(delta);
+        camera.position.add(delta);
+        followPrev.copy(group.position);
     }
 
     function init() {
@@ -589,16 +704,19 @@ function make3DRenderer() {
         const W = container.offsetWidth  || 800;
         const H = container.offsetHeight || 500;
 
-        // WebGL renderer
-        renderer = new THREE.WebGLRenderer({ antialias: true });
+        // WebGL renderer. logarithmicDepthBuffer: a full-scale trajectory puts the
+        // far plane ~1e6 near planes away, and a linear depth buffer has nowhere
+        // near the precision for that (the vehicle z-fights with itself).
+        renderer = new THREE.WebGLRenderer({ antialias: true, logarithmicDepthBuffer: true });
         renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
         renderer.setSize(W, H);
         renderer.setClearColor(0x0d0d0d);
         container.appendChild(renderer.domElement);
 
-        // Scene
+        // Scene. The fog and the camera planes are placeholders: applyWorldScale()
+        // sets every scene-unit distance from the vehicle and the trajectory.
         scene = new THREE.Scene();
-        scene.fog = new THREE.Fog(0x0d0d0d, 400, 1200);
+        scene.fog = new THREE.Fog(0x0d0d0d, 1, 2);
 
         // Camera
         camera = new THREE.PerspectiveCamera(50, W / H, 0.1, 5000);
@@ -607,8 +725,6 @@ function make3DRenderer() {
         controls = new OrbitControls(camera, renderer.domElement);
         controls.enableDamping  = true;
         controls.dampingFactor  = 0.06;
-        controls.maxDistance    = 1000;
-        applyCameraForModel();
 
         // Lights
         scene.add(new THREE.AmbientLight(0xffffff, 0.45));
@@ -616,8 +732,8 @@ function make3DRenderer() {
         sun.position.set(200, 400, 150);
         scene.add(sun);
 
-        // Ground grid
-        scene.add(new THREE.GridHelper(600, 60, 0x2a2a2a, 0x1a1a1a));
+        applyWorldScale();   // builds the ground grid too
+        resetCamera();
 
         // Vehicle (rocket or quadrotor, per current model)
         rocketGroup = buildVehicle();
@@ -638,6 +754,7 @@ function make3DRenderer() {
         );
         trailLine.frustumCulled = false;
         scene.add(trailLine);
+        trailBuf = makeLineBuffer(trailLine, TRAIL_MAX);
 
         // Plant trail line
         plantTrailLine = new THREE.Line(
@@ -646,6 +763,7 @@ function make3DRenderer() {
         );
         plantTrailLine.frustumCulled = false;
         scene.add(plantTrailLine);
+        plantTrailBuf = makeLineBuffer(plantTrailLine, TRAIL_MAX);
 
         // Trajectory preview
         trajectoryLine = new THREE.Line(
@@ -654,6 +772,7 @@ function make3DRenderer() {
         );
         trajectoryLine.frustumCulled = false;
         scene.add(trajectoryLine);
+        trajectoryBuf = makeLineBuffer(trajectoryLine, TRAJECTORY_MAX);
 
         // Resize observer
         new ResizeObserver(() => {
@@ -672,46 +791,48 @@ function make3DRenderer() {
     function renderLoop() {
         if (!animating) return;
         requestAnimationFrame(renderLoop);
+        applyFollow();
         controls?.update();
         renderer?.render(scene, camera);
     }
 
-    function updateTrail(points, line, x, y, z) {
-        points.push(new THREE.Vector3(x, y, z));
-        if (points.length > TRAIL_MAX) points.shift();
+    // A polyline whose points are appended over time, backed by ONE fixed-capacity
+    // attribute written in place.
+    //
+    // Never hand a line a freshly built BufferAttribute per frame: three frees a
+    // GL buffer only from BufferGeometry.dispose(), so replacing the attribute
+    // orphans the previous buffer on the GPU forever. At this capacity that is
+    // 72 kB leaked per frame per line -- ~4 MB/s, which kills the tab a few
+    // minutes into a long run. Resizing the array of a live attribute is not
+    // allowed either (three throws), hence the fixed capacity plus drawRange.
+    function makeLineBuffer(line, capacity) {
+        const data = new Float32Array(capacity * 3);
+        const attr = new THREE.BufferAttribute(data, 3);
+        attr.setUsage(THREE.DynamicDrawUsage);
+        line.geometry.setAttribute('position', attr);
+        line.geometry.setDrawRange(0, 0);
+        let count = 0;
 
-        const pos = new Float32Array(points.length * 3);
-        points.forEach((v, i) => {
-            pos[i * 3]     = v.x;
-            pos[i * 3 + 1] = v.y;
-            pos[i * 3 + 2] = v.z;
-        });
-        line.geometry.setAttribute(
-            'position', new THREE.BufferAttribute(pos, 3)
-        );
-        line.geometry.setDrawRange(0, points.length);
-        line.geometry.attributes.position.needsUpdate = true;
-    }
-
-    function pushTrajectoryPoint(x, y, z) {
-        trajectory.push(new THREE.Vector3(x, y, z));
-        if (trajectory.length > TRAJECTORY_MAX) trajectory.shift();
-
-        const pos = new Float32Array(trajectory.length * 3);
-        trajectory.forEach((v, i) => {
-            pos[i * 3]     = v.x;
-            pos[i * 3 + 1] = v.y;
-            pos[i * 3 + 2] = v.z;
-        });
-        trajectoryLine.geometry.setAttribute(
-            'position', new THREE.BufferAttribute(pos, 3)
-        );
-        trajectoryLine.geometry.setDrawRange(0, trajectory.length);
-        trajectoryLine.geometry.attributes.position.needsUpdate = true;
+        return {
+            get count() { return count; },
+            // Append one point; at capacity the oldest is dropped, in place.
+            push(x, y, z) {
+                if (count === capacity) { data.copyWithin(0, 3); count--; }
+                const o = count * 3;
+                data[o] = x; data[o + 1] = y; data[o + 2] = z;
+                count++;
+                line.geometry.setDrawRange(0, count);
+                attr.needsUpdate = true;
+            },
+            clear() {
+                count = 0;
+                line.geometry.setDrawRange(0, 0);
+            },
+        };
     }
 
     function generateTrajectoryPreview() {
-        if (!sim) return;
+        if (!sim || !trajectoryBuf) return;
 
         // Sample the live backend trajectory over [0, totalDuration]. The
         // total duration is owned by the trajectory builder so the preview
@@ -719,17 +840,40 @@ function make3DRenderer() {
         const totalDuration = trajectoryBuilder.getTotalDuration();
         if (totalDuration <= 0) return;
 
-        const sampleDt = 0.2;
+        // 0.2 s resolves a short descent finely; a long mission would overrun the
+        // buffer and silently lose its beginning, so stretch the step to fit.
+        const sampleDt = Math.max(0.2, totalDuration / (TRAJECTORY_MAX - 1));
+        const pt = new THREE.Vector3();
+        trajBox.makeEmpty();
         for (let t = 0; t <= totalDuration; t += sampleDt) {
-            const p = sim.ext_trajectory_get_point(t);
+            const r = sim.ext_trajectory_get_reference(t);
+            if (r.isError) break;   // ran off the end: nothing more to draw
             // sim(x, y, z=up) -> Three.js(x, z, y)
-            pushTrajectoryPoint(p.x, p.z, p.y);
+            trajectoryBuf.push(r.pos.x, r.pos.z, r.pos.y);
+            trajBox.expandByPoint(pt.set(r.pos.x, r.pos.z, r.pos.y));
         }
+        // The trajectory is what sets the scale of the scene: a 20 s hover and a
+        // 500 s reentry are five orders of magnitude apart.
+        applyWorldScale();
     }
 
     function clearTrajectoryPreview() {
-        trajectory.length = 0;
-        if (trajectoryLine) trajectoryLine.geometry.setDrawRange(0, 0);
+        trajectoryBuf?.clear();
+        trajBox.makeEmpty();
+    }
+
+    // Build the preview if the view is up and does not have one yet. Called both
+    // when the view is shown and from update(), because the two happen in either
+    // order: the simulation can already be running when the tab is opened, and
+    // the tab can be opened long before Start is ever pressed.
+    //
+    // Whether a preview exists is exactly what enables "Fit trajectory", so the
+    // camera panel is refreshed on the transition -- and only on it, since this
+    // runs every frame while there is no trajectory to preview.
+    function ensureTrajectoryPreview() {
+        if (!initialized || !visible || trajectoryBuf.count > 0) return;
+        generateTrajectoryPreview();
+        if (trajectoryBuf.count > 0) refreshCameraPanel();
     }
 
     // sim(x, y, z=up) → Three.js(x, z, y)  [Y is up in Three.js]
@@ -763,19 +907,15 @@ function make3DRenderer() {
         update(state, err, simTime, stepCount, plantState) {
             if (!initialized || !visible) return;
 
-            // Generate preview lazily on first display, or after invalidation.
-            if (trajectory.length === 0) {
-                generateTrajectoryPreview();
-            }
+            ensureTrajectoryPreview();   // first display, or after invalidation
 
             poseVehicle(rocketGroup, state);
-            updateTrail(trail, trailLine, state.x, state.z, state.y);
+            trailBuf.push(state.x, state.z, state.y);
 
             // Plant ghost: only when snapshots are flowing
             if (plantState) {
                 poseVehicle(plantGroup, plantState);
-                updateTrail(plantTrail, plantTrailLine,
-                            plantState.x, plantState.z, plantState.y);
+                plantTrailBuf.push(plantState.x, plantState.z, plantState.y);
             }
             plantGroup.visible = sources.plant && !!plantState;
 
@@ -788,17 +928,14 @@ function make3DRenderer() {
             if (!initialized || !visible) return;
             if (plantState) {
                 poseVehicle(plantGroup, plantState);
-                updateTrail(plantTrail, plantTrailLine,
-                            plantState.x, plantState.z, plantState.y);
+                plantTrailBuf.push(plantState.x, plantState.z, plantState.y);
             }
             plantGroup.visible = sources.plant && !!plantState;
             applySources();
         },
         reset() {
-            trail.length = 0;
-            plantTrail.length = 0;
-            if (trailLine) trailLine.geometry.setDrawRange(0, 0);
-            if (plantTrailLine) plantTrailLine.geometry.setDrawRange(0, 0);
+            trailBuf?.clear();
+            plantTrailBuf?.clear();
 
             for (const g of [rocketGroup, plantGroup]) {
                 if (g) {
@@ -813,17 +950,41 @@ function make3DRenderer() {
             Object.assign(sources, s);
             applySources();
         },
-        // Drop the cached trajectory line so the next frame regenerates it
-        // from the current backend state. Called by the trajectory builder
-        // whenever the sequence changes.
+        // ---- camera panel ----
+        // Chase camera on/off. Turning it on re-primes the follow so the current
+        // viewing offset is kept; turning it off simply leaves the camera where
+        // it is, under normal orbit control.
+        setCameraFollow(on) {
+            cameraCfg.follow = !!on;
+            followPrimed = false;
+        },
+        resetCamera,
+        fitTrajectory,
+        // True once a reference trajectory has been previewed, so the panel can
+        // grey out "Fit trajectory" while there is nothing to frame.
+        hasTrajectory() { return !trajBox.isEmpty(); },
+        // Drop the cached trajectory line and rebuild it from the current backend
+        // state. Called by the trajectory builder whenever the sequence changes,
+        // and after a model switch (which re-inits the backend and replays the
+        // sequence into it).
+        //
+        // Rebuilding here rather than leaving it to the next update() matters:
+        // update() only runs while the simulation runs, so a sequence edited (or
+        // a model switched) with the simulation stopped would leave the 3D view
+        // with no trajectory at all, and "Fit trajectory" dead, until Start.
         invalidateTrajectory() {
             clearTrajectoryPreview();
+            ensureTrajectoryPreview();
+            refreshCameraPanel();
         },
         // Swap the vehicle mesh to match the current model. Safe to call before
         // init (no-op until the scene exists); the correct mesh is then built
         // lazily on first show().
         rebuildVehicle() {
             if (!initialized || !scene) return;
+            // The group the chase camera was tracking is about to be destroyed:
+            // its last position must never be differenced against the new one.
+            followPrimed = false;
             if (rocketGroup) scene.remove(rocketGroup);
             if (plantGroup)  scene.remove(plantGroup);
             rocketGroup = buildVehicle();
@@ -834,7 +995,8 @@ function make3DRenderer() {
             plantGroup.visible = false;
             scene.add(plantGroup);
             applySources();
-            applyCameraForModel();
+            applyWorldScale();
+            resetCamera();
         },
         show() {
             visible = true;
@@ -842,6 +1004,11 @@ function make3DRenderer() {
             if (!initialized) {
                 init();
             }
+
+            // Draw the trajectory as soon as the tab is opened. Waiting for the
+            // first update() would mean no preview (and a dead "Fit trajectory")
+            // until Start is pressed, since update() only runs while running.
+            ensureTrajectoryPreview();
 
             if (!animating) { animating = true; renderLoop(); }
         },
@@ -867,14 +1034,57 @@ function makeChartsRenderer() {
     const WINDOW_S = 12.0;   // simulated seconds shown
     const PAD_L = 46, PAD_R = 10, PAD_T = 10, PAD_B = 18;
 
-    // One panel per canvas. `ref` marks the series that have a commanded value
-    // to compare against (|err| is an error magnitude: nothing to track).
+    // ---- the series, and the ONE place that defines them ----
+    //
+    // Every panel is built from this list: its markup, its ring buffer, and what
+    // is sampled into it each frame. Adding a state to the charts is one row.
+    //
+    //   value : reads the measured value out of the snapshot state
+    //   ref   : reads the commanded value out of the trajectory reference, or
+    //           null when the trajectory does not command that state at all --
+    //           it prescribes a position, a heading and their derivatives, so
+    //           roll / pitch and the body rates about x / y have no setpoint to
+    //           draw. |err| is an error magnitude: nothing to track either.
+    //   group : which toggle in the charts bar shows or hides the panel
+    const GROUPS = [
+        { id: 'pos',  label: 'Position' },
+        { id: 'vel',  label: 'Velocity' },
+        { id: 'att',  label: 'Attitude' },
+        { id: 'rate', label: 'Rates'    },
+        { id: 'err',  label: 'Error'    },
+    ];
+
     const charts = [
-        { id: 'chartX',   key: 'x',   color: '#f80', unit: 'm',   ref: true  },
-        { id: 'chartY',   key: 'y',   color: '#0f8', unit: 'm',   ref: true  },
-        { id: 'chartZ',   key: 'z',   color: '#0cf', unit: 'm',   ref: true  },
-        { id: 'chartYaw', key: 'yaw', color: '#c8f', unit: 'rad', ref: true  },
-        { id: 'chartErr', key: 'e',   color: '#fa0', unit: 'm',   ref: false },
+        { key: 'x',    group: 'pos',  label: 'x',         unit: 'm',     color: '#f80',
+          value: (s) => s.x,         ref: (r) => r.pos.x },
+        { key: 'y',    group: 'pos',  label: 'y',         unit: 'm',     color: '#0f8',
+          value: (s) => s.y,         ref: (r) => r.pos.y },
+        { key: 'z',    group: 'pos',  label: 'z',         unit: 'm',     color: '#0cf',
+          value: (s) => s.z,         ref: (r) => r.pos.z },
+
+        { key: 'vx',   group: 'vel',  label: 'x_dot',     unit: 'm/s',   color: '#f80',
+          value: (s) => s.x_dot,     ref: (r) => r.vel.x },
+        { key: 'vy',   group: 'vel',  label: 'y_dot',     unit: 'm/s',   color: '#0f8',
+          value: (s) => s.y_dot,     ref: (r) => r.vel.y },
+        { key: 'vz',   group: 'vel',  label: 'z_dot',     unit: 'm/s',   color: '#0cf',
+          value: (s) => s.z_dot,     ref: (r) => r.vel.z },
+
+        { key: 'roll', group: 'att',  label: 'roll',      unit: 'rad',   color: '#f66',
+          value: (s) => s.roll,      ref: null },
+        { key: 'pitch',group: 'att',  label: 'pitch',     unit: 'rad',   color: '#6f6',
+          value: (s) => s.pitch,     ref: null },
+        { key: 'yaw',  group: 'att',  label: 'yaw',       unit: 'rad',   color: '#c8f',
+          value: (s) => s.yaw,       ref: (r) => r.yaw },
+
+        { key: 'p',    group: 'rate', label: 'roll_dot',  unit: 'rad/s', color: '#f66',
+          value: (s) => s.roll_dot,  ref: null },
+        { key: 'q',    group: 'rate', label: 'pitch_dot', unit: 'rad/s', color: '#6f6',
+          value: (s) => s.pitch_dot, ref: null },
+        { key: 'r',    group: 'rate', label: 'yaw_dot',   unit: 'rad/s', color: '#c8f',
+          value: (s) => s.yaw_dot,   ref: (r) => r.yawRate },
+
+        { key: 'e',    group: 'err',  label: '|err|',     unit: 'm',     color: '#fa0',
+          value: null,               ref: null },
     ];
 
     // Ring buffer: `head` is the next write slot, `n` the samples held.
@@ -883,11 +1093,28 @@ function makeChartsRenderer() {
     for (const c of charts) { val[c.key] = new Float64Array(CAP); ref[c.key] = new Float64Array(CAP); }
     let head = 0, n = 0;
 
-    function push(time, values, references) {
+    // Which groups are drawn: all of them until the user says otherwise, and the
+    // choice is then persisted so a chosen layout survives a reload.
+    const shown = new Set(GROUPS.map(g => g.id));
+    try {
+        const saved = localStorage.getItem('cds.charts.groups');
+        if (saved !== null) {
+            shown.clear();
+            for (const id of saved.split(',')) if (id) shown.add(id);
+        }
+    } catch (e) { /* no storage: keep the defaults */ }
+
+    // `reference` is null when the backend has no reference to give (no
+    // trajectory at all). Note that running PAST the end of the trajectory is
+    // not that case: the manager then commands the final position, held.
+    function push(time, state, reference, eMag) {
         t[head] = time;
         for (const c of charts) {
-            val[c.key][head] = values[c.key];
-            ref[c.key][head] = references[c.key] ?? 0;
+            val[c.key][head] = c.value ? c.value(state) : eMag;
+            // Nothing commanded for this series: park the reference on the
+            // measurement, so no panel can draw a phantom setpoint at zero.
+            ref[c.key][head] = (c.ref && reference) ? c.ref(reference)
+                                                    : val[c.key][head];
         }
         head = (head + 1) % CAP;
         if (n < CAP) n++;
@@ -910,6 +1137,43 @@ function makeChartsRenderer() {
         return out;
     }
 
+    // ---- panels and group toggles, built from `charts` ----
+    // The markup is generated rather than written in index.html so the series
+    // table above stays the single place a chart is declared.
+    const grid = $('chartGrid'), groupBar = $('chartGroups');
+    for (const c of charts) {
+        const panel = document.createElement('div');
+        panel.className = 'panel chart-panel';
+        panel.dataset.group = c.group;
+        const h = document.createElement('h2');
+        h.textContent = `${c.label} (${c.unit})`;
+        c.canvas = document.createElement('canvas');
+        panel.append(h, c.canvas);
+        grid.appendChild(panel);
+    }
+
+    function applyGroupVisibility() {
+        for (const panel of grid.children) {
+            panel.style.display = shown.has(panel.dataset.group) ? '' : 'none';
+        }
+    }
+
+    for (const g of GROUPS) {
+        const label = document.createElement('label');
+        const box   = document.createElement('input');
+        box.type = 'checkbox';
+        box.checked = shown.has(g.id);
+        box.addEventListener('change', () => {
+            if (box.checked) shown.add(g.id); else shown.delete(g.id);
+            try { localStorage.setItem('cds.charts.groups', [...shown].join(',')); } catch (e) {}
+            applyGroupVisibility();
+            api.redraw();
+        });
+        label.append(box, document.createTextNode(' ' + g.label));
+        groupBar.appendChild(label);
+    }
+    applyGroupVisibility();
+
     // Match the backing store to the CSS box and the device pixel ratio, so
     // lines stay crisp on a HiDPI screen instead of being upscaled.
     function fitCanvas(canvas) {
@@ -928,9 +1192,7 @@ function makeChartsRenderer() {
                                              : v.toFixed(2));
 
     function drawChart(chart, idx) {
-        const canvas = $(chart.id);
-        if (!canvas) return;
-        const fit = fitCanvas(canvas);
+        const fit = fitCanvas(chart.canvas);
         if (!fit) return;
         const { ctx, w, h } = fit;
 
@@ -947,9 +1209,9 @@ function makeChartsRenderer() {
             if (v < lo) lo = v;
             if (v > hi) hi = v;
             if (chart.ref) {
-                const r = target[i];
-                if (r < lo) lo = r;
-                if (r > hi) hi = r;
+                const rv = target[i];
+                if (rv < lo) lo = rv;
+                if (rv > hi) hi = rv;
             }
         }
         if (!isFinite(lo) || !isFinite(hi)) return;
@@ -994,7 +1256,9 @@ function makeChartsRenderer() {
             ctx.beginPath(); ctx.moveTo(PAD_L, y); ctx.lineTo(w - PAD_R, y); ctx.stroke();
         }
 
-        // ---- reference first, so the measured value reads on top of it
+        // ---- reference first, so the measured value reads on top of it.
+        // A series with no commanded value has ref == value (see push), so the
+        // dashed line would just trace the solid one: skip it.
         if (chart.ref) {
             ctx.strokeStyle = '#667';
             ctx.lineWidth = 1;
@@ -1025,34 +1289,39 @@ function makeChartsRenderer() {
         return ui.viewCharts && ui.viewCharts.style.display !== 'none' && !document.hidden;
     }
 
-    return {
-        update(state, err, simTime) {
+    // Hidden groups are not rasterised: on the wasm-only build the canvases share
+    // a thread with the simulation, so drawing them would slow the run down.
+    function drawVisible() {
+        const idx = windowIndices();
+        for (const c of charts) if (shown.has(c.group)) drawChart(c, idx);
+    }
+
+    const api = {
+        // `reference` is the commanded trajectory sample at this instant, straight
+        // from the backend (ext_trajectory_get_reference). It is the setpoint
+        // every panel draws against; if the backend has none to give, the states
+        // are still charted, just without their dashed line.
+        update(state, err, simTime, stepCount, plantState, reference) {
+            const commanded = (reference && !reference.isError) ? reference : null;
             const eMag = Math.sqrt(err.xErr**2 + err.yErr**2 + err.zErr**2);
-            // The backend reports the tracking error as (reference - state), so
-            // the commanded value comes back by adding it to the measurement.
-            push(simTime,
-                 { x: state.x, y: state.y, z: state.z, yaw: state.yaw, e: eMag },
-                 { x: state.x + err.xErr, y: state.y + err.yErr, z: state.z + err.zErr,
-                   yaw: state.yaw + err.yawErr });
+            push(simTime, state, commanded, eMag);
 
             if (!chartsVisible()) return;
-            const idx = windowIndices();
-            charts.forEach(c => drawChart(c, idx));
+            drawVisible();
         },
         // Redraw on demand (entering the charts view) without adding a sample.
         redraw() {
             if (!chartsVisible()) return;
-            const idx = windowIndices();
-            charts.forEach(c => drawChart(c, idx));
+            drawVisible();
         },
         reset() {
             head = 0; n = 0;
-            charts.forEach(({ id }) => {
-                const c = $(id);
-                if (c) c.getContext('2d').clearRect(0, 0, c.width, c.height);
-            });
+            for (const c of charts) {
+                c.canvas.getContext('2d').clearRect(0, 0, c.canvas.width, c.canvas.height);
+            }
         },
     };
+    return api;
 }
 
 // =============================================================================
@@ -1650,8 +1919,15 @@ function loop() {
         }
         simTime   = snap.time_seconds;
         stepCount = Math.round(simTime / timestep_s);   // estimated backend ticks
+
+        // The commanded reference at this instant: the setpoint the charts draw
+        // every state against. It is a second round trip per frame on the
+        // ws-served build, which is why it is fetched only while running.
+        const reference = timedCall(() => sim.ext_trajectory_get_reference(simTime));
+        if (lastCallStalled) { handleTransportStall(); return; }
+
         updatePanels(snap.state, snap.err, simTime, stepCount);
-        renderers.forEach(r => r.update(snap.state, snap.err, simTime, stepCount, plantState));
+        renderers.forEach(r => r.update(snap.state, snap.err, simTime, stepCount, plantState, reference));
     } else {
         // Idle: keep only the plant ghost live, leaving model and charts as-is.
         renderer3d.previewPlant(plantState);
@@ -1783,6 +2059,7 @@ function readSourceToggles() {
 
 function applySourceToggles() {
     renderer3d?.setSources?.(readSourceToggles());
+    refreshCameraPanel();
 }
 
 // Enable/disable the "Plant" checkbox as snapshots (dis)appear. The checked
@@ -1809,6 +2086,45 @@ function setPlantAvailable(avail) {
 ui.chkViewTraj.addEventListener('change',  applySourceToggles);
 ui.chkViewModel.addEventListener('change', applySourceToggles);
 ui.chkViewPlant.addEventListener('change', applySourceToggles);
+
+// =============================================================================
+// 3D view camera panel (collapsible: chase camera + framing shortcuts)
+// =============================================================================
+// The panel is an overlay on the 3D view, so it stays out of the way until it is
+// asked for; the collapsed state is remembered like the log dock's.
+function setCameraPanelOpen(open) {
+    ui.cameraBody.classList.toggle('collapsed', !open);
+    ui.cameraToggle.classList.toggle('active', open);
+    try { localStorage.setItem('cds.cameraPanel.open', open ? '1' : '0'); } catch (e) {}
+}
+ui.cameraToggle.addEventListener('click',
+    () => setCameraPanelOpen(ui.cameraBody.classList.contains('collapsed')));
+let cameraPanelOpen0 = false;
+try { cameraPanelOpen0 = localStorage.getItem('cds.cameraPanel.open') === '1'; } catch (e) {}
+setCameraPanelOpen(cameraPanelOpen0);
+
+// There is nothing to frame until a reference trajectory has been previewed.
+function refreshCameraPanel() {
+    ui.btnCamFit.disabled = !renderer3d?.hasTrajectory?.();
+}
+
+ui.chkCamFollow.addEventListener('change', () => {
+    renderer3d?.setCameraFollow(ui.chkCamFollow.checked);
+});
+// Reset and Fit both reframe the scene, which is incompatible with a camera
+// locked on the vehicle: they drop out of follow, and the checkbox says so.
+function dropCameraFollow() {
+    ui.chkCamFollow.checked = false;
+    renderer3d?.setCameraFollow(false);
+}
+ui.btnCamReset.addEventListener('click', () => {
+    dropCameraFollow();
+    renderer3d?.resetCamera();
+});
+ui.btnCamFit.addEventListener('click', () => {
+    dropCameraFollow();
+    renderer3d?.fitTrajectory();
+});
 
 // Staging controls
 ui.btnBeginStaging.addEventListener('click', () => {
@@ -2103,7 +2419,7 @@ function showView(name) {
     ui.btn3d.classList.toggle('active',     name === '3d');
     ui.btnParams.classList.toggle('active', name === 'params');
     ui.btnDiag.classList.toggle('active',   name === 'diag');
-    if (name === '3d')     renderer3d.show();
+    if (name === '3d')     { renderer3d.show(); refreshCameraPanel(); }
     else                   renderer3d.hide();
     if (name === 'charts') chartsRenderer?.redraw();   // show the buffered history at once
     if (name === 'diag')   diagnostics.onShow();
@@ -2141,6 +2457,7 @@ function switchModel(model) {
 
     // Init wipes the backend trajectory; replay the JS-side sequence.
     trajectoryBuilder.replayToBackend();
+    dropCameraFollow();   // different airframe, different scale: back to a known view
     renderer3d?.rebuildVehicle?.();
     renderer3d?.invalidateTrajectory?.();
     refreshControllerPanel();   // the new model exposes its own controller params

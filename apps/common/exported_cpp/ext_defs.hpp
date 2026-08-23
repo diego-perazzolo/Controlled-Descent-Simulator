@@ -135,13 +135,31 @@ typedef struct
     ext_coord_t time_s; // total duration of the maneuver towards the finalPos
 } ext_trajectoryPointParams_t;
 
-/* struct of the trajectory position point */
+/* struct of one sample of the commanded trajectory: everything the
+controllers are given as a setpoint at a time instant. Mirrors the
+core Reference_t, minus the flatness derivatives above acceleration
+(jerk / snap), which no consumer outside the models has a use for */
 typedef struct
 {
-    ext_coord_t x;
-    ext_coord_t y;
-    ext_coord_t z;
-} ext_trajectoryPoint;
+    /* commanded position */
+    ext_vec3_t pos;
+    ext_coord_t yaw; // commanded heading (rad)
+
+    /* commanded velocity */
+    ext_vec3_t vel;
+    ext_coord_t yawRate; // commanded heading rate (rad/s)
+
+    /* commanded acceleration */
+    ext_vec3_t acc;
+    ext_coord_t yawAcc; // commanded heading acceleration (rad/s^2)
+
+    /* no reference exists at the queried time, i.e. there is no
+       trajectory at all; every field above is then meaningless, and in
+       particular is NOT a command to fly to the origin. A time past
+       the end of the trajectory is NOT an error: it reports the final
+       position held, with all derivatives zeroed */
+    bool isError;
+} ext_trajectoryReference;
 
 /* struct of the user input forces */
 typedef struct

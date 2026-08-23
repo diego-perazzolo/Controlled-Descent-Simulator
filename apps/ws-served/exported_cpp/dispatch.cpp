@@ -112,14 +112,22 @@ std::vector<uint8_t> server_dispatch(const std::vector<uint8_t>& msg)
             return _respBool(h, ext_initQuadRotor_FFLQR01(req.p));
         }
 
-        case WS_MSG_TRAJ_GET_POINT:
+        case WS_MSG_TRAJ_GET_REF:
         {
-            reqTrajGetPoint_t req = {};
+            reqTrajGetRef_t req = {};
             if(_parse(msg, req)) return _respBool(h, true);
 
-            respTrajGetPoint_t resp = {};
+            ext_trajectoryReference ret = ext_trajectory_get_reference(req.t);
+
+            respTrajGetRef_t resp = {};
             resp.h = h;
-            resp.p = ext_trajectory_get_point(req.t);
+            resp.pos = ret.pos;
+            resp.yaw = ret.yaw;
+            resp.vel = ret.vel;
+            resp.yawRate = ret.yawRate;
+            resp.acc = ret.acc;
+            resp.yawAcc = ret.yawAcc;
+            resp.isError = ret.isError ? 1 : 0;
             return _serialize(resp);
         }
 

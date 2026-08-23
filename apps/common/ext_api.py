@@ -155,10 +155,25 @@ DEFS = [
                F("time_s", doc="total duration of the maneuver towards the finalPos"),
            ]),
 
-    Struct("ext_trajectoryPoint",
-           doc="struct of the trajectory position point",
+    Struct("ext_trajectoryReference",
+           doc="struct of one sample of the commanded trajectory: everything the\n"
+               "controllers are given as a setpoint at a time instant. Mirrors the\n"
+               "core Reference_t, minus the flatness derivatives above acceleration\n"
+               "(jerk / snap), which no consumer outside the models has a use for",
            fields=[
-               F("x"), F("y"), F("z"),
+               F("pos", type="ext_vec3_t", pre="commanded position"),
+               F("yaw", doc="commanded heading (rad)"),
+               F("vel", type="ext_vec3_t", pre="commanded velocity", blank_before=True),
+               F("yawRate", doc="commanded heading rate (rad/s)"),
+               F("acc", type="ext_vec3_t", pre="commanded acceleration", blank_before=True),
+               F("yawAcc", doc="commanded heading acceleration (rad/s^2)"),
+
+               F("isError", type="bool", blank_before=True,
+                 pre="no reference exists at the queried time, i.e. there is no\n"
+                     "   trajectory at all; every field above is then meaningless, and in\n"
+                     "   particular is NOT a command to fly to the origin. A time past\n"
+                     "   the end of the trajectory is NOT an error: it reports the final\n"
+                     "   position held, with all derivatives zeroed"),
            ]),
 
     Struct("ext_userForce",
@@ -349,9 +364,10 @@ COMMANDS = [
         doc="Initialize QuadRotor model: FF_LQR_01, returns true on error",
         log="init quadrotor"),
 
-    Cmd(3, "TrajGetPoint", "ext_trajectory_get_point", "ext_trajectory_get_point",
-        req=("scalar", "ext_coord_t", "t"), resp="ext_trajectoryPoint",
-        doc="Get a point at time instant t along the trajectory"),
+    Cmd(3, "TrajGetRef", "ext_trajectory_get_reference", "ext_trajectory_get_reference",
+        req=("scalar", "ext_coord_t", "t"), resp="ext_trajectoryReference",
+        doc="Get the commanded reference (position, velocity, acceleration and\n"
+            "   heading with its rates) at time instant t along the trajectory"),
 
     Cmd(4, "TrajAppendPoly4", "ext_trajectory_append_poly4", "ext_trajectory_append_poly4",
         req="ext_trajectoryPoly4Params_t", resp="bool",

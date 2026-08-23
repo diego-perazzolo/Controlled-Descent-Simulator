@@ -50,14 +50,14 @@ constexpr uint16_t WS_DEFAULT_PORT = 9002;
    carry different bytes, and both sides refuse to talk: a stale
    simulator.wasm against a newer cds_server fails loudly instead
    of corrupting the parsing. */
-constexpr uint8_t WS_PROTOCOL_VERSION = 0x2F;
+constexpr uint8_t WS_PROTOCOL_VERSION = 0xBE;
 
 /* Message types: request and matching response carry the same type id */
 enum MsgType : uint8_t
 {
     WS_MSG_INIT_ROCKET             = 1, // -> respBool_t
     WS_MSG_INIT_QUAD_ROTOR         = 2, // -> respBool_t
-    WS_MSG_TRAJ_GET_POINT          = 3, // -> respTrajGetPoint_t
+    WS_MSG_TRAJ_GET_REF            = 3, // -> respTrajGetRef_t
     WS_MSG_TRAJ_APPEND_POLY4       = 4, // -> respBool_t
     WS_MSG_TRAJ_APPEND_POINT       = 5, // -> respBool_t
     WS_MSG_TRAJ_REMOVE_LAST        = 6, // -> respBool_t
@@ -117,7 +117,7 @@ typedef struct
 {
     header_t h;
     ext_coord_t t;
-} reqTrajGetPoint_t;
+} reqTrajGetRef_t;
 
 typedef struct
 {
@@ -297,8 +297,14 @@ typedef struct
 typedef struct
 {
     header_t h;
-    ext_trajectoryPoint p;
-} respTrajGetPoint_t;
+    ext_vec3_t pos;
+    ext_coord_t yaw;
+    ext_vec3_t vel;
+    ext_coord_t yawRate;
+    ext_vec3_t acc;
+    ext_coord_t yawAcc;
+    uint8_t isError;
+} respTrajGetRef_t;
 
 typedef struct
 {
@@ -394,7 +400,7 @@ constexpr uint32_t WS_MAX_MSG_SIZE = 4096;
 static_assert(sizeof(header_t)                    ==  2, "wire layout drift");
 static_assert(sizeof(reqInitRocket_t)             == 58, "wire layout drift"); // 2 + 14f
 static_assert(sizeof(reqInitQuadRotor_t)          == 50, "wire layout drift"); // 2 + 12f
-static_assert(sizeof(reqTrajGetPoint_t)           ==  6, "wire layout drift"); // 2 + 1f
+static_assert(sizeof(reqTrajGetRef_t)             ==  6, "wire layout drift"); // 2 + 1f
 static_assert(sizeof(reqTrajAppendPoly4_t)        == 86, "wire layout drift"); // 2 + 21f
 static_assert(sizeof(reqTrajAppendPoint_t)        == 22, "wire layout drift"); // 2 + 5f
 static_assert(sizeof(reqTrajRemoveLast_t)         ==  2, "wire layout drift");
@@ -426,7 +432,7 @@ static_assert(sizeof(reqObserverSetParam_t)       == 10, "wire layout drift"); /
 static_assert(sizeof(reqSensorGetManifest_t)      ==  2, "wire layout drift");
 static_assert(sizeof(reqSensorSetParam_t)         == 10, "wire layout drift"); // 2 + 2f
 static_assert(sizeof(respBool_t)                  ==  3, "wire layout drift"); // 2 + u8
-static_assert(sizeof(respTrajGetPoint_t)          == 14, "wire layout drift"); // 2 + 1f + 1f + 1f
+static_assert(sizeof(respTrajGetRef_t)            == 51, "wire layout drift"); // 2 + 3f + 1f + 3f + 1f + 3f + 1f + u8
 static_assert(sizeof(respGetSnapshot_t)           == 71, "wire layout drift"); // 2 + 1f + 12f + 4f + u8
 static_assert(sizeof(respGetPlantSnapshot_t)      == 61, "wire layout drift"); // 2 + 1f + 1f + 12f + u8 + u8 + u8
 static_assert(sizeof(respGetLogBatch_t)           == 3810, "wire layout drift"); // 2 + 3800b + 1f + 1f
