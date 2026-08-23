@@ -122,6 +122,11 @@ namespace CDS
         bool ExecuteTick(sm_coord_t timestep_seconds);
         bool Stop(void);
 
+        /* Set the tick period and the simulation-speed multiplier. Returns true
+           on error: a non-positive rate, a period change while a plant mission
+           is running, or any rate change while a plant is attached (the plant
+           paces real time). Pass the CURRENT value of the field being left
+           alone -- a brace-initialised struct silently zeroes what it omits */
         bool SetParameters(const systemManagerParams_t& params);
         bool GetParameters(systemManagerParams_t& params);
         inline bool IsRunning(void) { /* do not guard with mutex */ return m_isRunning; };

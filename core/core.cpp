@@ -29,6 +29,7 @@
 // Author      : Diego Perazzolo
 // Created     : 2026
 // =============================================================================
+#include <cmath>
 #include <mutex>
 
 #include "log.hpp"
@@ -54,6 +55,74 @@ struct
 /* private types */
 
 /* static functions */
+
+/* Every number crossing into the core is checked here, at the one boundary all
+   clients share (embind, websocket, tests). A NaN or an infinity accepted at
+   this point does not stay inside: the trajectory reference is what a plant is
+   commanded with, so it would leave the machine and reach a vehicle. Cheap, and
+   done once per call — never on the tick path. */
+static bool _isFinite(core_coord_t v)
+{
+    return std::isfinite(static_cast<double>(v));
+}
+
+static bool _isFinite(const Vec3& v)
+{
+    return _isFinite(v[0]) && _isFinite(v[1]) && _isFinite(v[2]);
+}
+
+static bool _isFinite(const core_trajectoryPoly4Params_t& p)
+{
+    return _isFinite(p.initialPos) && _isFinite(p.initialYaw)
+        && _isFinite(p.initialVel) && _isFinite(p.initialYawRate)
+        && _isFinite(p.finalPos)   && _isFinite(p.finalYaw)
+        && _isFinite(p.finalVel)   && _isFinite(p.finalYawRate)
+        && _isFinite(p.finalAcc)   && _isFinite(p.finalYawAcc)
+        && _isFinite(p.time_s);
+}
+
+static bool _isFinite(const core_trajectoryPointParams_t& p)
+{
+    return _isFinite(p.finalPos) && _isFinite(p.finalYaw) && _isFinite(p.time_s);
+}
+
+/* Airframe parameters get one more question asked of them than finiteness: a
+   zero mass or inertia divides by zero inside the generated dynamics, and an
+   inverted actuator box (min above max) leaves the solver with no feasible
+   command. Both are configuration mistakes worth naming at the boundary rather
+   than debugging later as a vehicle that behaves strangely. */
+static bool _isUsable(const core_quadRotorParams_t& p)
+{
+    if (!(_isFinite(p.m) && _isFinite(p.Ix) && _isFinite(p.Iy) && _isFinite(p.Iz)
+       && _isFinite(p.g) && _isFinite(p.c) && _isFinite(p.cz) && _isFinite(p.kT)
+       && _isFinite(p.kQ) && _isFinite(p.L) && _isFinite(p.Irot)
+       && _isFinite(p.Fm_max) && _isFinite(p.Fm_min))) return false;
+
+    if (p.m <= 0.0 || p.Ix <= 0.0 || p.Iy <= 0.0 || p.Iz <= 0.0) return false;
+    if (p.Fm_min > p.Fm_max) return false;
+    return true;
+}
+
+static bool _isUsable(const core_rocketParams_t& p)
+{
+    if (!(_isFinite(p.m) && _isFinite(p.Ix) && _isFinite(p.Iy) && _isFinite(p.Iz)
+       && _isFinite(p.g) && _isFinite(p.c) && _isFinite(p.cz)
+       && _isFinite(p.F1_max) && _isFinite(p.F1_min)
+       && _isFinite(p.T1_max) && _isFinite(p.T1_min)
+       && _isFinite(p.T2_max) && _isFinite(p.T2_min)
+       && _isFinite(p.T3_max) && _isFinite(p.T3_min))) return false;
+
+    if (p.m <= 0.0 || p.Ix <= 0.0 || p.Iy <= 0.0 || p.Iz <= 0.0) return false;
+    if (p.F1_min > p.F1_max || p.T1_min > p.T1_max
+     || p.T2_min > p.T2_max || p.T3_min > p.T3_max) return false;
+    return true;
+}
+
+static bool _isFinite(const core_systemParams_t& p)
+{
+    return _isFinite(p.timestep_seconds) && _isFinite(p.rate)
+        && _isFinite(p.user_fX) && _isFinite(p.user_fY) && _isFinite(p.user_fZ);
+}
 
 /* global functions */
 
@@ -121,6 +190,13 @@ bool core_init()
 
 bool core_modelInitRocketFfLqr01(const core_rocketParams_t rPar)
 {
+    if (!_isUsable(rPar))
+    {
+        CDS_LOG_ERROR(logger, "Rocket parameters rejected: not finite, or a non-positive mass/inertia, "
+                              "or an inverted actuator range");
+        return true;
+    }
+
     // Configure the model. The SystemManager always 
     // receives a fully-initialized model
     auto model = std::make_unique<Rocket>();
@@ -135,6 +211,13 @@ bool core_modelInitRocketFfLqr01(const core_rocketParams_t rPar)
 
 bool core_modelInitQuadRotorFfLqr01(const core_quadRotorParams_t rPar)
 {
+    if (!_isUsable(rPar))
+    {
+        CDS_LOG_ERROR(logger, "QuadRotor parameters rejected: not finite, or a non-positive mass/inertia, "
+                              "or an inverted actuator range");
+        return true;
+    }
+
     // Configure the model. The SystemManager always 
     // receives a fully-initialized model
     auto model = std::make_unique<QuadRotor>();
@@ -149,6 +232,13 @@ bool core_modelInitQuadRotorFfLqr01(const core_quadRotorParams_t rPar)
 
 bool core_modelInitQuadRotorMpc01(const core_quadRotorParams_t rPar)
 {
+    if (!_isUsable(rPar))
+    {
+        CDS_LOG_ERROR(logger, "Quadrotor MPC parameters rejected: not finite, or a non-positive mass/inertia, "
+                              "or an inverted actuator range");
+        return true;
+    }
+
     // Configure the model. The SystemManager always
     // receives a fully-initialized model
     auto model = std::make_unique<QuadRotorMPC>();
@@ -163,6 +253,13 @@ bool core_modelInitQuadRotorMpc01(const core_quadRotorParams_t rPar)
 
 bool core_modelInitRocketMpc01(const core_rocketParams_t rPar)
 {
+    if (!_isUsable(rPar))
+    {
+        CDS_LOG_ERROR(logger, "Rocket MPC parameters rejected: not finite, or a non-positive mass/inertia, "
+                              "or an inverted actuator range");
+        return true;
+    }
+
     // Configure the model. The SystemManager always
     // receives a fully-initialized model
     auto model = std::make_unique<RocketMPC>();
@@ -182,12 +279,24 @@ bool core_trajectoryInit()
 
 bool core_trajectoryAppendPoly4(const core_trajectoryPoly4Params_t tPar)
 {
+    if (!_isFinite(tPar))
+    {
+        CDS_LOG_ERROR(logger, "Poly4 rejected: a parameter is not a finite number");
+        return true;
+    }
+
     return _ctx.SM.MutateTrajectoryManager([tPar](TrajectoryManager &tM)
                                   { return tM.AppendPoly4(tPar);});
 }
 
 bool core_trajectoryAppendPoint(const core_trajectoryPointParams_t tPar)
 {
+    if (!_isFinite(tPar))
+    {
+        CDS_LOG_ERROR(logger, "Trajectory point rejected: a parameter is not a finite number");
+        return true;
+    }
+
     return _ctx.SM.MutateTrajectoryManager([tPar](TrajectoryManager &tM)
                                   { return tM.AppendPoint(tPar);});
 }
@@ -200,6 +309,12 @@ bool core_trajectoryRemoveLastItem(void)
 
 bool core_trajectoryGetPoint(core_coord_t time, Vec3 &point)
 {
+    if (!_isFinite(time))
+    {
+        CDS_LOG_ERROR(logger, "Trajectory query rejected: the time is not a finite number");
+        return true;
+    }
+
     Reference_t ref;
     if (_ctx.SM.ExecuteOnTrajectoryManager([time, &ref](const TrajectoryManager &tM)
                                   { return tM.GetReference(time, ref);}))
@@ -217,6 +332,12 @@ bool core_trajectoryGetPoint(core_coord_t time, Vec3 &point)
 
 bool core_systemSetParams(const core_systemParams_t &par)
 {
+    if (!_isFinite(par))
+    {
+        CDS_LOG_ERROR(logger, "System parameters rejected: a value is not a finite number");
+        return true;
+    }
+
     SystemManager::userForces_t uF = {par.user_fX, par.user_fY, par.user_fZ};
 
     bool ret = _ctx.SM.SetParameters({.timestep_seconds = par.timestep_seconds, .rate = par.rate});

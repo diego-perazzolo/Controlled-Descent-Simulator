@@ -38,6 +38,7 @@
 // Author      : Diego Perazzolo
 // Created     : 2026
 // =============================================================================
+#include <array>
 #include <cmath>
 #include <cstdio>
 

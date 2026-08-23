@@ -160,6 +160,39 @@ def run_tests(s):
     assert struct.unpack("<BBB", p)[2] == 0, "append poly4 failed"
     print("append poly4 OK")
 
+    # Nothing non-finite may cross into the core: the trajectory reference is
+    # what a plant is commanded with, so a NaN accepted here would leave the
+    # machine as a setpoint. Same for the system parameters and the airframe.
+    nan, inf = float("nan"), float("inf")
+    bad_poly = struct.pack("<21f",
+                           -50, 50, 80, 0,
+                           0, 5, -50, 0,
+                           nan, 0, 0, 0,          # finalPos.x = NaN
+                           0, 0, 0, 0,
+                           0, 0, 0, 0,
+                           20)
+    p = rpc(s, header(MSG["TRAJ_APPEND_POLY4"]) + bad_poly)
+    assert struct.unpack("<BBB", p)[2] == 1, "a NaN poly4 was accepted"
+
+    bad_point = struct.pack("<5f", 1.0, 2.0, inf, 0.0, 5.0)     # finalPos.z = inf
+    p = rpc(s, header(MSG["TRAJ_APPEND_POINT"]) + bad_point)
+    assert struct.unpack("<BBB", p)[2] == 1, "an infinite trajectory point was accepted"
+
+    p = rpc(s, header(MSG["SET_SYSTEM_PARAMS"]) + struct.pack("<5f", 0.01, 1.0, nan, 0, 0))
+    assert struct.unpack("<BBB", p)[2] == 1, "NaN user forces were accepted"
+
+    p = rpc(s, header(MSG["SET_SYSTEM_PARAMS"]) + struct.pack("<5f", 0.01, 0.0, 0, 0, 0))
+    assert struct.unpack("<BBB", p)[2] == 1, "a zero simulation rate was accepted"
+
+    zero_mass = struct.pack("<6f", 0.0, 10 / 3, 10 / 3, 1.0, 1.0, 0.02)
+    p = rpc(s, header(MSG["INIT_ROCKET"]) + zero_mass + limits)
+    assert struct.unpack("<BBB", p)[2] == 1, "a zero-mass airframe was accepted"
+
+    inverted = struct.pack("<8f", 0, 500, 10, -10, 10, -10, 10, -10)   # F1_max < F1_min
+    p = rpc(s, header(MSG["INIT_ROCKET"]) + params + inverted)
+    assert struct.unpack("<BBB", p)[2] == 1, "an inverted actuator range was accepted"
+    print("non-finite / unusable parameters rejected OK (6 cases)")
+
     # trajectory point at t=10 must match the reference values
     p = rpc(s, header(MSG["TRAJ_GET_POINT"]) + struct.pack("<f", 10.0))
     v, t, x, y, z = struct.unpack("<BB3f", p)

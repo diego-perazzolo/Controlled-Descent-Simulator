@@ -37,8 +37,11 @@
 // Author      : Diego Perazzolo
 // Created     : 2026
 // =============================================================================
+#include <algorithm>   // std::max
+#include <array>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>     // std::atoi
 #include <string>
 #include <vector>
 

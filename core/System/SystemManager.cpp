@@ -439,6 +439,18 @@ bool SystemManager::SetParameters(const systemManagerParams_t &params)
 {
     lockGuard_t lock(m_mutex);
 
+    // A rate of zero or less is not a speed: it would silently freeze the pure
+    // simulation (the tick generators clamp it back to 1x, so the caller would
+    // never learn its value was ignored). Refuse it here, where the caller can
+    // still be told. Caught in practice by a caller that brace-initialises the
+    // parameter struct without the rate field.
+    if (params.rate <= 0.0)
+    {
+        CDS_LOG_WARN(logger, "Parameters rejected: rate must be > 0 (got {})",
+                     static_cast<double>(params.rate));
+        return true;
+    }
+
     // The tick period is locked while a plant-in-the-loop mission is RUNNING:
     // the real-time exchange with the plant is paced by it, so retiming it
     // mid-run would desync the exchange. Enforced here (not only disabled in the
